@@ -230,6 +230,20 @@ Our supersession rule in `neo4j_store.upsert_relation` fires only when a new edg
 
 Until that's done, any demo that relies on temporal conflict resolution should use hand-constructed corpora where supersession patterns are deterministic, or use the closed vocabulary aggressively. The integration test `test_temporal_filter_excludes_superseded` in `tests/test_retrieval_basic.py` deliberately builds its graph state via Cypher instead of LLM ingestion for exactly this reason.
 
+### Supersession is now gated on functional rel types only
+
+An earlier version of `upsert_relation` treated *every* `(subject, rel_type)` collision as supersession. That silently broke non-functional relations: when Diego led both Vision Team and Project Sentinel, the second ingest marked the first edge stale even though both facts are true. Same for a project that uses multiple technologies (`USES`), a person who approves multiple things (`APPROVED`), or a company with multiple offices (`LOCATED_IN`).
+
+**Current behavior (fixed in Phase 2):**
+- `FUNCTIONAL_RELATION_TYPES` in `extraction/schema.py` is a frozenset of rel types that are at-most-one-per-subject: `{WORKS_FOR, REPORTS_TO, BELONGS_TO}`.
+- Case 2 supersession in `upsert_relation` only fires when the rel type is functional. For everything else, a second edge with a different object is additive — both coexist.
+- This caught a real bug surfaced by the Helios Robotics killer-demo corpus; without this, Sentinel's `USES PyTorch` and Vision Team's `LEADS` edge from Diego were silently getting superseded.
+
+**Edge cases not yet handled:**
+- Functional-with-history semantics (e.g. `WORKS_FOR` — Alice genuinely moves companies). The current whitelist is correct for these: the old edge gets `valid_until` set and the new one is live.
+- Pluggable-functionality: some orgs genuinely have multiple parents (`BELONGS_TO` across acquisitions). The fix is conservative — if you need multi-parent, omit `BELONGS_TO` from the functional set.
+- The 7-doc killer-demo corpus validates the fix against an LLM extraction pipeline, not just unit tests. See `tests/test_killer_demo.py` and `tests/fixtures/killer_demo_corpus/`.
+
 ## Key Implementation Instructions
 
 * Workflow is always: Plan -> Implement -> Test -> Review -> Push

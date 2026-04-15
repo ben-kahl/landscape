@@ -240,7 +240,14 @@ async def upsert_relation(
             )
             return ("reinforced", exact["rid"])
 
-        # Case 2: same (s, rel_type) with a different object — supersede the old edge
+        # Case 2: same (s, rel_type) with a different object. Supersede the
+        # old edge *only* if rel_type is functional (one-object-per-subject).
+        # For non-functional rels (LEADS, USES, APPROVED, ...) the new edge
+        # is additive — both targets can coexist.
+        from landscape.extraction.schema import FUNCTIONAL_RELATION_TYPES
+
+        is_functional = relation_type in FUNCTIONAL_RELATION_TYPES
+
         result = await session.run(
             """
             MATCH (s:Entity {name: $subject})-[old:RELATES_TO {type: $rel_type}]->(other:Entity)
@@ -254,7 +261,7 @@ async def upsert_relation(
         )
         conflict = await result.single()
 
-        if conflict:
+        if conflict and is_functional:
             # Mark old edge as superseded
             await session.run(
                 """

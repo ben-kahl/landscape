@@ -21,6 +21,22 @@ RELATION_VOCAB: frozenset[str] = frozenset(
     }
 )
 
+# Relation types where a subject has at most one live object at a time.
+# When a new edge lands with a (subject, rel_type) already present but a
+# *different* object, the old edge gets superseded (valid_until set).
+#
+# Non-functional rels like LEADS, MEMBER_OF, APPROVED, USES, CREATED, LOCATED_IN,
+# RELATED_TO are additive: a person can lead multiple teams, a project can use
+# multiple technologies, a company can be headquartered in multiple offices.
+# Treating those as functional silently marks correct facts stale.
+FUNCTIONAL_RELATION_TYPES: frozenset[str] = frozenset(
+    {
+        "WORKS_FOR",
+        "REPORTS_TO",
+        "BELONGS_TO",
+    }
+)
+
 # Synonym → canonical mapping. Only includes *same-direction* synonyms —
 # e.g. APPROVED_BY (object approved subject) is the reverse direction and
 # would require swapping subject/object, which is deferred.
