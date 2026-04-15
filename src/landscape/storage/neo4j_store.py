@@ -65,7 +65,9 @@ async def merge_entity(
                           e.confidence = $confidence,
                           e.timestamp = $now,
                           e.canonical = true,
-                          e.aliases = []
+                          e.aliases = [],
+                          e.access_count = 0,
+                          e.last_accessed = null
             WITH e
             MATCH (d:Document) WHERE elementId(d) = $doc_id
             MERGE (e)-[:EXTRACTED_FROM {method: "llm", model: $model}]->(d)
@@ -122,7 +124,11 @@ async def add_alias(
             """
             MATCH (canonical:Entity) WHERE elementId(canonical) = $eid
             MERGE (stub:Entity {name: $alias, type: canonical.type})
-            ON CREATE SET stub.canonical = false, stub.aliases = [], stub.source_doc = $source_doc
+            ON CREATE SET stub.canonical = false,
+                          stub.aliases = [],
+                          stub.source_doc = $source_doc,
+                          stub.access_count = 0,
+                          stub.last_accessed = null
             MERGE (stub)-[r:SAME_AS]->(canonical)
             ON CREATE SET r.confidence = $confidence,
                           r.method = "vector_similarity",
@@ -250,7 +256,9 @@ async def upsert_relation(
                     source_docs: [$source_doc],
                     valid_from: $now,
                     valid_until: null,
-                    supersedes_edge_id: $old_rid
+                    supersedes_edge_id: $old_rid,
+                    access_count: 0,
+                    last_accessed: null
                 }]->(o)
                 RETURN elementId(r) AS rid
                 """,
@@ -274,7 +282,9 @@ async def upsert_relation(
                 confidence: $confidence,
                 source_docs: [$source_doc],
                 valid_from: $now,
-                valid_until: null
+                valid_until: null,
+                access_count: 0,
+                last_accessed: null
             }]->(o)
             RETURN elementId(r) AS rid
             """,
