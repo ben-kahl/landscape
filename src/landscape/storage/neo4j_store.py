@@ -297,3 +297,104 @@ async def upsert_relation(
         )
         record = await result.single()
         return ("created", record["rid"] if record else None)
+
+
+async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[str, Any]]:
+    """For a set of :Chunk elementIds, return the canonical :Entity nodes
+    extracted from the parent :Document of each chunk."""
+    if not chunk_element_ids:
+        return []
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (c:Chunk)-[:PART_OF]->(d:Document)<-[:EXTRACTED_FROM]-(e:Entity)
+            WHERE elementId(c) IN $chunk_ids AND e.canonical = true
+            RETURN DISTINCT
+                elementId(e) AS eid,
+                e.name AS name,
+                e.type AS type,
+                coalesce(e.access_count, 0) AS access_count,
+                e.last_accessed AS last_accessed
+            """,
+            chunk_ids=chunk_element_ids,
+        )
+        return [dict(record) async for record in result]
+
+
+async def bfs_expand(
+    seed_element_ids: list[str],
+    max_hops: int,
+) -> list[dict[str, Any]]:
+    """BFS from seed entities over currently-valid :RELATES_TO edges.
+    Uses Cypher shortestPath to dedupe per target. Undirected traversal
+    so 'A APPROVED B' is reachable from either A or B.
+
+    Returns one dict per (seed, target) pair with target info, distance,
+    and the list of edge stats along the shortest path (for scoring and
+    reinforcement touching)."""
+    if not seed_element_ids:
+        return []
+    if max_hops < 1 or max_hops > 5:
+        raise ValueError(f"max_hops must be 1..5, got {max_hops}")
+    driver = get_driver()
+    # max_hops is validated int; safe to interpolate
+    query = f"""
+    MATCH (seed:Entity) WHERE elementId(seed) IN $seed_ids
+    MATCH path = shortestPath(
+        (seed)-[rels:RELATES_TO*1..{max_hops}]-(target:Entity)
+    )
+    WHERE elementId(seed) <> elementId(target)
+      AND target.canonical = true
+      AND ALL(r IN rels WHERE r.valid_until IS NULL)
+    RETURN
+        elementId(seed) AS seed_id,
+        elementId(target) AS target_id,
+        target.name AS target_name,
+        target.type AS target_type,
+        coalesce(target.access_count, 0) AS target_access_count,
+        target.last_accessed AS target_last_accessed,
+        length(path) AS distance,
+        [r IN rels | elementId(r)] AS edge_ids,
+        [r IN rels | r.type] AS edge_types,
+        [r IN rels | coalesce(r.confidence, 0.0)] AS edge_confidences,
+        [r IN rels | coalesce(r.access_count, 0)] AS edge_access_counts,
+        [r IN rels | r.last_accessed] AS edge_last_accessed
+    """
+    async with driver.session() as session:
+        result = await session.run(query, seed_ids=seed_element_ids)
+        return [dict(record) async for record in result]
+
+
+async def touch_entities(element_ids: list[str], now: str) -> None:
+    """Increment access_count and set last_accessed on the given entities."""
+    if not element_ids:
+        return
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (e:Entity) WHERE elementId(e) IN $ids
+            SET e.access_count = coalesce(e.access_count, 0) + 1,
+                e.last_accessed = $now
+            """,
+            ids=element_ids,
+            now=now,
+        )
+
+
+async def touch_relations(element_ids: list[str], now: str) -> None:
+    """Increment access_count and set last_accessed on the given edges."""
+    if not element_ids:
+        return
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH ()-[r:RELATES_TO]->() WHERE elementId(r) IN $ids
+            SET r.access_count = coalesce(r.access_count, 0) + 1,
+                r.last_accessed = $now
+            """,
+            ids=element_ids,
+            now=now,
+        )
