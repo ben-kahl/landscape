@@ -207,6 +207,29 @@ Their 170-token L0+L1 loading is genuinely good design. Landscape should adopt a
 **How to benchmark fairly?**
 Use LongMemEval (same as MemPalace) plus a custom multi-hop benchmark. On LongMemEval (single-hop semantic recall), Landscape should match MemPalace. On multi-hop questions, Landscape should clearly win. Showing both is more credible than cherry-picking.
 
+## Known Limitations (must address later)
+
+### Relation-type supersession is synonym-blind
+
+Our supersession rule in `neo4j_store.upsert_relation` fires only when a new edge exactly matches an existing edge on `(subject, rel_type)`. Small local LLMs like Llama 3.1 8B are non-deterministic about rel_type phrasing — a single "Alice works at X" input can yield `WORKS_FOR`, `EMPLOYED_BY`, or `CURRENTLY_WORKS_AT` on different calls, and our rule treats those as independent additive relations. The result: when Alice moves from Acme to Zylos, only one of her Acme edges gets superseded, and the others remain live, quietly contradicting the current facts.
+
+**Current mitigation (Phase 2, minimum-viable):**
+- Closed vocabulary of 10 canonical rel_types declared in the extraction prompt (`WORKS_FOR, LEADS, MEMBER_OF, REPORTS_TO, APPROVED, USES, BELONGS_TO, LOCATED_IN, CREATED, RELATED_TO`).
+- `normalize_relation_type()` in `extraction/schema.py` maps known synonyms → canonical (e.g. `EMPLOYED_BY → WORKS_FOR`) at the pipeline layer before `upsert_relation` is called.
+- Unknown rel_types pass through unchanged to avoid destroying novel semantics.
+
+**What this does NOT fix:**
+- Reverse-direction synonyms (`APPROVED_BY` inverts subject/object) — deferred; would require swapping args on upsert.
+- Brand-new rel_types the LLM invents that aren't in the synonym map — still create independent edges and won't supersede.
+- Semantic near-synonyms that aren't literal string synonyms (`REPORTS_TO` vs `MANAGED_BY`) — different rel_types on opposite directions, same real-world relation.
+
+**Path forward (Phase 2.5 / Phase 3 candidate):**
+1. Embedding-based rel_type clustering: embed each novel rel_type string, collapse anything above a cosine threshold into the nearest canonical.
+2. Cross-type supersession at upsert time: when a new edge from S lands with type T, look for live edges from S whose type is in the same semantic cluster as T, not just type-equal.
+3. Once we have the retrieval benchmark in place, *measure* how much synonym drift actually hurts precision on multi-hop queries. The decision between 1 and 2 should be data-driven, not architectural.
+
+Until that's done, any demo that relies on temporal conflict resolution should use hand-constructed corpora where supersession patterns are deterministic, or use the closed vocabulary aggressively. The integration test `test_temporal_filter_excludes_superseded` in `tests/test_retrieval_basic.py` deliberately builds its graph state via Cypher instead of LLM ingestion for exactly this reason.
+
 ## Key Implementation Instructions
 
 * Workflow is always: Plan -> Implement -> Test -> Review -> Push

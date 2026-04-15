@@ -85,6 +85,28 @@ async def merge_entity(
         return record["eid"]
 
 
+async def link_entity_to_doc(
+    entity_element_id: str,
+    doc_element_id: str,
+    model: str,
+) -> None:
+    """Ensure an [:EXTRACTED_FROM] edge exists from the given entity to
+    the given doc. Idempotent — used by the ingest pipeline for both
+    newly-created AND resolved entities so provenance stays complete."""
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (e:Entity) WHERE elementId(e) = $eid
+            MATCH (d:Document) WHERE elementId(d) = $did
+            MERGE (e)-[:EXTRACTED_FROM {method: "llm", model: $model}]->(d)
+            """,
+            eid=entity_element_id,
+            did=doc_element_id,
+            model=model,
+        )
+
+
 async def find_entity_by_element_id(element_id: str) -> dict[str, Any] | None:
     driver = get_driver()
     async with driver.session() as session:
