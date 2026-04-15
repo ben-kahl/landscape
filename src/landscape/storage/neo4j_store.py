@@ -287,17 +287,3 @@ async def upsert_relation(
         )
         record = await result.single()
         return ("created", record["rid"] if record else None)
-
-
-# Keep merge_relation as a thin alias for backward compatibility
-async def merge_relation(
-    subject_name: str,
-    object_name: str,
-    relation_type: str,
-    confidence: float,
-    source_doc: str,
-) -> bool:
-    outcome, _ = await upsert_relation(
-        subject_name, object_name, relation_type, confidence, source_doc
-    )
-    return outcome in ("created", "reinforced")
