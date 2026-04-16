@@ -468,3 +468,28 @@ async def touch_relations(element_ids: list[str], now: str) -> None:
             ids=element_ids,
             now=now,
         )
+
+
+async def run_cypher_readonly(
+    cypher: str, params: dict | None = None
+) -> list[dict]:
+    """Execute a read-only Cypher query.
+
+    Validates the query with :func:`~landscape.storage.cypher_guard.assert_read_only`
+    first (raises :exc:`CypherWriteAttempted` on any write keyword), then
+    executes inside a ``session.execute_read`` transaction for driver-level
+    enforcement.  Returns rows as a list of plain Python dicts.
+    """
+    from landscape.storage.cypher_guard import assert_read_only
+
+    assert_read_only(cypher)
+
+    driver = get_driver()
+    params = params or {}
+
+    async def _work(tx: Any) -> list[dict]:
+        result = await tx.run(cypher, **params)
+        return [dict(record) async for record in result]
+
+    async with driver.session() as session:
+        return await session.execute_read(_work)
