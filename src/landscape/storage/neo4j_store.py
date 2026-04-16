@@ -46,18 +46,167 @@ async def merge_document(content_hash: str, title: str, source_type: str) -> tup
         return record["doc_id"], record["created"]
 
 
+def _validate_id_segment(name: str, value: str) -> None:
+    """Reject ':' in session_id / turn_id to avoid Turn.id ambiguity."""
+    if ":" in value:
+        raise ValueError(f"{name} must not contain ':' (got {value!r})")
+
+
+async def merge_conversation(
+    session_id: str,
+    title: str | None = None,
+    agent_id: str | None = None,
+) -> tuple[str, bool]:
+    """MERGE on Conversation.id = session_id. Returns (element_id, created).
+    On MATCH: updates last_active_at to now.
+    On CREATE: sets started_at + last_active_at to now, plus title/agent_id."""
+    _validate_id_segment("session_id", session_id)
+    driver = get_driver()
+    now = datetime.now(UTC).isoformat()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MERGE (c:Conversation {id: $session_id})
+            ON CREATE SET c.started_at = $now,
+                          c.last_active_at = $now,
+                          c.title = $title,
+                          c.agent_id = $agent_id
+            ON MATCH SET  c.last_active_at = $now
+            RETURN elementId(c) AS cid, (c.started_at = $now) AS created
+            """,
+            session_id=session_id,
+            now=now,
+            title=title,
+            agent_id=agent_id,
+        )
+        record = await result.single()
+        return record["cid"], record["created"]
+
+
+async def merge_turn(
+    session_id: str,
+    turn_id: str,
+    turn_number: int | None = None,
+    role: str | None = None,
+    summary: str | None = None,
+) -> tuple[str, bool]:
+    """MERGE on Turn.id = f'{session_id}:{turn_id}'. Returns (element_id, created).
+    Ensures parent Conversation exists. Creates :HAS_TURN edge. If turn_number > 1,
+    creates :NEXT edge from the prior turn."""
+    _validate_id_segment("session_id", session_id)
+    _validate_id_segment("turn_id", turn_id)
+    # Ensure parent conversation exists (updates last_active_at as side effect)
+    await merge_conversation(session_id)
+    composite_id = f"{session_id}:{turn_id}"
+    driver = get_driver()
+    now = datetime.now(UTC).isoformat()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MERGE (t:Turn {id: $composite_id})
+            ON CREATE SET t.session_id = $session_id,
+                          t.turn_id = $turn_id,
+                          t.turn_number = $turn_number,
+                          t.role = $role,
+                          t.summary = $summary,
+                          t.timestamp = $now
+            WITH t
+            MATCH (c:Conversation {id: $session_id})
+            MERGE (c)-[:HAS_TURN]->(t)
+            RETURN elementId(t) AS tid, (t.timestamp = $now) AS created
+            """,
+            composite_id=composite_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            turn_number=turn_number,
+            role=role,
+            summary=summary,
+            now=now,
+        )
+        record = await result.single()
+        turn_element_id = record["tid"]
+        created = record["created"]
+
+    # Wire :NEXT edge from prior turn when turn_number > 1
+    if turn_number is not None and turn_number > 1:
+        async with driver.session() as session:
+            await session.run(
+                """
+                MATCH (prior:Turn {session_id: $session_id, turn_number: $prior_num})
+                MATCH (curr:Turn {id: $composite_id})
+                MERGE (prior)-[:NEXT]->(curr)
+                """,
+                session_id=session_id,
+                prior_num=turn_number - 1,
+                composite_id=composite_id,
+            )
+
+    return turn_element_id, created
+
+
+async def link_entity_to_turn(
+    entity_element_id: str,
+    turn_element_id: str,
+    confidence: float = 1.0,
+) -> None:
+    """Idempotent MERGE of :MENTIONED_IN edge from Entity to Turn.
+    On repeat calls, keeps the higher confidence value."""
+    driver = get_driver()
+    now = datetime.now(UTC).isoformat()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (e:Entity) WHERE elementId(e) = $eid
+            MATCH (t:Turn)   WHERE elementId(t) = $tid
+            MERGE (e)-[r:MENTIONED_IN]->(t)
+            ON CREATE SET r.confidence = $confidence,
+                          r.created_at = $now
+            ON MATCH SET  r.confidence = CASE
+                              WHEN $confidence > r.confidence THEN $confidence
+                              ELSE r.confidence
+                          END
+            """,
+            eid=entity_element_id,
+            tid=turn_element_id,
+            confidence=confidence,
+            now=now,
+        )
+
+
+async def link_document_to_turn(
+    doc_element_id: str,
+    turn_element_id: str,
+) -> None:
+    """Idempotent MERGE of :INGESTED_IN edge from Document to Turn."""
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (d:Document) WHERE elementId(d) = $did
+            MATCH (t:Turn)     WHERE elementId(t) = $tid
+            MERGE (d)-[:INGESTED_IN]->(t)
+            """,
+            did=doc_element_id,
+            tid=turn_element_id,
+        )
+
+
 async def merge_entity(
     name: str,
     entity_type: str,
     source_doc: str,
     confidence: float,
-    doc_element_id: str,
-    model: str,
+    doc_element_id: str | None = None,
+    model: str = "",
     created_by: str = "ingest",
     session_id: str | None = None,
     turn_id: str | None = None,
 ) -> str:
-    """Returns the elementId of the entity node."""
+    """Returns the elementId of the entity node.
+
+    doc_element_id is optional. When None, the :EXTRACTED_FROM edge is
+    skipped (used when provenance comes from a :Turn rather than a :Document).
+    """
     if created_by not in ("ingest", "agent"):
         raise ValueError(f"created_by must be 'ingest' or 'agent', got {created_by!r}")
     driver = get_driver()
@@ -76,9 +225,6 @@ async def merge_entity(
                           e.created_by = $created_by,
                           e.session_id = $session_id,
                           e.turn_id = $turn_id
-            WITH e
-            MATCH (d:Document) WHERE elementId(d) = $doc_id
-            MERGE (e)-[:EXTRACTED_FROM {method: "llm", model: $model}]->(d)
             RETURN elementId(e) AS eid
             """,
             name=name,
@@ -86,14 +232,27 @@ async def merge_entity(
             source_doc=source_doc,
             confidence=confidence,
             now=now,
-            doc_id=doc_element_id,
-            model=model,
             created_by=created_by,
             session_id=session_id,
             turn_id=turn_id,
         )
         record = await result.single()
-        return record["eid"]
+        eid = record["eid"]
+
+    if doc_element_id is not None:
+        async with driver.session() as session:
+            await session.run(
+                """
+                MATCH (e:Entity) WHERE elementId(e) = $eid
+                MATCH (d:Document) WHERE elementId(d) = $doc_id
+                MERGE (e)-[:EXTRACTED_FROM {method: "llm", model: $model}]->(d)
+                """,
+                eid=eid,
+                doc_id=doc_element_id,
+                model=model,
+            )
+
+    return eid
 
 
 async def link_entity_to_doc(
