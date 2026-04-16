@@ -4,7 +4,7 @@ Spawns the MCP server as a subprocess over stdio (Option B) and drives a
 5-step session:
 
   0. Reset  -- wipe Neo4j + Qdrant so the run is reproducible
-  1. Ingest -- remember("Alice joined the Atlas team on Monday.")
+  1. Ingest -- remember("Alice works for Atlas Corp as a senior engineer.")
   2. Search -- confirm Alice / Atlas surfaces
   3. Write-back -- add_relation(Alice, Beacon, WORKS_FOR) -> superseded
   4. Search -- Atlas relation no longer surfaces (temporally filtered)
@@ -123,8 +123,8 @@ async def run_demo() -> None:
                 result = await session.call_tool(
                     "remember",
                     {
-                        "text": "Alice joined the Atlas team on Monday.",
-                        "title": "Standup notes",
+                        "text": "Alice works for Atlas Corp as a senior engineer.",
+                        "title": "Personnel record",
                     },
                 )
                 if result.isError:
@@ -134,7 +134,7 @@ async def run_demo() -> None:
                     ec = data.get("entities_created", "?")
                     rc = data.get("relations_created", "?")
                     rs = data.get("relations_superseded", "?")
-                    print(f"  -> remember(\"Alice joined the Atlas team on Monday.\")")
+                    print(f"  -> remember(\"Alice works for Atlas Corp as a senior engineer.\")")
                     print(f"     entities_created={ec}, relations_created={rc},")
                     print(f"     relations_superseded={rs}")
             except Exception as exc:
