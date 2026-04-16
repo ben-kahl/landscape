@@ -7,6 +7,7 @@ from landscape.embeddings import encoder
 from landscape.entities import resolver
 from landscape.extraction import llm
 from landscape.extraction.chunker import chunk_text
+from landscape.extraction.schema import normalize_relation_type
 from landscape.storage import neo4j_store, qdrant_store
 
 
@@ -90,6 +91,13 @@ async def ingest(text: str, title: str, source_type: str = "text") -> IngestResu
             )
             entities_created += 1
         else:
+            # Resolved to an existing canonical entity — still record that
+            # this document mentions it, so provenance stays complete.
+            await neo4j_store.link_entity_to_doc(
+                entity_element_id=canonical_id,
+                doc_element_id=doc_id,
+                model=settings.llm_model,
+            )
             entities_reinforced += 1
 
     # Step 5: relation upsert with supersession
@@ -100,7 +108,7 @@ async def ingest(text: str, title: str, source_type: str = "text") -> IngestResu
         outcome, _ = await neo4j_store.upsert_relation(
             subject_name=relation.subject,
             object_name=relation.object,
-            relation_type=relation.relation_type,
+            relation_type=normalize_relation_type(relation.relation_type),
             confidence=relation.confidence,
             source_doc=title,
         )

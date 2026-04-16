@@ -1,6 +1,6 @@
 import ollama
 
-from landscape.config import settings
+from landscape.config import LLM_PROFILES, settings
 from landscape.extraction.schema import Extraction
 
 _SYSTEM_PROMPT = (
@@ -20,7 +20,16 @@ _SYSTEM_PROMPT = (
     "- When the same entity appears under multiple surface forms (e.g. 'Project Atlas'\n"
     "  and 'Atlas'), list the canonical name once and put alternate forms in aliases.\n"
     "- Include only relationships between entities you have identified.\n"
-    "- Use SCREAMING_SNAKE_CASE for relation_type (APPROVED, LEADS, WORKS_FOR, etc.).\n"
+    "- Use SCREAMING_SNAKE_CASE for relation_type.\n"
+    "- CRITICAL — choose relation_type ONLY from this closed vocabulary:\n"
+    "  WORKS_FOR, LEADS, MEMBER_OF, REPORTS_TO, APPROVED, USES,\n"
+    "  BELONGS_TO, LOCATED_IN, CREATED, RELATED_TO.\n"
+    "  Map synonyms: 'employed by'/'hired by'/'works at' → WORKS_FOR.\n"
+    "  'manages'/'heads'/'owns a project' → LEADS. 'part of a team' → MEMBER_OF.\n"
+    "  'signed off on'/'authorized' → APPROVED. 'depends on'/'built on' → USES.\n"
+    "  'subsidiary of'/'owned by an org' → BELONGS_TO. 'based in' → LOCATED_IN.\n"
+    "  'authored'/'built'/'founded' → CREATED.\n"
+    "  If nothing fits, use RELATED_TO. Do NOT invent new relation_types.\n"
     "- Return strict JSON matching the schema. No prose, no markdown fences.\n"
     "\n"
     "--- EXAMPLE 1 ---\n"
@@ -85,12 +94,20 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _should_disable_thinking() -> bool:
+    profile = LLM_PROFILES.get(settings.llm_profile)
+    return profile is not None and not profile.thinking
+
+
 def extract(text: str) -> Extraction:
     client = ollama.Client(host=settings.ollama_url)
+    prompt = f"{_SYSTEM_PROMPT}\n\n{text}"
+    if _should_disable_thinking():
+        prompt = "/no_think\n" + prompt
     response = client.chat(
         model=settings.llm_model,
         messages=[
-            {"role": "user", "content": f"{_SYSTEM_PROMPT}\n\n{text}"},
+            {"role": "user", "content": prompt},
         ],
         format=Extraction.model_json_schema(),
     )

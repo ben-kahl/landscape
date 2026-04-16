@@ -148,7 +148,11 @@ async def test_additive_different_rel_type(http_client, neo4j_driver):
 
 @pytest.mark.asyncio
 async def test_current_facts_query(http_client, neo4j_driver):
-    """Query with valid_until IS NULL returns only current state."""
+    """Query with valid_until IS NULL returns only current state.
+
+    Uses REPORTS_TO — a functional relation — because MEMBER_OF is
+    non-functional (a person can be a member of multiple teams) and no
+    longer triggers Case 2 supersession."""
     title = "supersession-test-current"
     await _clear_doc(neo4j_driver, title)
 
@@ -157,23 +161,23 @@ async def test_current_facts_query(http_client, neo4j_driver):
     doc_id1, _ = await neo4j_store.merge_document("hash-curr-1", title, "text")
     doc_id2, _ = await neo4j_store.merge_document("hash-curr-2", title + "-2", "text")
     await neo4j_store.merge_entity("Bob", "PERSON", title, 0.9, doc_id1, "test")
-    await neo4j_store.merge_entity("TeamA", "ORGANIZATION", title, 0.9, doc_id1, "test")
-    await neo4j_store.merge_entity("TeamB", "ORGANIZATION", title + "-2", 0.9, doc_id2, "test")
+    await neo4j_store.merge_entity("MgrA", "PERSON", title, 0.9, doc_id1, "test")
+    await neo4j_store.merge_entity("MgrB", "PERSON", title + "-2", 0.9, doc_id2, "test")
 
-    await _clear_relation(neo4j_driver, "Bob", "MEMBER_OF")
+    await _clear_relation(neo4j_driver, "Bob", "REPORTS_TO")
 
-    await neo4j_store.upsert_relation("Bob", "TeamA", "MEMBER_OF", 0.9, title)
-    await neo4j_store.upsert_relation("Bob", "TeamB", "MEMBER_OF", 0.9, title + "-2")
+    await neo4j_store.upsert_relation("Bob", "MgrA", "REPORTS_TO", 0.9, title)
+    await neo4j_store.upsert_relation("Bob", "MgrB", "REPORTS_TO", 0.9, title + "-2")
 
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (s:Entity {name: 'Bob'})-[r:RELATES_TO {type: 'MEMBER_OF'}]->(o:Entity)
+            MATCH (s:Entity {name: 'Bob'})-[r:RELATES_TO {type: 'REPORTS_TO'}]->(o:Entity)
             WHERE r.valid_until IS NULL
-            RETURN o.name AS current_org
+            RETURN o.name AS current_manager
             """
         )
         records = await result.data()
 
     assert len(records) == 1, f"Expected 1 current fact, got {len(records)}: {records}"
-    assert records[0]["current_org"] == "TeamB"
+    assert records[0]["current_manager"] == "MgrB"

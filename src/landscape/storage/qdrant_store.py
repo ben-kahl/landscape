@@ -103,6 +103,36 @@ async def search_similar_entities(
     return result.points
 
 
+async def search_entities_any_type(
+    vector: list[float],
+    limit: int = 10,
+) -> list[ScoredPoint]:
+    """Entity search without the type filter — for retrieval where the
+    caller doesn't know the entity type in advance."""
+    client = get_client()
+    result = await client.query_points(
+        collection_name=COLLECTION,
+        query=vector,
+        limit=limit,
+        with_payload=True,
+    )
+    return result.points
+
+
+async def search_chunks(
+    vector: list[float],
+    limit: int = 10,
+) -> list[ScoredPoint]:
+    client = get_client()
+    result = await client.query_points(
+        collection_name=CHUNKS_COLLECTION,
+        query=vector,
+        limit=limit,
+        with_payload=True,
+    )
+    return result.points
+
+
 async def upsert_chunk(
     chunk_neo4j_id: str,
     doc_id: str,
