@@ -67,6 +67,8 @@ async def test_add_entity_resolves_to_existing(http_client, neo4j_driver):
         "Acme Corp",
         "Organization",
         source="agent:test:2",
+        session_id="s2",
+        turn_id="t1",
     )
 
     assert result.resolved_to_existing is True
@@ -129,6 +131,8 @@ async def test_add_relation_normalizes_rel_type(http_client, neo4j_driver):
         "Daily Planet",
         "EMPLOYED_BY",          # synonym → WORKS_FOR
         source="agent:test:4",
+        session_id="s4",
+        turn_id="t1",
     )
 
     assert result.outcome in ("created", "reinforced", "superseded")
@@ -326,42 +330,32 @@ async def test_add_entity_with_session_turn_creates_conversation_graph(http_clie
 
 
 @pytest.mark.asyncio
-async def test_add_entity_without_session_turn_falls_back_to_document(http_client, neo4j_driver):
-    """add_entity WITHOUT session_id/turn_id should fall back to synthetic Document
-    and must NOT create any Turn nodes."""
+async def test_add_entity_without_session_turn_raises(http_client):
+    """add_entity WITHOUT session_id/turn_id must raise ValueError — synthetic
+    Document provenance has been removed."""
     from landscape.writeback import add_entity
 
-    result = await add_entity(
-        "Carol",
-        "Person",
-        source="agent:no-session",
-    )
+    with pytest.raises(ValueError, match="session_id and turn_id are required"):
+        await add_entity(
+            "Carol",
+            "Person",
+            source="agent:no-session",
+        )
 
-    assert result.resolved_to_existing is False
 
-    async with neo4j_driver.session() as session:
-        # Synthetic Document must exist keyed by source
-        doc_rec = await (
-            await session.run(
-                "MATCH (d:Document {title: 'agent:no-session'}) RETURN count(d) AS cnt"
-            )
-        ).single()
-        assert doc_rec["cnt"] == 1, "Synthetic :Document not created for no-session path"
+@pytest.mark.asyncio
+async def test_add_relation_without_session_turn_raises(http_client):
+    """add_relation WITHOUT session_id/turn_id must raise ValueError — synthetic
+    Document provenance has been removed."""
+    from landscape.writeback import add_relation
 
-        # EXTRACTED_FROM edge must exist
-        ef_rec = await (
-            await session.run(
-                "MATCH (:Entity {name: 'Carol'})-[:EXTRACTED_FROM]->(:Document {title: 'agent:no-session'}) "
-                "RETURN count(*) AS cnt"
-            )
-        ).single()
-        assert ef_rec["cnt"] == 1, ":EXTRACTED_FROM edge missing"
-
-        # No Turn nodes should exist
-        turn_rec = await (
-            await session.run("MATCH (t:Turn) RETURN count(t) AS cnt")
-        ).single()
-        assert turn_rec["cnt"] == 0, ":Turn node was created despite no session+turn"
+    with pytest.raises(ValueError, match="session_id and turn_id are required"):
+        await add_relation(
+            "Alice",
+            "Beacon",
+            "WORKS_FOR",
+            source="agent:no-session",
+        )
 
 
 @pytest.mark.asyncio
@@ -454,7 +448,7 @@ async def test_status_summary_shape(http_client, neo4j_driver):
     from landscape.writeback import add_entity, add_relation, status_summary
 
     await add_entity("Bruce Wayne", "Person", source="agent:test:6", session_id="s6", turn_id="t1")
-    await add_entity("Wayne Enterprises", "Organization", source="agent:test:6")
+    await add_entity("Wayne Enterprises", "Organization", source="agent:test:6", session_id="s6", turn_id="t1")
     await add_relation("Bruce Wayne", "Wayne Enterprises", "WORKS_FOR",
                        source="agent:test:6", session_id="s6", turn_id="t2")
     await add_relation("Bruce Wayne", "Gotham City", "LOCATED_IN",
@@ -463,7 +457,9 @@ async def test_status_summary_shape(http_client, neo4j_driver):
     summary = await status_summary()
 
     assert summary.entity_count >= 2
-    assert summary.document_count >= 1
+    # Agent write-back no longer creates synthetic Documents — document_count
+    # may be 0 in a pure agent-write test; just assert it is non-negative.
+    assert summary.document_count >= 0
     assert summary.relation_count >= 1
 
     # top_entities entries must have the required keys

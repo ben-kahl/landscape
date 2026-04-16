@@ -94,6 +94,8 @@ async def test_remember_creates_entities(http_client):
             {
                 "text": "Alice Chen joined the Platform Team in January.",
                 "title": "onboarding-note",
+                "session_id": "test-session",
+                "turn_id": "t1",
             },
         )
 
@@ -118,6 +120,8 @@ async def test_add_entity_returns_canonical_id(http_client):
                 "name": "Zylos Corp",
                 "entity_type": "Organization",
                 "source": "agent:test-session:1",
+                "session_id": "test-session",
+                "turn_id": "t1",
                 "confidence": 0.9,
             },
         )
@@ -141,6 +145,8 @@ async def test_add_relation_creates_or_supersedes(http_client):
                 "object": "Acme",
                 "rel_type": "WORKS_FOR",
                 "source": "agent:test-session:2",
+                "session_id": "test-session",
+                "turn_id": "t2",
             },
         )
 
@@ -165,6 +171,8 @@ async def test_add_relation_supersedes_functional_edge(http_client):
                 "object": "Acme",
                 "rel_type": "WORKS_FOR",
                 "source": "agent:test-session:3a",
+                "session_id": "test-session",
+                "turn_id": "t3a",
             },
         )
         assert not r1.isError
@@ -179,6 +187,8 @@ async def test_add_relation_supersedes_functional_edge(http_client):
                 "object": "Beacon Corp",
                 "rel_type": "WORKS_FOR",
                 "source": "agent:test-session:3b",
+                "session_id": "test-session",
+                "turn_id": "t3b",
             },
         )
         assert not r2.isError

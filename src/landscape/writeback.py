@@ -15,7 +15,6 @@ Design note — missing endpoints in ``add_relation``:
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -55,41 +54,6 @@ class StatusSummary:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-async def _resolve_provenance(
-    source: str,
-    session_id: str | None,
-    turn_id: str | None,
-) -> tuple[str | None, str | None]:
-    """Return ``(doc_element_id, turn_element_id)``. Exactly one is non-None.
-
-    If *both* ``session_id`` and ``turn_id`` are provided: ensure the
-    :Conversation and :Turn nodes exist (``merge_turn`` auto-creates the parent
-    conversation via MERGE) and return ``(None, turn_element_id)``.
-
-    Otherwise: create/reuse a lightweight sentinel :Document keyed by
-    ``sha256("agent-source:{source}")`` and return ``(doc_element_id, None)``.
-    The sentinel document is idempotent — repeated calls with the same
-    ``source`` string reuse the same node.
-    """
-    if session_id is not None and turn_id is not None:
-        turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
-        return None, turn_element_id
-
-    # Synthetic-Document fallback (backwards-compatible path)
-    source_hash = hashlib.sha256(f"agent-source:{source}".encode()).hexdigest()
-    doc_id, _ = await neo4j_store.merge_document(
-        content_hash=source_hash,
-        title=source,
-        source_type="agent",
-    )
-    return doc_id, None
-
-
-# ---------------------------------------------------------------------------
 # Public async functions
 # ---------------------------------------------------------------------------
 
@@ -105,20 +69,28 @@ async def add_entity(
 ) -> AddEntityResult:
     """Persist an entity authored by an agent.
 
+    Both ``session_id`` and ``turn_id`` are required.  Agent-authored entities
+    must be anchored to a real conversation Turn for provenance to be
+    meaningful.  Calls without them raise ``ValueError``.
+
     Resolution flow:
-    1. Embed ``name`` with the same encoder used by the ingest pipeline.
-    2. Call ``resolver.resolve_entity`` to check for a near-duplicate canonical
+    1. Validate that session_id and turn_id are both non-empty.
+    2. Embed ``name`` with the same encoder used by the ingest pipeline.
+    3. Call ``resolver.resolve_entity`` to check for a near-duplicate canonical
        node.  The resolver searches Qdrant by type, so the entity_type must
        match for resolution to fire.
-    3. If resolved → return the canonical id/name.  If session+turn were
-       provided, also add a :MENTIONED_IN edge — an agent mentioning an
-       existing entity in a new turn is meaningful provenance even when no new
-       node is created.
-    4. If not resolved → create a new Neo4j entity node (``created_by="agent"``)
-       and upsert its embedding into Qdrant.  Provenance is anchored via
-       ``_resolve_provenance``: a :Turn link when session+turn are given,
-       otherwise a synthetic sentinel :Document.
+    4. If resolved → return the canonical id/name and add a :MENTIONED_IN edge
+       to anchor the mention to the current Turn.
+    5. If not resolved → create a new Neo4j entity node (``created_by="agent"``)
+       and upsert its embedding into Qdrant.  Provenance is anchored via a
+       :MENTIONED_IN edge to the Turn.
     """
+    if not session_id or not turn_id:
+        raise ValueError(
+            "session_id and turn_id are required for agent write-back; "
+            "synthetic-Document provenance has been removed"
+        )
+
     vector = encoder.encode(f"{name} ({entity_type})")
 
     canonical_id, is_new, _sim = await resolver.resolve_entity(
@@ -133,10 +105,9 @@ async def add_entity(
         existing = await neo4j_store.find_entity_by_element_id(canonical_id)
         canonical_name = existing["name"] if existing else name
 
-        # Still record the mention in this turn when session+turn are supplied.
-        if session_id is not None and turn_id is not None:
-            turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
-            await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id, confidence=confidence)
+        # Record the mention in this turn.
+        turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
+        await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id, confidence=confidence)
 
         return AddEntityResult(
             entity_id=canonical_id,
@@ -144,23 +115,22 @@ async def add_entity(
             resolved_to_existing=True,
         )
 
-    # No match — resolve provenance (Turn or synthetic Document) then create.
-    doc_id, turn_element_id = await _resolve_provenance(source, session_id, turn_id)
+    # No match — create the Turn node then create the entity node.
+    turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
 
     entity_id = await neo4j_store.merge_entity(
         name=name,
         entity_type=entity_type,
         source_doc=source,
         confidence=confidence,
-        doc_element_id=doc_id,
+        doc_element_id=None,
         model="agent",
         created_by="agent",
         session_id=session_id,
         turn_id=turn_id,
     )
 
-    if turn_element_id is not None:
-        await neo4j_store.link_entity_to_turn(entity_id, turn_element_id, confidence=confidence)
+    await neo4j_store.link_entity_to_turn(entity_id, turn_element_id, confidence=confidence)
 
     now = datetime.now(UTC).isoformat()
     await qdrant_store.upsert_entity(
@@ -191,6 +161,10 @@ async def add_relation(
 ) -> AddRelationResult:
     """Persist a relationship authored by an agent.
 
+    Both ``session_id`` and ``turn_id`` are required.  Agent-authored relations
+    must be anchored to a real conversation Turn for provenance to be
+    meaningful.  Calls without them raise ``ValueError``.
+
     Both endpoints are auto-resolved (or auto-created with type ``"Unknown"``)
     if they don't already exist — the agent shouldn't have to pre-declare
     entities before writing a relation.
@@ -200,6 +174,12 @@ async def add_relation(
     will be stored as the canonical ``"WORKS_FOR"``.  Functional-type
     supersession semantics apply automatically.
     """
+    if not session_id or not turn_id:
+        raise ValueError(
+            "session_id and turn_id are required for agent write-back; "
+            "synthetic-Document provenance has been removed"
+        )
+
     # Resolve / create both endpoints (type Unknown if caller didn't supply one)
     subj_result = await add_entity(
         subject,
@@ -251,12 +231,15 @@ async def status_summary() -> StatusSummary:
     """
     driver = neo4j_store.get_driver()
     async with driver.session() as session:
-        # (a) Counts
+        # (a) Counts — use OPTIONAL MATCH so an empty Document or RELATES_TO
+        # set does not suppress the whole row via Cypher's eager-MATCH semantics.
         count_result = await session.run(
             """
-            MATCH (e:Entity) WITH count(e) AS entity_count
-            MATCH (d:Document) WITH entity_count, count(d) AS doc_count
-            MATCH ()-[r:RELATES_TO]->() WHERE r.valid_until IS NULL
+            OPTIONAL MATCH (e:Entity)
+            WITH count(e) AS entity_count
+            OPTIONAL MATCH (d:Document)
+            WITH entity_count, count(d) AS doc_count
+            OPTIONAL MATCH ()-[r:RELATES_TO]->() WHERE r.valid_until IS NULL
             RETURN entity_count, doc_count, count(r) AS rel_count
             """
         )

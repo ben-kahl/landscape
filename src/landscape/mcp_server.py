@@ -101,23 +101,25 @@ async def search(query: str, hops: int = 2, limit: int = 10) -> str:
 
 
 @mcp.tool()
-async def remember(text: str, title: str, session_id: str | None = None, turn_id: str | None = None) -> str:
+async def remember(text: str, title: str, session_id: str, turn_id: str) -> str:
     """Ingest a text document into the Landscape memory store.
 
     Chunks the text, extracts entities and relations via LLM, resolves
     entities against the existing graph, and writes everything to Neo4j +
     Qdrant.
 
+    Both ``session_id`` and ``turn_id`` are required.  Agent ingestion of a
+    document only makes sense within a conversation; anchoring to a Turn
+    ensures provenance is meaningful and avoids graph cruft.
+
     Args:
         text:       Full text to ingest (markdown/plain text/prose).
         title:      Document title used as the source provenance label.
-        session_id: Optional conversation session identifier.  When provided
-                    together with *turn_id*, the resulting document is linked
-                    to the Turn via :INGESTED_IN and extracted entities are
-                    tagged with the conversation's session/turn provenance via
-                    :MENTIONED_IN edges.
-        turn_id:    Optional turn identifier within the session.  Only used
-                    when *session_id* is also provided.
+        session_id: Conversation session identifier.  The resulting document is
+                    linked to the Turn via :INGESTED_IN and extracted entities
+                    are tagged with the conversation's session/turn provenance
+                    via :MENTIONED_IN edges.
+        turn_id:    Turn identifier within the session.
 
     Returns:
         JSON object ``{doc_id, entities_created, relations_created,
@@ -147,22 +149,26 @@ async def add_entity(
     name: str,
     entity_type: str,
     source: str,
+    session_id: str,
+    turn_id: str,
     confidence: float = 0.8,
-    session_id: str | None = None,
-    turn_id: str | None = None,
 ) -> str:
     """Persist an agent-authored entity into the knowledge graph.
 
     Resolves the name against existing entities first; if a near-duplicate
     canonical entity exists, returns its id without creating a duplicate.
 
+    Both ``session_id`` and ``turn_id`` are required.  Agent-authored entities
+    must be anchored to a real conversation Turn; this ensures provenance is
+    meaningful and avoids graph cruft from synthetic Document nodes.
+
     Args:
         name:        Entity name (e.g. "Alice Chen").
         entity_type: Entity type (e.g. "Person", "Organization").
         source:      Provenance label (e.g. "agent:session-1:turn-3").
+        session_id:  Conversation session identifier.
+        turn_id:     Turn identifier within the session.
         confidence:  Extraction confidence in [0, 1].  Default 0.8.
-        session_id:  Optional conversation session identifier.
-        turn_id:     Optional turn identifier within the session.
 
     Returns:
         JSON object ``{entity_id, canonical_name, resolved_to_existing}``.
@@ -198,9 +204,9 @@ async def add_relation(
     object: str,
     rel_type: str,
     source: str,
+    session_id: str,
+    turn_id: str,
     confidence: float = 0.8,
-    session_id: str | None = None,
-    turn_id: str | None = None,
 ) -> str:
     """Persist an agent-authored relationship between two entities.
 
@@ -210,14 +216,18 @@ async def add_relation(
     ``WORKS_FOR`` for an entity that already has a live ``WORKS_FOR`` edge
     will supersede the old edge and record an audit trail.
 
+    Both ``session_id`` and ``turn_id`` are required.  Agent-authored relations
+    must be anchored to a real conversation Turn; this ensures provenance is
+    meaningful and avoids graph cruft from synthetic Document nodes.
+
     Args:
         subject:    Name of the subject entity.
         object:     Name of the object entity.
         rel_type:   Relationship type (e.g. "WORKS_FOR", "LEADS").
         source:     Provenance label.
+        session_id: Conversation session identifier.
+        turn_id:    Turn identifier within the session.
         confidence: Extraction confidence.  Default 0.8.
-        session_id: Optional session identifier.
-        turn_id:    Optional turn identifier.
 
     Returns:
         JSON object ``{relation_id, outcome, subject_id, object_id}`` where
