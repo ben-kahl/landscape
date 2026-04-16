@@ -111,19 +111,22 @@ async def remember(text: str, title: str, session_id: str | None = None, turn_id
     Args:
         text:       Full text to ingest (markdown/plain text/prose).
         title:      Document title used as the source provenance label.
-        session_id: (ignored for now — documents are session-agnostic)
-        turn_id:    (ignored for now — documents are session-agnostic)
+        session_id: Optional conversation session identifier.  When provided
+                    together with *turn_id*, the resulting document is linked
+                    to the Turn via :INGESTED_IN and extracted entities are
+                    tagged with the conversation's session/turn provenance via
+                    :MENTIONED_IN edges.
+        turn_id:    Optional turn identifier within the session.  Only used
+                    when *session_id* is also provided.
 
     Returns:
         JSON object ``{doc_id, entities_created, relations_created,
         relations_superseded, already_existed}``.
     """
-    # TODO Phase 3.5: thread session_id/turn_id into ingest for conversation-
-    # level provenance on document-sourced entities/relations.
     await _ensure_init()
     from landscape.pipeline import ingest
 
-    result = await ingest(text, title)
+    result = await ingest(text, title, session_id=session_id, turn_id=turn_id)
     output = {
         "doc_id": result.doc_id,
         "entities_created": result.entities_created,
