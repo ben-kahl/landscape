@@ -53,8 +53,13 @@ async def merge_entity(
     confidence: float,
     doc_element_id: str,
     model: str,
+    created_by: str = "ingest",
+    session_id: str | None = None,
+    turn_id: str | None = None,
 ) -> str:
     """Returns the elementId of the entity node."""
+    if created_by not in ("ingest", "agent"):
+        raise ValueError(f"created_by must be 'ingest' or 'agent', got {created_by!r}")
     driver = get_driver()
     now = datetime.now(UTC).isoformat()
     async with driver.session() as session:
@@ -67,7 +72,10 @@ async def merge_entity(
                           e.canonical = true,
                           e.aliases = [],
                           e.access_count = 0,
-                          e.last_accessed = null
+                          e.last_accessed = null,
+                          e.created_by = $created_by,
+                          e.session_id = $session_id,
+                          e.turn_id = $turn_id
             WITH e
             MATCH (d:Document) WHERE elementId(d) = $doc_id
             MERGE (e)-[:EXTRACTED_FROM {method: "llm", model: $model}]->(d)
@@ -80,6 +88,9 @@ async def merge_entity(
             now=now,
             doc_id=doc_element_id,
             model=model,
+            created_by=created_by,
+            session_id=session_id,
+            turn_id=turn_id,
         )
         record = await result.single()
         return record["eid"]
@@ -197,13 +208,22 @@ async def upsert_relation(
     relation_type: str,
     confidence: float,
     source_doc: str,
+    created_by: str = "ingest",
+    session_id: str | None = None,
+    turn_id: str | None = None,
 ) -> tuple[str, str | None]:
     """
     Returns (outcome, relation_id) where outcome is "created" | "reinforced" | "superseded".
     For "superseded", the new edge id is returned.
     """
+    if created_by not in ("ingest", "agent"):
+        raise ValueError(f"created_by must be 'ingest' or 'agent', got {created_by!r}")
     driver = get_driver()
     now = datetime.now(UTC).isoformat()
+
+    # Build agent provenance entry to append to source_docs when created_by=="agent"
+    agent_entry = f"agent:{session_id or '?'}:{turn_id or '?'}" if created_by == "agent" else None
+
     async with driver.session() as session:
         # Case 1: exact match — same (s, rel_type, o), still valid
         result = await session.run(
@@ -224,6 +244,8 @@ async def upsert_relation(
             new_docs = (
                 existing_docs if source_doc in existing_docs else existing_docs + [source_doc]
             )
+            if agent_entry and agent_entry not in new_docs:
+                new_docs = new_docs + [agent_entry]
             new_conf = max(exact["conf"] or confidence, confidence)
             await session.run(
                 """
@@ -262,7 +284,7 @@ async def upsert_relation(
         conflict = await result.single()
 
         if conflict and is_functional:
-            # Mark old edge as superseded
+            # Mark old edge as superseded (old edge keeps its original provenance)
             await session.run(
                 """
                 MATCH (s:Entity {name: $subject})-[old:RELATES_TO {type: $rel_type}]->(other:Entity)
@@ -275,19 +297,26 @@ async def upsert_relation(
                 now=now,
                 source_doc=source_doc,
             )
-            # Create the new edge
+            # Build source_docs for new edge, appending agent entry if applicable
+            new_edge_docs = [source_doc]
+            if agent_entry:
+                new_edge_docs.append(agent_entry)
+            # Create the new edge with provenance
             result2 = await session.run(
                 """
                 MATCH (s:Entity {name: $subject}), (o:Entity {name: $object})
                 CREATE (s)-[r:RELATES_TO {
                     type: $rel_type,
                     confidence: $confidence,
-                    source_docs: [$source_doc],
+                    source_docs: $source_docs,
                     valid_from: $now,
                     valid_until: null,
                     supersedes_edge_id: $old_rid,
                     access_count: 0,
-                    last_accessed: null
+                    last_accessed: null,
+                    created_by: $created_by,
+                    session_id: $session_id,
+                    turn_id: $turn_id
                 }]->(o)
                 RETURN elementId(r) AS rid
                 """,
@@ -295,25 +324,34 @@ async def upsert_relation(
                 object=object_name,
                 rel_type=relation_type,
                 confidence=confidence,
-                source_doc=source_doc,
+                source_docs=new_edge_docs,
                 now=now,
                 old_rid=conflict["old_rid"],
+                created_by=created_by,
+                session_id=session_id,
+                turn_id=turn_id,
             )
             new_rec = await result2.single()
             return ("superseded", new_rec["rid"] if new_rec else None)
 
         # Case 3: fresh relation — no prior edge with this (s, rel_type) exists
+        fresh_docs = [source_doc]
+        if agent_entry:
+            fresh_docs.append(agent_entry)
         result = await session.run(
             """
             MATCH (s:Entity {name: $subject}), (o:Entity {name: $object})
             CREATE (s)-[r:RELATES_TO {
                 type: $rel_type,
                 confidence: $confidence,
-                source_docs: [$source_doc],
+                source_docs: $source_docs,
                 valid_from: $now,
                 valid_until: null,
                 access_count: 0,
-                last_accessed: null
+                last_accessed: null,
+                created_by: $created_by,
+                session_id: $session_id,
+                turn_id: $turn_id
             }]->(o)
             RETURN elementId(r) AS rid
             """,
@@ -321,8 +359,11 @@ async def upsert_relation(
             object=object_name,
             rel_type=relation_type,
             confidence=confidence,
-            source_doc=source_doc,
+            source_docs=fresh_docs,
             now=now,
+            created_by=created_by,
+            session_id=session_id,
+            turn_id=turn_id,
         )
         record = await result.single()
         return ("created", record["rid"] if record else None)
