@@ -16,6 +16,8 @@ dependencies = [
     "langchain-text-splitters>=0.3",
     "langchain-huggingface>=0.1",
     "mcp>=1.0,<2.0",
+    "langchain>=1.2.15",
+    "langchain-ollama>=1.1.0",
 ]
 
 [project.optional-dependencies]
