@@ -23,6 +23,8 @@ services:
     environment:
       NEO4J_AUTH: neo4j/landscape-dev
       NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_db_tx__log_rotation_retention__policy: "100M size"
+      NEO4J_db_checkpoint_interval_time: "15m"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:7474"]
       interval: 10s
