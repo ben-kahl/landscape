@@ -1,4 +1,6 @@
 """Fuzzy entity resolution integration tests."""
+from datetime import UTC, datetime
+
 import pytest
 
 
@@ -149,3 +151,110 @@ async def test_same_as_edge_created(http_client, neo4j_driver, qdrant_client):
     body2 = r2.json()
     assert "entities_created" in body2
     assert "entities_reinforced" in body2
+
+
+# ---------------------------------------------------------------------------
+# Unknown-type cross-type resolver tests
+# ---------------------------------------------------------------------------
+
+
+async def _seed_person_entity(name: str) -> str:
+    """Create a PERSON entity in Neo4j + Qdrant and return its element id."""
+    from landscape.embeddings import encoder
+    from landscape.storage import neo4j_store, qdrant_store
+
+    doc_id, _ = await neo4j_store.merge_document(
+        content_hash=f"hash-res-{name.lower().replace(' ', '-')}",
+        title=f"res-seed-{name.lower().replace(' ', '-')}",
+        source_type="text",
+    )
+    entity_id = await neo4j_store.merge_entity(
+        name=name,
+        entity_type="Person",
+        source_doc=f"res-seed-{name}",
+        confidence=0.9,
+        doc_element_id=doc_id,
+        model="test",
+    )
+    vector = encoder.encode(f"{name} (Person)")
+    await qdrant_store.upsert_entity(
+        neo4j_element_id=entity_id,
+        name=name,
+        entity_type="Person",
+        source_doc=f"res-seed-{name}",
+        timestamp=datetime.now(UTC).isoformat(),
+        vector=vector,
+    )
+    return entity_id
+
+
+@pytest.mark.asyncio
+async def test_unknown_type_resolves_to_existing_person(http_client, neo4j_driver):
+    """entity_type='Unknown' with a name that closely matches an existing PERSON
+    should resolve to that entity (cross-type search, threshold 0.90)."""
+    from landscape.embeddings import encoder
+    from landscape.entities import resolver
+
+    existing_id = await _seed_person_entity("Alice Chen")
+
+    # Embed with Unknown type (as writeback.add_relation does)
+    vector = encoder.encode("Alice Chen (Unknown)")
+
+    canonical_id, is_new, sim = await resolver.resolve_entity(
+        name="Alice Chen",
+        entity_type="Unknown",
+        vector=vector,
+        source_doc="test-source",
+    )
+
+    assert not is_new, "Should have resolved to the existing Alice Chen (Person)"
+    assert canonical_id == existing_id, "canonical_id must point to the seeded entity"
+    assert sim is not None and sim >= resolver.UNKNOWN_TYPE_THRESHOLD
+
+
+@pytest.mark.asyncio
+async def test_unknown_type_no_match_below_threshold(http_client, neo4j_driver):
+    """entity_type='Unknown' for a completely different name should not resolve
+    (similarity < 0.90 even across all types) — is_new=True returned."""
+    from landscape.embeddings import encoder
+    from landscape.entities import resolver
+
+    # Seed a clearly different entity
+    await _seed_person_entity("Bob Thornton")
+
+    # Embed a name that is semantically unrelated
+    vector = encoder.encode("Qdrant Database (Unknown)")
+
+    canonical_id, is_new, sim = await resolver.resolve_entity(
+        name="Qdrant Database",
+        entity_type="Unknown",
+        vector=vector,
+        source_doc="test-source",
+    )
+
+    assert is_new, "Dissimilar entity should NOT resolve to Bob Thornton"
+    assert canonical_id is None
+
+
+@pytest.mark.asyncio
+async def test_typed_resolution_path_unchanged(http_client, neo4j_driver):
+    """Regression guard: resolving with a real type still uses the typed search
+    path (SIMILARITY_THRESHOLD=0.85) and returns the correct canonical id."""
+    from landscape.embeddings import encoder
+    from landscape.entities import resolver
+
+    existing_id = await _seed_person_entity("Carol Danvers")
+
+    # Embed with the same type as the stored entity
+    vector = encoder.encode("Carol Danvers (Person)")
+
+    canonical_id, is_new, sim = await resolver.resolve_entity(
+        name="Carol Danvers",
+        entity_type="Person",
+        vector=vector,
+        source_doc="test-source",
+    )
+
+    assert not is_new, "Typed resolution should find Carol Danvers (Person)"
+    assert canonical_id == existing_id
+    assert sim is not None and sim >= resolver.SIMILARITY_THRESHOLD

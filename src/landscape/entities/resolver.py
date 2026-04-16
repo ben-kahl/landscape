@@ -1,6 +1,11 @@
 from landscape.storage import neo4j_store, qdrant_store
 
 SIMILARITY_THRESHOLD = 0.85
+# Stricter threshold for cross-type resolution: when the caller passes
+# entity_type="Unknown" we can't filter Qdrant by type, so we widen the
+# search but require a higher cosine score to avoid false-positive collapses
+# between unrelated entities that share a name prefix.
+UNKNOWN_TYPE_THRESHOLD = 0.90
 
 
 async def resolve_entity(
@@ -13,14 +18,27 @@ async def resolve_entity(
     """
     Returns (canonical_neo4j_id, is_new, similarity).
     is_new=True means no match found — caller must create the entity.
-    """
-    candidates = await qdrant_store.search_similar_entities(
-        vector=vector,
-        entity_type=entity_type,
-        limit=5,
-    )
 
-    if not candidates or candidates[0].score < threshold:
+    When entity_type is "Unknown" (the default for agent-authored relation
+    endpoints), we search across *all* types with a stricter 0.90 threshold
+    so an existing ``Alice (PERSON)`` is found before a duplicate
+    ``Alice (Unknown)`` is created.
+    """
+    if entity_type == "Unknown":
+        candidates = await qdrant_store.search_entities_any_type(
+            vector=vector,
+            limit=5,
+        )
+        effective_threshold = UNKNOWN_TYPE_THRESHOLD
+    else:
+        candidates = await qdrant_store.search_similar_entities(
+            vector=vector,
+            entity_type=entity_type,
+            limit=5,
+        )
+        effective_threshold = threshold
+
+    if not candidates or candidates[0].score < effective_threshold:
         return (None, True, None)
 
     best = candidates[0]

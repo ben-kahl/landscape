@@ -463,7 +463,8 @@ async def upsert_relation(
             # Create the new edge with provenance
             result2 = await session.run(
                 """
-                MATCH (s:Entity {name: $subject}), (o:Entity {name: $object})
+                MATCH (s:Entity {name: $subject}) WITH s LIMIT 1
+                MATCH (o:Entity {name: $object}) WITH s, o LIMIT 1
                 CREATE (s)-[r:RELATES_TO {
                     type: $rel_type,
                     confidence: $confidence,
@@ -499,7 +500,8 @@ async def upsert_relation(
             fresh_docs.append(agent_entry)
         result = await session.run(
             """
-            MATCH (s:Entity {name: $subject}), (o:Entity {name: $object})
+            MATCH (s:Entity {name: $subject}) WITH s LIMIT 1
+            MATCH (o:Entity {name: $object}) WITH s, o LIMIT 1
             CREATE (s)-[r:RELATES_TO {
                 type: $rel_type,
                 confidence: $confidence,

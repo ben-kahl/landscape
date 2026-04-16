@@ -195,6 +195,76 @@ async def test_add_relation_supersedes_when_functional(http_client, neo4j_driver
 
 
 @pytest.mark.asyncio
+async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_driver):
+    """Regression: when add_relation is called with a subject whose name already
+    exists as a different type (PERSON), the Unknown-type resolution path must
+    find the existing node — not create a second Alice (Unknown) duplicate.
+
+    Failure mode before fix: resolver.resolve_entity called
+    qdrant_store.search_similar_entities(..., entity_type="Unknown", ...) which
+    found no match because Qdrant filtered by type="Unknown".  A second node
+    "Alice (Unknown)" was created.  upsert_relation then matched BOTH nodes,
+    creating N cartesian-product edges.
+    """
+    from datetime import UTC, datetime
+
+    from landscape.embeddings import encoder
+    from landscape.storage import neo4j_store, qdrant_store
+    from landscape.writeback import add_relation
+
+    # Seed Alice as a PERSON entity (simulating prior ingest pipeline output)
+    doc_id, _ = await neo4j_store.merge_document("hash-wb-dup", "wb-dup-doc", "text")
+    alice_id = await neo4j_store.merge_entity(
+        "Alice", "Person", "wb-dup-doc", 0.9, doc_id, "test"
+    )
+    vector = encoder.encode("Alice (Person)")
+    await qdrant_store.upsert_entity(
+        neo4j_element_id=alice_id,
+        name="Alice",
+        entity_type="Person",
+        source_doc="wb-dup-doc",
+        timestamp=datetime.now(UTC).isoformat(),
+        vector=vector,
+    )
+
+    # Agent writes a relation with subject "Alice" — type not supplied, defaults to Unknown
+    result = await add_relation(
+        "Alice",
+        "Beacon",
+        "WORKS_FOR",
+        source="agent:test:dup",
+        session_id="s-dup",
+        turn_id="t-dup",
+    )
+
+    assert result.outcome in ("created", "reinforced", "superseded")
+
+    # Assert: exactly one Entity node named 'Alice' (no Unknown duplicate)
+    async with neo4j_driver.session() as session:
+        alice_count_rec = await (
+            await session.run(
+                "MATCH (e:Entity {name: 'Alice'}) RETURN count(e) AS cnt"
+            )
+        ).single()
+        edge_count_rec = await (
+            await session.run(
+                "MATCH (s:Entity {name: 'Alice'})-[r:RELATES_TO]->(o:Entity {name: 'Beacon'}) "
+                "WHERE r.valid_until IS NULL "
+                "RETURN count(r) AS cnt"
+            )
+        ).single()
+
+    assert alice_count_rec["cnt"] == 1, (
+        f"Expected exactly 1 Alice node, got {alice_count_rec['cnt']} — "
+        "Unknown-type cross-type resolution likely failed, creating a duplicate."
+    )
+    assert edge_count_rec["cnt"] == 1, (
+        f"Expected exactly 1 Alice->Beacon edge, got {edge_count_rec['cnt']} — "
+        "cartesian product in upsert_relation likely occurred."
+    )
+
+
+@pytest.mark.asyncio
 async def test_status_summary_shape(http_client, neo4j_driver):
     """After a few writes, status_summary returns correctly shaped StatusSummary."""
     from landscape.writeback import add_entity, add_relation, status_summary
