@@ -265,6 +265,190 @@ async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_drive
 
 
 @pytest.mark.asyncio
+async def test_add_entity_with_session_turn_creates_conversation_graph(http_client, neo4j_driver):
+    """add_entity with session_id+turn_id must create Conversation/Turn nodes and
+    :MENTIONED_IN edge, and must NOT create a synthetic Document for this write."""
+    from landscape.writeback import add_entity
+
+    result = await add_entity(
+        "Bob",
+        "Person",
+        source="agent:s1:t1",
+        session_id="s1",
+        turn_id="t1",
+    )
+
+    assert result.resolved_to_existing is False
+    assert result.entity_id
+
+    async with neo4j_driver.session() as session:
+        # Conversation node must exist
+        conv_rec = await (
+            await session.run(
+                "MATCH (c:Conversation {id: 's1'}) RETURN elementId(c) AS cid"
+            )
+        ).single()
+        assert conv_rec is not None, ":Conversation {id: 's1'} not found"
+
+        # Turn node must exist with composite id
+        turn_rec = await (
+            await session.run(
+                "MATCH (t:Turn {id: 's1:t1'}) RETURN elementId(t) AS tid"
+            )
+        ).single()
+        assert turn_rec is not None, ":Turn {id: 's1:t1'} not found"
+
+        # HAS_TURN edge must exist
+        edge_rec = await (
+            await session.run(
+                "MATCH (:Conversation {id: 's1'})-[:HAS_TURN]->(:Turn {id: 's1:t1'}) "
+                "RETURN count(*) AS cnt"
+            )
+        ).single()
+        assert edge_rec["cnt"] == 1, ":HAS_TURN edge missing"
+
+        # MENTIONED_IN edge must exist
+        mention_rec = await (
+            await session.run(
+                "MATCH (:Entity {name: 'Bob'})-[:MENTIONED_IN]->(:Turn {id: 's1:t1'}) "
+                "RETURN count(*) AS cnt"
+            )
+        ).single()
+        assert mention_rec["cnt"] == 1, ":MENTIONED_IN edge missing"
+
+        # No synthetic Document should have been created for this write
+        doc_rec = await (
+            await session.run(
+                "MATCH (d:Document {title: 'agent:s1:t1'}) RETURN count(d) AS cnt"
+            )
+        ).single()
+        assert doc_rec["cnt"] == 0, "Synthetic :Document was created despite session+turn being provided"
+
+
+@pytest.mark.asyncio
+async def test_add_entity_without_session_turn_falls_back_to_document(http_client, neo4j_driver):
+    """add_entity WITHOUT session_id/turn_id should fall back to synthetic Document
+    and must NOT create any Turn nodes."""
+    from landscape.writeback import add_entity
+
+    result = await add_entity(
+        "Carol",
+        "Person",
+        source="agent:no-session",
+    )
+
+    assert result.resolved_to_existing is False
+
+    async with neo4j_driver.session() as session:
+        # Synthetic Document must exist keyed by source
+        doc_rec = await (
+            await session.run(
+                "MATCH (d:Document {title: 'agent:no-session'}) RETURN count(d) AS cnt"
+            )
+        ).single()
+        assert doc_rec["cnt"] == 1, "Synthetic :Document not created for no-session path"
+
+        # EXTRACTED_FROM edge must exist
+        ef_rec = await (
+            await session.run(
+                "MATCH (:Entity {name: 'Carol'})-[:EXTRACTED_FROM]->(:Document {title: 'agent:no-session'}) "
+                "RETURN count(*) AS cnt"
+            )
+        ).single()
+        assert ef_rec["cnt"] == 1, ":EXTRACTED_FROM edge missing"
+
+        # No Turn nodes should exist
+        turn_rec = await (
+            await session.run("MATCH (t:Turn) RETURN count(t) AS cnt")
+        ).single()
+        assert turn_rec["cnt"] == 0, ":Turn node was created despite no session+turn"
+
+
+@pytest.mark.asyncio
+async def test_existing_entity_mention_in_new_turn_creates_mentioned_in(http_client, neo4j_driver):
+    """An existing entity mentioned again in a later turn should get a new
+    :MENTIONED_IN edge for that turn without creating a duplicate entity node."""
+    from landscape.writeback import add_entity
+
+    # Seed Alice in turn t1
+    r1 = await add_entity("Alice", "Person", source="seed", session_id="s2", turn_id="t1")
+    assert r1.resolved_to_existing is False
+
+    # Mention Alice again in turn t2 — should resolve to existing
+    r2 = await add_entity("Alice", "Person", source="agent:s2:t2", session_id="s2", turn_id="t2")
+    assert r2.resolved_to_existing is True
+    assert r2.entity_id == r1.entity_id
+
+    async with neo4j_driver.session() as session:
+        # Exactly one Alice node
+        node_cnt = await (
+            await session.run(
+                "MATCH (e:Entity {name: 'Alice'}) RETURN count(e) AS cnt"
+            )
+        ).single()
+        assert node_cnt["cnt"] == 1, f"Expected 1 Alice node, got {node_cnt['cnt']}"
+
+        # Two :MENTIONED_IN edges (one per turn)
+        mention_cnt = await (
+            await session.run(
+                "MATCH (:Entity {name: 'Alice'})-[:MENTIONED_IN]->(:Turn) RETURN count(*) AS cnt"
+            )
+        ).single()
+        assert mention_cnt["cnt"] == 2, (
+            f"Expected 2 :MENTIONED_IN edges (t1 + t2), got {mention_cnt['cnt']}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_add_relation_with_session_turn_links_entities_to_turn(http_client, neo4j_driver):
+    """add_relation with session+turn should link both endpoints via :MENTIONED_IN
+    and the RELATES_TO edge should carry session_id/turn_id/created_by properties."""
+    from landscape.writeback import add_relation
+
+    result = await add_relation(
+        "Dave",
+        "Initech",
+        "WORKS_FOR",
+        source="agent:s3:t1",
+        session_id="s3",
+        turn_id="t1",
+    )
+
+    assert result.outcome in ("created", "reinforced", "superseded")
+
+    async with neo4j_driver.session() as session:
+        # Both Dave and Initech must be linked to the turn
+        dave_rec = await (
+            await session.run(
+                "MATCH (:Entity {name: 'Dave'})-[:MENTIONED_IN]->(:Turn {id: 's3:t1'}) "
+                "RETURN count(*) AS cnt"
+            )
+        ).single()
+        assert dave_rec["cnt"] == 1, "Dave missing :MENTIONED_IN -> Turn s3:t1"
+
+        initech_rec = await (
+            await session.run(
+                "MATCH (:Entity {name: 'Initech'})-[:MENTIONED_IN]->(:Turn {id: 's3:t1'}) "
+                "RETURN count(*) AS cnt"
+            )
+        ).single()
+        assert initech_rec["cnt"] == 1, "Initech missing :MENTIONED_IN -> Turn s3:t1"
+
+        # RELATES_TO edge must carry provenance properties
+        edge_rec = await (
+            await session.run(
+                "MATCH (:Entity {name: 'Dave'})-[r:RELATES_TO {type: 'WORKS_FOR'}]->(:Entity {name: 'Initech'}) "
+                "WHERE r.valid_until IS NULL "
+                "RETURN r.session_id AS sid, r.turn_id AS tid, r.created_by AS cb"
+            )
+        ).single()
+        assert edge_rec is not None, "RELATES_TO edge not found"
+        assert edge_rec["sid"] == "s3"
+        assert edge_rec["tid"] == "t1"
+        assert edge_rec["cb"] == "agent"
+
+
+@pytest.mark.asyncio
 async def test_status_summary_shape(http_client, neo4j_driver):
     """After a few writes, status_summary returns correctly shaped StatusSummary."""
     from landscape.writeback import add_entity, add_relation, status_summary

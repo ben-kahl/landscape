@@ -15,6 +15,7 @@ Design note — missing endpoints in ``add_relation``:
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -54,6 +55,41 @@ class StatusSummary:
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_provenance(
+    source: str,
+    session_id: str | None,
+    turn_id: str | None,
+) -> tuple[str | None, str | None]:
+    """Return ``(doc_element_id, turn_element_id)``. Exactly one is non-None.
+
+    If *both* ``session_id`` and ``turn_id`` are provided: ensure the
+    :Conversation and :Turn nodes exist (``merge_turn`` auto-creates the parent
+    conversation via MERGE) and return ``(None, turn_element_id)``.
+
+    Otherwise: create/reuse a lightweight sentinel :Document keyed by
+    ``sha256("agent-source:{source}")`` and return ``(doc_element_id, None)``.
+    The sentinel document is idempotent — repeated calls with the same
+    ``source`` string reuse the same node.
+    """
+    if session_id is not None and turn_id is not None:
+        turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
+        return None, turn_element_id
+
+    # Synthetic-Document fallback (backwards-compatible path)
+    source_hash = hashlib.sha256(f"agent-source:{source}".encode()).hexdigest()
+    doc_id, _ = await neo4j_store.merge_document(
+        content_hash=source_hash,
+        title=source,
+        source_type="agent",
+    )
+    return doc_id, None
+
+
+# ---------------------------------------------------------------------------
 # Public async functions
 # ---------------------------------------------------------------------------
 
@@ -74,9 +110,14 @@ async def add_entity(
     2. Call ``resolver.resolve_entity`` to check for a near-duplicate canonical
        node.  The resolver searches Qdrant by type, so the entity_type must
        match for resolution to fire.
-    3. If resolved → return the canonical id/name without creating a new node.
+    3. If resolved → return the canonical id/name.  If session+turn were
+       provided, also add a :MENTIONED_IN edge — an agent mentioning an
+       existing entity in a new turn is meaningful provenance even when no new
+       node is created.
     4. If not resolved → create a new Neo4j entity node (``created_by="agent"``)
-       and upsert its embedding into Qdrant.
+       and upsert its embedding into Qdrant.  Provenance is anchored via
+       ``_resolve_provenance``: a :Turn link when session+turn are given,
+       otherwise a synthetic sentinel :Document.
     """
     vector = encoder.encode(f"{name} ({entity_type})")
 
@@ -91,23 +132,20 @@ async def add_entity(
         # Resolved to an existing canonical node — fetch its name for the caller.
         existing = await neo4j_store.find_entity_by_element_id(canonical_id)
         canonical_name = existing["name"] if existing else name
+
+        # Still record the mention in this turn when session+turn are supplied.
+        if session_id is not None and turn_id is not None:
+            turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
+            await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id, confidence=confidence)
+
         return AddEntityResult(
             entity_id=canonical_id,
             canonical_name=canonical_name,
             resolved_to_existing=True,
         )
 
-    # No match — create a synthetic Document node so merge_entity's EXTRACTED_FROM
-    # edge has a valid target.  We use a lightweight sentinel document keyed by
-    # source so repeat agent writes to the same source are idempotent.
-    import hashlib
-
-    source_hash = hashlib.sha256(f"agent-source:{source}".encode()).hexdigest()
-    doc_id, _ = await neo4j_store.merge_document(
-        content_hash=source_hash,
-        title=source,
-        source_type="agent",
-    )
+    # No match — resolve provenance (Turn or synthetic Document) then create.
+    doc_id, turn_element_id = await _resolve_provenance(source, session_id, turn_id)
 
     entity_id = await neo4j_store.merge_entity(
         name=name,
@@ -120,6 +158,9 @@ async def add_entity(
         session_id=session_id,
         turn_id=turn_id,
     )
+
+    if turn_element_id is not None:
+        await neo4j_store.link_entity_to_turn(entity_id, turn_element_id, confidence=confidence)
 
     now = datetime.now(UTC).isoformat()
     await qdrant_store.upsert_entity(
