@@ -1,6 +1,6 @@
 import ollama
 
-from landscape.config import settings
+from landscape.config import LLM_PROFILES, settings
 from landscape.extraction.schema import Extraction
 
 _SYSTEM_PROMPT = (
@@ -94,12 +94,20 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _should_disable_thinking() -> bool:
+    profile = LLM_PROFILES.get(settings.llm_profile)
+    return profile is not None and not profile.thinking
+
+
 def extract(text: str) -> Extraction:
     client = ollama.Client(host=settings.ollama_url)
+    prompt = f"{_SYSTEM_PROMPT}\n\n{text}"
+    if _should_disable_thinking():
+        prompt = "/no_think\n" + prompt
     response = client.chat(
         model=settings.llm_model,
         messages=[
-            {"role": "user", "content": f"{_SYSTEM_PROMPT}\n\n{text}"},
+            {"role": "user", "content": prompt},
         ],
         format=Extraction.model_json_schema(),
     )

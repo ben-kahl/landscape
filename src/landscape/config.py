@@ -19,6 +19,7 @@ class LLMProfile:
     ollama_tag: str
     temperature: float = 0.0
     num_ctx: int = 8192
+    thinking: bool = False
     notes: str = ""
 
 
@@ -28,6 +29,20 @@ LLM_PROFILES: dict[str, LLMProfile] = {
     "llama31_8b": LLMProfile(
         ollama_tag="llama3.1:8b",
         notes="Phase 2 baseline. Known-good for the killer-demo corpus.",
+    ),
+    #"gemma4_e4b": LLMProfile(
+    #   ollama_tag="gemma4:e4b",
+    #   notes="Gemma4 experiment. State of the art edge local model.",
+    #),
+    "qwen3_8b": LLMProfile(
+            ollama_tag="qwen3:8b",
+            thinking=True,
+            notes="Heard good things about qwen family",
+    ),
+    "qwen3_8b_nothink": LLMProfile(
+            ollama_tag="qwen3:8b",
+            thinking=False,
+            notes="Qwen 3 8B with thinking disabled — speed vs quality test",
     ),
 }
 

@@ -139,9 +139,12 @@ def run_profile(profile_name: str) -> ProfileResult:
     profile = LLM_PROFILES[profile_name]
     result = ProfileResult(profile=profile_name, ollama_tag=profile.ollama_tag)
 
-    # Temporarily swap settings.llm_model to this profile's tag
-    original = settings.llm_model
+    # Temporarily swap settings to this profile so extract() sees the right
+    # llm_model and llm_profile (the latter controls thinking mode).
+    original_model = settings.llm_model
+    original_profile = settings.llm_profile
     settings.llm_model = profile.ollama_tag
+    settings.llm_profile = profile_name
 
     total_ent_prec_hits, total_ent_prec_total = 0, 0
     total_ent_rec_hits, total_ent_rec_total = 0, 0
@@ -204,7 +207,8 @@ def run_profile(profile_name: str) -> ProfileResult:
                 total_rel_prec_total += len(ext_rels)
 
     finally:
-        settings.llm_model = original
+        settings.llm_model = original_model
+        settings.llm_profile = original_profile
 
     ep = total_ent_prec_hits / total_ent_prec_total if total_ent_prec_total else 0
     er = total_ent_rec_hits / total_ent_rec_total if total_ent_rec_total else 0
