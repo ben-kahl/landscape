@@ -249,3 +249,71 @@ async def test_status_returns_summary(http_client):
         assert key in data, f"Missing key '{key}' in status response"
     assert isinstance(data["top_entities"], list)
     assert isinstance(data["recent_agent_writes"], list)
+
+
+@pytest.mark.asyncio
+async def test_search_accepts_session_id_and_since_hours(http_client):
+    """search() with session_id and since_hours kwargs should not error."""
+    await _seed_document()
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "search",
+            {
+                "query": "Maria Santos",
+                "hops": 1,
+                "limit": 5,
+                "session_id": "test-session-search-kwargs",
+                "since_hours": 24,
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+    assert "results" in data
+    assert "touched_entity_count" in data
+
+
+@pytest.mark.asyncio
+async def test_conversation_history_round_trips(http_client):
+    """conversation_history returns the seeded conversation and turn with entity."""
+    from landscape.storage import neo4j_store
+
+    sid = "mcp-ch-test-1"
+    turn_eid, _ = await neo4j_store.merge_turn(sid, "t1", turn_number=1, role="user", summary="hi")
+    eid = await neo4j_store.merge_entity(
+        "ConvEntity", "ORGANIZATION", f"doc-{sid}", 0.9, doc_element_id=None, model="test"
+    )
+    await neo4j_store.link_entity_to_turn(eid, turn_eid)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "conversation_history",
+            {"session_id": sid, "limit": 10},
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+
+    assert data["conversation"] is not None
+    assert data["conversation"]["id"] == sid
+    turns = data["turns"]
+    assert len(turns) == 1
+    assert turns[0]["turn_id"] == "t1"
+    entity_names = [e["name"] for e in turns[0]["entities_mentioned"]]
+    assert "ConvEntity" in entity_names
+
+
+@pytest.mark.asyncio
+async def test_conversation_history_unknown_session(http_client):
+    """conversation_history with an unknown session_id returns null conversation and empty turns."""
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "conversation_history",
+            {"session_id": "mcp-ch-nonexistent-999", "limit": 10},
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+    assert data["conversation"] is None
+    assert data["turns"] == []

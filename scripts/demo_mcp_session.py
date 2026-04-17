@@ -331,6 +331,37 @@ async def run_demo() -> None:
                 print(f"  EXCEPTION: {exc}")
             print()
 
+            # -------------------------------------------------------------- #
+            # Step 7: Conversation replay (conversation_history)             #
+            # -------------------------------------------------------------- #
+            print("==== Step 7: Conversation replay (conversation_history) ====")
+            try:
+                result = await session.call_tool(
+                    "conversation_history",
+                    {"session_id": "demo-mcp-1", "limit": 10},
+                )
+                if result.isError:
+                    print(f"  ERROR: {result.content[0].text if result.content else 'unknown'}")
+                else:
+                    data = _parse(result)
+                    conv = data.get("conversation")
+                    turns = data.get("turns", [])
+                    conv_id = conv.get("id") if conv else "N/A"
+                    conv_title = conv.get("title") if conv else "N/A"
+                    print(f"  -> conversation_history(session_id=demo-mcp-1)")
+                    print(f"     conversation id={conv_id}  title={conv_title}")
+                    for t in turns:
+                        entities = [e.get("name") for e in t.get("entities_mentioned", [])]
+                        print(f"     turn_id={t.get('turn_id')}  ts={t.get('timestamp')}  "
+                              f"entities={entities}")
+                    if turns:
+                        print("  [OK] Conversation history round-trips")
+                    else:
+                        print("  [WARN] No turns returned")
+            except Exception as exc:
+                print(f"  EXCEPTION: {exc}")
+            print()
+
     print("==== Demo complete ====")
 
 

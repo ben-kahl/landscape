@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 
 from mcp.server.fastmcp import FastMCP
 
@@ -60,7 +61,13 @@ async def _ensure_init() -> None:
 
 
 @mcp.tool()
-async def search(query: str, hops: int = 2, limit: int = 10) -> str:
+async def search(
+    query: str,
+    hops: int = 2,
+    limit: int = 10,
+    session_id: str | None = None,
+    since_hours: int | None = None,
+) -> str:
     """Hybrid retrieval over the Landscape knowledge graph.
 
     Combines vector similarity (Qdrant) with graph BFS expansion (Neo4j) to
@@ -68,9 +75,11 @@ async def search(query: str, hops: int = 2, limit: int = 10) -> str:
     ranked by a composite score (vector_sim × graph_distance × recency).
 
     Args:
-        query: Natural-language search query.
-        hops:  BFS depth for graph expansion (1–3 recommended). Default 2.
-        limit: Maximum number of results to return. Default 10.
+        query:       Natural-language search query.
+        hops:        BFS depth for graph expansion (1–3 recommended). Default 2.
+        limit:       Maximum number of results to return. Default 10.
+        session_id:  If supplied, tag retrieval reinforcement to this session.
+        since_hours: If supplied (int > 0), exclude facts older than this many hours.
 
     Returns:
         JSON object ``{results: [{name, type, score, path_edge_types}],
@@ -79,7 +88,12 @@ async def search(query: str, hops: int = 2, limit: int = 10) -> str:
     await _ensure_init()
     from landscape.retrieval.query import retrieve
 
-    result = await retrieve(query, hops=hops, limit=limit)
+    since = (
+        datetime.now(UTC) - timedelta(hours=since_hours)
+        if since_hours and since_hours > 0
+        else None
+    )
+    result = await retrieve(query, hops=hops, limit=limit, session_id=session_id, since=since)
     output = {
         "results": [
             {
@@ -358,6 +372,29 @@ async def status() -> str:
 
     summary = await status_summary()
     return json.dumps(asdict(summary))
+
+
+# ---------------------------------------------------------------------------
+# Tool: conversation_history
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def conversation_history(session_id: str, limit: int = 10) -> str:
+    """Return the turns of a conversation in chronological order with entities mentioned in each.
+
+    Args:
+        session_id: Conversation session identifier.
+        limit:      Max turns to return (ordered by timestamp ASC). Default 10.
+
+    Returns:
+        JSON of {conversation: {...} | null, turns: [{..., entities_mentioned: [...]}]}.
+    """
+    await _ensure_init()
+    from landscape.storage import neo4j_store
+
+    detail = await neo4j_store.get_conversation_detail(session_id, turn_limit=limit)
+    return json.dumps(detail, default=str)
 
 
 # ---------------------------------------------------------------------------
