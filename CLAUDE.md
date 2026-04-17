@@ -13,41 +13,8 @@ Most agent memory systems store memories as vectors and retrieve by semantic sim
 # Agent Instructions
 * Planning: Use Opus for architectural decisions, task decomposition, and creating a detailed plan.md
 * Implementation: Delegate all command execution and file edits to sonnet subagents, ensuring they follow Opus generated plan exactly.
-* Workflow: If requirements are ambiguous, escalate to Opus immediately and get approval from user.
-
-## Competitive Landscape
-
-### MemPalace (Jovovich/Sigman, April 2026)
-- 19K+ GitHub stars, 96.6% LongMemEval score
-- Stores verbatim conversations in a single ChromaDB collection with spatial "palace" metaphor
-- **Critical gaps (confirmed by independent code analysis):**
-  - "Knowledge graph" is flat SQLite triple lookups — no traversal, no multi-hop
-  - Entity resolution is slug-based exact matching only (alice_obrien)
-  - Contradiction detection does not exist in codebase despite README claims
-  - Retrieval is ChromaDB nearest-neighbor only — no hybrid search
-  - Extraction is regex/keyword — no LLM, misses implicit relationships
-  - 96.6% benchmark is just ChromaDB vector search, not the palace structure
-- **Genuine strengths worth learning from:**
-  - ~170 token wake-up cost (L0+L1 progressive loading)
-  - Zero-LLM write path = zero API cost on writes
-  - MCP integration pattern (PALACE_PROTOCOL in status output)
-  - Verbatim storage philosophy avoids premature information loss
-
-### Microsoft GraphRAG
-- LLM-powered entity/relationship extraction into knowledge graph
-- Community detection + hierarchical summarization for global queries
-- Local Search (entity neighborhood), Global Search (community summaries), DRIFT Search
-- **Key differences from Landscape:**
-  - Document QA system, not agent memory — batch index then query, no continuous ingestion
-  - No temporal awareness or fact evolution
-  - No MCP integration for live agent read/write
-  - Production path targets Azure cloud (Cosmos DB), not local-first
-  - Community detection is genuinely novel — Landscape doesn't have this (yet)
-
-### Zep Graphiti
-- Real Neo4j graph with community detection, episodic memory, BFS retrieval, entity resolution
-- Closest to Landscape's architecture
-- **Gap:** Requires Neo4j cloud services and API costs. Not local-first. Commercial/proprietary.
+* Questions: If requirements are ambiguous, escalate to Opus immediately and get approval from user.
+* Workflow is always: Plan -> Implement -> Test -> Review -> Push
 
 ## Landscape's Specific Differentiators
 
@@ -62,24 +29,6 @@ Most agent memory systems store memories as vectors and retrieve by semantic sim
 5. **Continuous ingestion** — Agents write new memories during conversation. GraphRAG requires batch reindexing. MemPalace supports this via MCP add_drawer but without graph integration.
 
 6. **Fully local** — Docker Compose: Neo4j + Qdrant + Ollama + FastAPI. No cloud accounts, no API costs.
-
-## The Killer Demo
-
-Feed the agent 5-10 documents about a fictional company (org charts, meeting notes, architecture decisions, project updates). Then ask questions at increasing complexity:
-
-**1-hop (vector search handles this):**
-> "What database does Project Atlas use?"
-Vector similarity finds the chunk mentioning "Project Atlas uses PostgreSQL." Both approaches work.
-
-**2-hop (vector search starts failing):**
-> "Who approved the database choice for Project Atlas?"
-Requires connecting: (1) Atlas uses PostgreSQL (arch doc) → (2) Sarah approved the PostgreSQL migration (meeting notes). Landscape traverses the graph. ChromaDB may miss this.
-
-**3-hop (vector search fails reliably):**
-> "What team does the person who approved Atlas's database work on?"
-Requires: Atlas → PostgreSQL → Sarah → Platform Team. Three traversal steps. No single chunk contains this chain. Landscape follows the graph. Vector-only returns irrelevant results.
-
-**The punchline:** Side-by-side comparison showing Landscape's retrieved context (correct subgraph) vs ChromaDB-only (semantically similar but wrong chunks). The graph path is the proof.
 
 ## Tech Stack
 
@@ -243,7 +192,3 @@ An earlier version of `upsert_relation` treated *every* `(subject, rel_type)` co
 - Functional-with-history semantics (e.g. `WORKS_FOR` — Alice genuinely moves companies). The current whitelist is correct for these: the old edge gets `valid_until` set and the new one is live.
 - Pluggable-functionality: some orgs genuinely have multiple parents (`BELONGS_TO` across acquisitions). The fix is conservative — if you need multi-parent, omit `BELONGS_TO` from the functional set.
 - The 7-doc killer-demo corpus validates the fix against an LLM extraction pipeline, not just unit tests. See `tests/test_killer_demo.py` and `tests/fixtures/killer_demo_corpus/`.
-
-## Key Implementation Instructions
-
-* Workflow is always: Plan -> Implement -> Test -> Review -> Push
