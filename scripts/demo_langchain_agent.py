@@ -122,13 +122,15 @@ async def _search_memory(query: str) -> str:
     return "\n".join(lines)
 
 
-async def _record_relation(subject: str, object: str, rel_type: str) -> str:
+async def _record_relation(subject: str, subject_type: str, object: str, object_type: str, rel_type: str) -> str:
     """Record a relationship between two entities in Landscape memory."""
     from landscape import writeback
 
     result = await writeback.add_relation(
         subject=subject,
+        subject_type=subject_type,
         object_=object,
+        object_type=object_type,
         rel_type=rel_type,
         source=f"agent:{DEMO_SESSION_ID}:{_active_turn_id}",
         session_id=DEMO_SESSION_ID,
@@ -217,8 +219,20 @@ def build_agent():
 
     class RecordRelationInput(BaseModel):
         subject: str = Field(description="The entity that is the subject of the relation.")
+        subject_type: str = Field(
+            description=(
+                "Entity type of the subject. Required. Common types: Person, Organization, "
+                "Project, Technology, Location, Concept, Event, Document."
+            )
+        )
         object: str = Field(  # noqa: A002 -- tool param name must match description
             description="The entity that is the object of the relation."
+        )
+        object_type: str = Field(
+            description=(
+                "Entity type of the object. Required. Common types: Person, Organization, "
+                "Project, Technology, Location, Concept, Event, Document."
+            )
         )
         rel_type: str = Field(
             description=(
@@ -236,9 +250,9 @@ def build_agent():
     def _search_sync(query: str) -> str:
         return asyncio.get_event_loop().run_until_complete(_search_memory(query))
 
-    def _record_sync(subject: str, object: str, rel_type: str) -> str:  # noqa: A002
+    def _record_sync(subject: str, subject_type: str, object: str, object_type: str, rel_type: str) -> str:  # noqa: A002
         return asyncio.get_event_loop().run_until_complete(
-            _record_relation(subject, object, rel_type)
+            _record_relation(subject, subject_type, object, object_type, rel_type)
         )
 
     search_tool = StructuredTool.from_function(
@@ -259,6 +273,7 @@ def build_agent():
         description=(
             "Record a new relationship between two entities in memory. "
             "Use this when the user shares new information to update what is known. "
+            "You must supply subject_type and object_type (e.g. Person, Organization, Project, Technology). "
             "For employment changes (joining/moving to a company), always use rel_type=WORKS_FOR."
         ),
         args_schema=RecordRelationInput,
@@ -272,6 +287,8 @@ def build_agent():
         "When a user asks about something, call search_memory first to look it up. "
         "Important: when recording that someone has moved to or joined a company/org, "
         "always use rel_type=WORKS_FOR, not LOCATED_IN. "
+        "Always supply subject_type and object_type when calling record_relation "
+        "(e.g. Person, Organization, Project, Technology). "
         "Be concise and direct."
     )
 

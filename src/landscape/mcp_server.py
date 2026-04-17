@@ -201,7 +201,9 @@ async def add_entity(
 @mcp.tool()
 async def add_relation(
     subject: str,
+    subject_type: str,
     object: str,
+    object_type: str,
     rel_type: str,
     source: str,
     session_id: str,
@@ -210,7 +212,14 @@ async def add_relation(
 ) -> str:
     """Persist an agent-authored relationship between two entities.
 
-    Both endpoints are auto-created (type ``Unknown``) if they don't exist.
+    Both ``subject_type`` and ``object_type`` are required.  You must declare
+    what kind of entities you are relating — this is enforced to prevent
+    Unknown-typed nodes from accumulating in the graph and degrading retrieval
+    quality.  Common canonical types: Person, Organization, Project,
+    Technology, Location, Concept, Event, Document.
+
+    Endpoints are auto-resolved against existing nodes of the declared type,
+    or auto-created with the supplied types if no near-duplicate is found.
     ``rel_type`` is normalised to the canonical vocabulary before write:
     first via a string-synonym map, then via embedding-based coercion if the
     supplied type is semantically closer to a different canonical.
@@ -223,13 +232,17 @@ async def add_relation(
     meaningful and avoids graph cruft from synthetic Document nodes.
 
     Args:
-        subject:    Name of the subject entity.
-        object:     Name of the object entity.
-        rel_type:   Relationship type (e.g. "WORKS_FOR", "LEADS").
-        source:     Provenance label.
-        session_id: Conversation session identifier.
-        turn_id:    Turn identifier within the session.
-        confidence: Extraction confidence.  Default 0.8.
+        subject:      Name of the subject entity (e.g. "Alice Chen").
+        subject_type: Entity type of the subject. Required. Examples: "Person",
+                      "Organization", "Project", "Technology".
+        object:       Name of the object entity (e.g. "Beacon Corp").
+        object_type:  Entity type of the object. Required. Examples: "Person",
+                      "Organization", "Project", "Technology".
+        rel_type:     Relationship type (e.g. "WORKS_FOR", "LEADS").
+        source:       Provenance label.
+        session_id:   Conversation session identifier.
+        turn_id:      Turn identifier within the session.
+        confidence:   Extraction confidence.  Default 0.8.
 
     Returns:
         JSON object ``{relation_id, outcome, subject_id, object_id}`` where
@@ -256,7 +269,9 @@ async def add_relation(
 
     result = await _add_relation(
         subject,
+        subject_type,
         object,
+        object_type,
         rel_type,
         source=source,
         confidence=confidence,

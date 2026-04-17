@@ -142,7 +142,9 @@ async def test_add_relation_creates_or_supersedes(http_client):
             "add_relation",
             {
                 "subject": "Bob",
+                "subject_type": "Person",
                 "object": "Acme",
+                "object_type": "Organization",
                 "rel_type": "WORKS_FOR",
                 "source": "agent:test-session:2",
                 "session_id": "test-session",
@@ -168,7 +170,9 @@ async def test_add_relation_supersedes_functional_edge(http_client):
             "add_relation",
             {
                 "subject": "Carol",
+                "subject_type": "Person",
                 "object": "Acme",
+                "object_type": "Organization",
                 "rel_type": "WORKS_FOR",
                 "source": "agent:test-session:3a",
                 "session_id": "test-session",
@@ -184,7 +188,9 @@ async def test_add_relation_supersedes_functional_edge(http_client):
             "add_relation",
             {
                 "subject": "Carol",
+                "subject_type": "Person",
                 "object": "Beacon Corp",
+                "object_type": "Organization",
                 "rel_type": "WORKS_FOR",
                 "source": "agent:test-session:3b",
                 "session_id": "test-session",

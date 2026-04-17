@@ -4,13 +4,17 @@ Exposes structured ``add_entity`` and ``add_relation`` functions that the MCP
 server (Task 3) calls to let agents persist new facts into the graph + vector
 store, and a ``status_summary`` function for the MCP ``status`` tool.
 
-Design note — missing endpoints in ``add_relation``:
-    If the subject or object name doesn't resolve to an existing entity, we
-    auto-create it with ``entity_type="Unknown"``.  This matches the principle
-    that agents shouldn't have to pre-declare every entity before writing a
-    relation: the agent knows "Alice joined Beacon" — it doesn't know or care
-    whether Alice was already indexed.  The Unknown type propagates into the
-    graph and can be corrected later by a richer ingestion pass.
+Design note — endpoint types in ``add_relation``:
+    Both ``subject_type`` and ``object_type`` are required parameters.  Agents
+    must declare what kind of entities they are relating.  This avoids the
+    silent graph-quality degradation that occurred when endpoints were
+    auto-created with ``entity_type="Unknown"`` — Unknown-typed nodes bypass
+    the typed-similarity search path and accumulate as unresolvable cruft.
+
+    The Unknown-type cross-type resolution path in the resolver is still
+    available for callers that explicitly pass "Unknown" (e.g. when the type
+    is genuinely indeterminate), but this module no longer routes through it
+    by default.
 """
 
 from __future__ import annotations
@@ -154,7 +158,9 @@ async def add_entity(
 
 async def add_relation(
     subject: str,
+    subject_type: str,
     object_: str,
+    object_type: str,
     rel_type: str,
     *,
     source: str,
@@ -168,14 +174,27 @@ async def add_relation(
     must be anchored to a real conversation Turn for provenance to be
     meaningful.  Calls without them raise ``ValueError``.
 
-    Both endpoints are auto-resolved (or auto-created with type ``"Unknown"``)
-    if they don't already exist — the agent shouldn't have to pre-declare
-    entities before writing a relation.
+    Both endpoints are auto-resolved (or auto-created with the declared types)
+    if they don't already exist.  ``subject_type`` and ``object_type`` are
+    required: agents must declare what kind of entities they are relating so
+    that the resolver can find existing typed nodes and avoid creating Unknown-
+    typed duplicates that degrade graph quality.
 
     ``rel_type`` is normalised via ``normalize_relation_type`` before the edge
     is written, so callers may pass synonyms like ``"EMPLOYED_BY"`` and they
     will be stored as the canonical ``"WORKS_FOR"``.  Functional-type
     supersession semantics apply automatically.
+
+    Args:
+        subject:      Name of the subject entity (e.g. "Alice Chen").
+        subject_type: Entity type for the subject (e.g. "Person").  Required.
+        object_:      Name of the object entity (e.g. "Beacon Corp").
+        object_type:  Entity type for the object (e.g. "Organization").  Required.
+        rel_type:     Relationship type (e.g. "WORKS_FOR").
+        source:       Provenance label.
+        confidence:   Extraction confidence in [0, 1].  Default 0.8.
+        session_id:   Conversation session identifier.
+        turn_id:      Turn identifier within the session.
     """
     if not session_id or not turn_id:
         raise ValueError(
@@ -183,10 +202,10 @@ async def add_relation(
             "synthetic-Document provenance has been removed"
         )
 
-    # Resolve / create both endpoints (type Unknown if caller didn't supply one)
+    # Resolve / create both endpoints with the declared types
     subj_result = await add_entity(
         subject,
-        "Unknown",
+        subject_type,
         source=source,
         confidence=confidence,
         session_id=session_id,
@@ -194,7 +213,7 @@ async def add_relation(
     )
     obj_result = await add_entity(
         object_,
-        "Unknown",
+        object_type,
         source=source,
         confidence=confidence,
         session_id=session_id,

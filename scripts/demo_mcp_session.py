@@ -185,7 +185,9 @@ async def run_demo() -> None:
                     "add_relation",
                     {
                         "subject": "Alice",
+                        "subject_type": "Person",
                         "object": "Beacon",
+                        "object_type": "Organization",
                         "rel_type": "WORKS_FOR",
                         "source": "agent:demo-mcp-1:t2",
                         "session_id": "demo-mcp-1",

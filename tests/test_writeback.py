@@ -84,7 +84,9 @@ async def test_add_relation_creates_endpoints_if_missing(http_client, neo4j_driv
 
     result = await add_relation(
         "Diana Prince",
+        "Person",
         "Themyscira Corp",
+        "Organization",
         "WORKS_FOR",
         source="agent:test:3",
         session_id="s3",
@@ -128,7 +130,9 @@ async def test_add_relation_normalizes_rel_type(http_client, neo4j_driver):
 
     result = await add_relation(
         "Clark Kent",
+        "Person",
         "Daily Planet",
+        "Organization",
         "EMPLOYED_BY",          # synonym → WORKS_FOR
         source="agent:test:4",
         session_id="s4",
@@ -168,7 +172,9 @@ async def test_add_relation_supersedes_when_functional(http_client, neo4j_driver
     # Agent says Alice now works for Beacon — should supersede the old edge
     result = await add_relation(
         "Alice",
+        "Person",
         "Beacon",
+        "Organization",
         "WORKS_FOR",
         source="agent:test:5",
         session_id="s5",
@@ -201,8 +207,12 @@ async def test_add_relation_supersedes_when_functional(http_client, neo4j_driver
 @pytest.mark.asyncio
 async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_driver):
     """Regression: when add_relation is called with a subject whose name already
-    exists as a different type (PERSON), the Unknown-type resolution path must
-    find the existing node — not create a second Alice (Unknown) duplicate.
+    exists as a PERSON node, the resolver must find the existing node — not
+    create a second duplicate.
+
+    Also exercises the Unknown-type cross-type resolution path by passing
+    subject_type="Unknown" explicitly (still a valid value; the resolver falls
+    back to cross-type search when the type is "Unknown").
 
     Failure mode before fix: resolver.resolve_entity called
     qdrant_store.search_similar_entities(..., entity_type="Unknown", ...) which
@@ -231,10 +241,13 @@ async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_drive
         vector=vector,
     )
 
-    # Agent writes a relation with subject "Alice" — type not supplied, defaults to Unknown
+    # Agent writes a relation with subject_type="Unknown" — exercises the cross-type
+    # resolution path that finds the existing Person node despite the type mismatch.
     result = await add_relation(
         "Alice",
+        "Unknown",
         "Beacon",
+        "Organization",
         "WORKS_FOR",
         source="agent:test:dup",
         session_id="s-dup",
@@ -352,7 +365,9 @@ async def test_add_relation_without_session_turn_raises(http_client):
     with pytest.raises(ValueError, match="session_id and turn_id are required"):
         await add_relation(
             "Alice",
+            "Person",
             "Beacon",
+            "Organization",
             "WORKS_FOR",
             source="agent:no-session",
         )
@@ -401,7 +416,9 @@ async def test_add_relation_with_session_turn_links_entities_to_turn(http_client
 
     result = await add_relation(
         "Dave",
+        "Person",
         "Initech",
+        "Organization",
         "WORKS_FOR",
         source="agent:s3:t1",
         session_id="s3",
@@ -449,9 +466,9 @@ async def test_status_summary_shape(http_client, neo4j_driver):
 
     await add_entity("Bruce Wayne", "Person", source="agent:test:6", session_id="s6", turn_id="t1")
     await add_entity("Wayne Enterprises", "Organization", source="agent:test:6", session_id="s6", turn_id="t1")
-    await add_relation("Bruce Wayne", "Wayne Enterprises", "WORKS_FOR",
+    await add_relation("Bruce Wayne", "Person", "Wayne Enterprises", "Organization", "WORKS_FOR",
                        source="agent:test:6", session_id="s6", turn_id="t2")
-    await add_relation("Bruce Wayne", "Gotham City", "LOCATED_IN",
+    await add_relation("Bruce Wayne", "Person", "Gotham City", "Location", "LOCATED_IN",
                        source="agent:test:6", session_id="s6", turn_id="t3")
 
     summary = await status_summary()
@@ -512,4 +529,59 @@ async def test_status_summary_shape(http_client, neo4j_driver):
     ]
     assert len(write_keys) == len(set(write_keys)), (
         f"Duplicate entries in recent_agent_writes: {write_keys}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_relation_missing_types_raises():
+    """add_relation without subject_type or object_type must raise TypeError
+    (missing required positional arguments)."""
+    from landscape.writeback import add_relation
+
+    # Missing both subject_type and object_type
+    with pytest.raises(TypeError):
+        await add_relation(
+            "Alice",
+            "Beacon",      # positional — this lands on subject_type
+            # object_type, rel_type, source are now missing → TypeError
+        )
+
+
+@pytest.mark.asyncio
+async def test_add_relation_endpoints_have_correct_types(http_client, neo4j_driver):
+    """Endpoints created via add_relation must have the declared types — not 'Unknown'."""
+    from landscape.writeback import add_relation
+
+    await add_relation(
+        "Eve",
+        "Person",
+        "Nexus Corp",
+        "Organization",
+        "WORKS_FOR",
+        source="agent:test:types",
+        session_id="s-types",
+        turn_id="t1",
+    )
+
+    async with neo4j_driver.session() as session:
+        subj_rec = await (
+            await session.run(
+                "MATCH (e:Entity {name: 'Eve'}) RETURN e.type AS t"
+            )
+        ).single()
+        obj_rec = await (
+            await session.run(
+                "MATCH (e:Entity {name: 'Nexus Corp'}) RETURN e.type AS t"
+            )
+        ).single()
+
+    assert subj_rec is not None
+    assert subj_rec["t"] == "Person", (
+        f"Expected subject type 'Person', got {subj_rec['t']!r} — "
+        "endpoint was likely auto-created as 'Unknown'"
+    )
+    assert obj_rec is not None
+    assert obj_rec["t"] == "Organization", (
+        f"Expected object type 'Organization', got {obj_rec['t']!r} — "
+        "endpoint was likely auto-created as 'Unknown'"
     )
