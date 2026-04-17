@@ -1,0 +1,1 @@
+Felix Park introduced Alice Chen to Hiro Tanaka years ago when they all worked together at Atlas Robotics. Hiro Tanaka later became Alice's manager on the perception team. Hiro now runs his own consulting firm called Tanaka Labs.

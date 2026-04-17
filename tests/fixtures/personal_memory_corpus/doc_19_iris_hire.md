@@ -1,0 +1,1 @@
+Iris Morales joined Alice Chen's team at Beacon AI in April as a senior research engineer. Iris previously worked at a startup called Lumen Robotics where Alice Chen had been an advisor. Alice recommended Iris for the role.

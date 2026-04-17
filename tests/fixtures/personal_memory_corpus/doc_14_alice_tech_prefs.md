@@ -1,0 +1,1 @@
+Alice Chen's favorite programming language is Python, which she has used for most of her career. For performance-critical work she recommends Rust. She told her team that PyTorch is still her preferred framework for training models.

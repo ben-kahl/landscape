@@ -1,0 +1,1 @@
+Alice Chen recommended a weekend Python course to the principal of Maplewood Elementary, where her daughter Clara Chen-Carter is a student. The course is taught by Daniel Chen, Alice's brother, who volunteers at the school twice a month.
