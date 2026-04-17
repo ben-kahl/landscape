@@ -211,7 +211,9 @@ async def add_relation(
     """Persist an agent-authored relationship between two entities.
 
     Both endpoints are auto-created (type ``Unknown``) if they don't exist.
-    ``rel_type`` is normalised to the canonical vocabulary before write.
+    ``rel_type`` is normalised to the canonical vocabulary before write:
+    first via a string-synonym map, then via embedding-based coercion if the
+    supplied type is semantically closer to a different canonical.
     Functional-relation supersession applies automatically: writing
     ``WORKS_FOR`` for an entity that already has a live ``WORKS_FOR`` edge
     will supersede the old edge and record an audit trail.
@@ -232,6 +234,22 @@ async def add_relation(
     Returns:
         JSON object ``{relation_id, outcome, subject_id, object_id}`` where
         *outcome* is ``"created"``, ``"reinforced"``, or ``"superseded"``.
+
+    Canonical relation types (synonyms are normalized; semantically-confused
+    types are coerced via embedding similarity):
+      WORKS_FOR    - employment / org affiliation. Use for "joined", "moved to a job at", "is a Y at X".
+      LEADS        - manages or runs. Use for "heads", "directs", "manages".
+      MEMBER_OF    - non-employment group membership. Use for "is on the X team", "part of X group".
+      REPORTS_TO   - direct manager relationship.
+      APPROVED     - sign-off / authorization.
+      USES         - technology / dependency.
+      BELONGS_TO   - parent-org / division relationship.
+      LOCATED_IN   - physical location only. NOT for org changes - use WORKS_FOR.
+      CREATED      - authored / built / founded.
+      RELATED_TO   - fallback when nothing else fits.
+
+    Functional relations (writing a new object supersedes the prior one):
+      WORKS_FOR, REPORTS_TO, BELONGS_TO.
     """
     await _ensure_init()
     from landscape.writeback import add_relation as _add_relation
@@ -302,9 +320,16 @@ async def status() -> str:
     at session start to understand what is already in memory before querying.
 
     Returns:
-        JSON object with ``entity_count``, ``document_count``,
-        ``relation_count``, ``top_entities`` (top-5 by reinforcement), and
-        ``recent_agent_writes`` (last 5 agent-authored relations).
+        JSON object with:
+        - ``entity_count`` — total :Entity nodes
+        - ``document_count`` — total :Document nodes
+        - ``relation_count`` — live (non-superseded) :RELATES_TO edges
+        - ``conversation_count`` — total :Conversation nodes
+        - ``turn_count`` — total :Turn nodes across all conversations
+        - ``top_entities`` — top-5 entities by reinforcement (incident edge access_count)
+        - ``recent_agent_writes`` — last 5 agent-authored relations
+        - ``recent_conversations`` — last 3 conversations by last_active_at,
+          each with ``{id, title, turn_count, last_active_at}``
     """
     from landscape.writeback import status_summary
 

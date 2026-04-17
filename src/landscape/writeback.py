@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 
 from landscape.embeddings import encoder
 from landscape.entities import resolver
-from landscape.extraction.schema import normalize_relation_type
+from landscape.extraction.rel_type_coercion import coerce_rel_type
 from landscape.storage import neo4j_store, qdrant_store
 
 
@@ -49,8 +49,11 @@ class StatusSummary:
     entity_count: int
     document_count: int
     relation_count: int
-    top_entities: list[dict] = field(default_factory=list)       # [{name, type, reinforcement}]
+    conversation_count: int = 0
+    turn_count: int = 0
+    top_entities: list[dict] = field(default_factory=list)         # [{name, type, reinforcement}]
     recent_agent_writes: list[dict] = field(default_factory=list)  # [{subject, rel_type, object, session_id, turn_id, when}]
+    recent_conversations: list[dict] = field(default_factory=list) # [{id, title, turn_count, last_active_at}]
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +201,7 @@ async def add_relation(
         turn_id=turn_id,
     )
 
-    canonical_rel_type = normalize_relation_type(rel_type)
+    canonical_rel_type, _coerce_score = coerce_rel_type(rel_type)
 
     outcome, relation_id = await neo4j_store.upsert_relation(
         subject_name=subject,
@@ -268,16 +271,19 @@ async def status_summary() -> StatusSummary:
                 "reinforcement": rec["reinforcement"],
             })
 
-        # (c) Recent agent writes
+        # (c) Recent agent writes — DISTINCT elementId(r) defends against
+        # any future duplicate edges from surfacing the same write twice.
         recent_result = await session.run(
             """
             MATCH (s:Entity)-[r:RELATES_TO]->(o:Entity)
             WHERE r.created_by = 'agent'
-            RETURN s.name AS subject, r.type AS rel_type, o.name AS object,
-                   r.session_id AS session_id, r.turn_id AS turn_id,
-                   r.valid_from AS when
-            ORDER BY r.valid_from DESC
+            WITH DISTINCT elementId(r) AS rid, s.name AS subject,
+                 r.type AS rel_type, o.name AS object,
+                 r.session_id AS session_id, r.turn_id AS turn_id,
+                 r.valid_from AS when
+            ORDER BY when DESC
             LIMIT 5
+            RETURN rid, subject, rel_type, object, session_id, turn_id, when
             """
         )
         recent_agent_writes = []
@@ -291,10 +297,45 @@ async def status_summary() -> StatusSummary:
                 "when": rec["when"],
             })
 
+        # (d) Conversation + turn counts, and recent 3 conversations
+        conv_result = await session.run(
+            """
+            OPTIONAL MATCH (c:Conversation)
+            WITH count(c) AS conversation_count
+            OPTIONAL MATCH (t:Turn)
+            RETURN conversation_count, count(t) AS turn_count
+            """
+        )
+        conv_rec = await conv_result.single()
+        conversation_count = conv_rec["conversation_count"] if conv_rec else 0
+        turn_count = conv_rec["turn_count"] if conv_rec else 0
+
+        recent_conv_result = await session.run(
+            """
+            MATCH (c:Conversation)-[:HAS_TURN]->(t:Turn)
+            WITH c, count(t) AS tc, max(t.timestamp) AS last_active
+            ORDER BY last_active DESC
+            LIMIT 3
+            RETURN c.id AS id, coalesce(c.title, c.id) AS title,
+                   tc AS turn_count, last_active AS last_active_at
+            """
+        )
+        recent_conversations = []
+        async for rec in recent_conv_result:
+            recent_conversations.append({
+                "id": rec["id"],
+                "title": rec["title"],
+                "turn_count": rec["turn_count"],
+                "last_active_at": rec["last_active_at"],
+            })
+
     return StatusSummary(
         entity_count=entity_count,
         document_count=document_count,
         relation_count=relation_count,
+        conversation_count=conversation_count,
+        turn_count=turn_count,
         top_entities=top_entities,
         recent_agent_writes=recent_agent_writes,
+        recent_conversations=recent_conversations,
     )

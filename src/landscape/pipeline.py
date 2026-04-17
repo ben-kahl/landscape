@@ -7,7 +7,7 @@ from landscape.embeddings import encoder
 from landscape.entities import resolver
 from landscape.extraction import llm
 from landscape.extraction.chunker import chunk_text
-from landscape.extraction.schema import normalize_relation_type
+from landscape.extraction.rel_type_coercion import coerce_rel_type
 from landscape.storage import neo4j_store, qdrant_store
 
 
@@ -124,10 +124,11 @@ async def ingest(
     relations_reinforced = 0
     relations_superseded = 0
     for relation in extraction.relations:
+        canonical_rel_type, _coerce_score = coerce_rel_type(relation.relation_type)
         outcome, _ = await neo4j_store.upsert_relation(
             subject_name=relation.subject,
             object_name=relation.object,
-            relation_type=normalize_relation_type(relation.relation_type),
+            relation_type=canonical_rel_type,
             confidence=relation.confidence,
             source_doc=title,
             session_id=session_id,

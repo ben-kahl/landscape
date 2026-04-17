@@ -480,3 +480,36 @@ async def test_status_summary_shape(http_client, neo4j_driver):
 
     # At least one recent agent write should be present
     assert len(summary.recent_agent_writes) >= 1
+
+    # New in Task 14: conversation/turn counts
+    assert summary.conversation_count >= 1, (
+        "At least one Conversation node should exist after add_entity/add_relation calls"
+    )
+    assert summary.turn_count >= 1, (
+        "At least one Turn node should exist after add_entity/add_relation calls"
+    )
+
+    # recent_conversations: entries must have the required shape
+    for entry in summary.recent_conversations:
+        assert "id" in entry
+        assert "title" in entry
+        assert "turn_count" in entry
+        assert "last_active_at" in entry
+
+    # The conversation used in this test (s6) must appear in recent_conversations
+    conv_ids = [c["id"] for c in summary.recent_conversations]
+    assert "s6" in conv_ids, (
+        f"Session 's6' should be in recent_conversations, got: {conv_ids}"
+    )
+    s6 = next(c for c in summary.recent_conversations if c["id"] == "s6")
+    assert s6["turn_count"] >= 1, "s6 should have at least 1 turn"
+
+    # Defense-in-depth: recent_agent_writes must not contain duplicates
+    # (same subject/rel_type/object appearing more than once).
+    write_keys = [
+        (w["subject"], w["rel_type"], w["object"])
+        for w in summary.recent_agent_writes
+    ]
+    assert len(write_keys) == len(set(write_keys)), (
+        f"Duplicate entries in recent_agent_writes: {write_keys}"
+    )
