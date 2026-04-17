@@ -191,6 +191,100 @@ async def link_document_to_turn(
         )
 
 
+async def get_entities_in_conversation(session_id: str) -> list[str]:
+    """Return elementIds of Entity nodes with MENTIONED_IN → Turn → Conversation(id=session_id).
+    Inclusive semantics: any entity mentioned in any turn of that conversation, regardless of
+    where else it appears. Empty list if session_id unknown."""
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)<-[:MENTIONED_IN]-(e:Entity)
+            RETURN DISTINCT elementId(e) AS eid
+            """,
+            session_id=session_id,
+        )
+        return [record["eid"] async for record in result]
+
+
+async def get_entities_since(since: datetime) -> list[str]:
+    """Return elementIds of Entity nodes mentioned in turns with t.timestamp >= since (ISO string compare).
+    Dedup across turns."""
+    since_iso = since.isoformat()
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (e:Entity)-[:MENTIONED_IN]->(t:Turn)
+            WHERE t.timestamp >= $since_iso
+            RETURN DISTINCT elementId(e) AS eid
+            """,
+            since_iso=since_iso,
+        )
+        return [record["eid"] async for record in result]
+
+
+async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict:
+    """Return {"conversation": {id, title, agent_id, started_at, last_active_at} | None,
+             "turns": [{id, turn_id, turn_number, role, summary, timestamp, entities_mentioned: [{eid, name, type}]}]}
+    Turns ordered by t.timestamp ASC, capped to turn_limit. If session_id unknown: conversation=None, turns=[]."""
+    driver = get_driver()
+    async with driver.session() as session:
+        conv_result = await session.run(
+            """
+            MATCH (c:Conversation {id: $session_id})
+            RETURN c.id AS id, c.title AS title, c.agent_id AS agent_id,
+                   c.started_at AS started_at, c.last_active_at AS last_active_at
+            """,
+            session_id=session_id,
+        )
+        conv_record = await conv_result.single()
+
+    if conv_record is None:
+        return {"conversation": None, "turns": []}
+
+    conversation = {
+        "id": conv_record["id"],
+        "title": conv_record["title"],
+        "agent_id": conv_record["agent_id"],
+        "started_at": conv_record["started_at"],
+        "last_active_at": conv_record["last_active_at"],
+    }
+
+    async with driver.session() as session:
+        turns_result = await session.run(
+            """
+            MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)
+            WITH t ORDER BY t.timestamp ASC LIMIT $turn_limit
+            OPTIONAL MATCH (e:Entity)-[:MENTIONED_IN]->(t)
+            RETURN elementId(t) AS id,
+                   t.turn_id AS turn_id,
+                   t.turn_number AS turn_number,
+                   t.role AS role,
+                   t.summary AS summary,
+                   t.timestamp AS timestamp,
+                   collect(CASE WHEN e IS NOT NULL THEN {eid: elementId(e), name: e.name, type: e.type} END) AS entities_mentioned
+            ORDER BY timestamp ASC
+            """,
+            session_id=session_id,
+            turn_limit=turn_limit,
+        )
+        turns = []
+        async for record in turns_result:
+            entities = [em for em in record["entities_mentioned"] if em is not None]
+            turns.append({
+                "id": record["id"],
+                "turn_id": record["turn_id"],
+                "turn_number": record["turn_number"],
+                "role": record["role"],
+                "summary": record["summary"],
+                "timestamp": record["timestamp"],
+                "entities_mentioned": entities,
+            })
+
+    return {"conversation": conversation, "turns": turns}
+
+
 async def merge_entity(
     name: str,
     entity_type: str,
