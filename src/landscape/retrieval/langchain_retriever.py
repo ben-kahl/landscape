@@ -11,6 +11,7 @@ Usage:
     retriever = LandscapeRetriever(hops=2, limit=10)
     docs = await retriever.ainvoke("who approved Aurora's db choice?")
 """
+from datetime import datetime
 from typing import Any
 
 from langchain_core.callbacks import (
@@ -39,6 +40,8 @@ class LandscapeRetriever(BaseRetriever):
     limit: int = 10
     reinforce: bool = True
     weights: ScoringWeights | None = Field(default=None)
+    session_id: str | None = None
+    since: datetime | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -54,6 +57,8 @@ class LandscapeRetriever(BaseRetriever):
             limit=self.limit,
             weights=self.weights,
             reinforce=self.reinforce,
+            session_id=self.session_id,
+            since=self.since,
         )
         return [_entity_to_document(e) for e in result.results]
 
