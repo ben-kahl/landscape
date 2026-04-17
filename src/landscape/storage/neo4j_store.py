@@ -201,11 +201,16 @@ async def merge_entity(
     created_by: str = "ingest",
     session_id: str | None = None,
     turn_id: str | None = None,
+    subtype: str | None = None,
 ) -> str:
     """Returns the elementId of the entity node.
 
     doc_element_id is optional. When None, the :EXTRACTED_FROM edge is
     skipped (used when provenance comes from a :Turn rather than a :Document).
+
+    subtype is the agent's or LLM's original entity_type string before
+    coercion to the canonical vocab. Only written ON CREATE and only when
+    subtype is not None. Existing nodes are not updated on match.
     """
     if created_by not in ("ingest", "agent"):
         raise ValueError(f"created_by must be 'ingest' or 'agent', got {created_by!r}")
@@ -224,7 +229,8 @@ async def merge_entity(
                           e.last_accessed = null,
                           e.created_by = $created_by,
                           e.session_id = $session_id,
-                          e.turn_id = $turn_id
+                          e.turn_id = $turn_id,
+                          e.subtype = $subtype
             RETURN elementId(e) AS eid
             """,
             name=name,
@@ -235,6 +241,7 @@ async def merge_entity(
             created_by=created_by,
             session_id=session_id,
             turn_id=turn_id,
+            subtype=subtype,
         )
         record = await result.single()
         eid = record["eid"]

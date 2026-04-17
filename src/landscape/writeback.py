@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 
 from landscape.embeddings import encoder
 from landscape.entities import resolver
+from landscape.extraction.entity_type_coercion import coerce_entity_type
 from landscape.extraction.rel_type_coercion import coerce_rel_type
 from landscape.storage import neo4j_store, qdrant_store
 
@@ -98,11 +99,16 @@ async def add_entity(
             "synthetic-Document provenance has been removed"
         )
 
-    vector = encoder.encode(f"{name} ({entity_type})")
+    # Coerce the agent-supplied type to the canonical vocab.
+    canonical_type, _coerce_score = coerce_entity_type(entity_type)
+    # Only store subtype when the raw type differs from the canonical (avoid storage noise).
+    subtype: str | None = entity_type if canonical_type != entity_type else None
+
+    vector = encoder.encode(f"{name} ({canonical_type})")
 
     canonical_id, is_new, _sim = await resolver.resolve_entity(
         name=name,
-        entity_type=entity_type,
+        entity_type=canonical_type,
         vector=vector,
         source_doc=source,
     )
@@ -127,7 +133,7 @@ async def add_entity(
 
     entity_id = await neo4j_store.merge_entity(
         name=name,
-        entity_type=entity_type,
+        entity_type=canonical_type,
         source_doc=source,
         confidence=confidence,
         doc_element_id=None,
@@ -135,6 +141,7 @@ async def add_entity(
         created_by="agent",
         session_id=session_id,
         turn_id=turn_id,
+        subtype=subtype,
     )
 
     await neo4j_store.link_entity_to_turn(entity_id, turn_element_id, confidence=confidence)
@@ -143,7 +150,7 @@ async def add_entity(
     await qdrant_store.upsert_entity(
         neo4j_element_id=entity_id,
         name=name,
-        entity_type=entity_type,
+        entity_type=canonical_type,
         source_doc=source,
         timestamp=now,
         vector=vector,

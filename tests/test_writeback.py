@@ -585,3 +585,111 @@ async def test_add_relation_endpoints_have_correct_types(http_client, neo4j_driv
         f"Expected object type 'Organization', got {obj_rec['t']!r} — "
         "endpoint was likely auto-created as 'Unknown'"
     )
+
+
+@pytest.mark.asyncio
+async def test_add_entity_coerces_type_and_stores_subtype(http_client, neo4j_driver):
+    """Non-canonical entity_type is coerced to canonical; original stored as subtype."""
+    from landscape.writeback import add_entity
+
+    result = await add_entity(
+        "Alice Mercer",
+        "SoftwareEngineer",
+        source="agent:test:coerce",
+        session_id="s-coerce",
+        turn_id="t1",
+    )
+
+    assert result.resolved_to_existing is False
+    assert result.entity_id
+
+    async with neo4j_driver.session() as session:
+        rec = await (
+            await session.run(
+                "MATCH (e:Entity {name: 'Alice Mercer'}) "
+                "RETURN e.type AS t, e.subtype AS st"
+            )
+        ).single()
+
+    assert rec is not None
+    assert rec["t"] == "Person", (
+        f"Expected canonical type 'Person', got {rec['t']!r}"
+    )
+    assert rec["st"] == "SoftwareEngineer", (
+        f"Expected subtype 'SoftwareEngineer', got {rec['st']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_entity_canonical_skips_subtype(http_client, neo4j_driver):
+    """When entity_type is already canonical, subtype should be null/absent."""
+    from landscape.writeback import add_entity
+
+    result = await add_entity(
+        "Bob Canonical",
+        "Person",
+        source="agent:test:notype",
+        session_id="s-notype",
+        turn_id="t1",
+    )
+
+    assert result.resolved_to_existing is False
+
+    async with neo4j_driver.session() as session:
+        rec = await (
+            await session.run(
+                "MATCH (e:Entity {name: 'Bob Canonical'}) "
+                "RETURN e.type AS t, e.subtype AS st"
+            )
+        ).single()
+
+    assert rec is not None
+    assert rec["t"] == "Person"
+    assert rec["st"] is None, (
+        f"Expected subtype to be null for canonical input, got {rec['st']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_relation_endpoint_types_coerce(http_client, neo4j_driver):
+    """Non-canonical endpoint types passed to add_relation are coerced to canonical."""
+    from landscape.writeback import add_relation
+
+    await add_relation(
+        "Frank Engineer",
+        "SoftwareEngineer",   # non-canonical → Person
+        "TechCorp Solutions",
+        "Company",             # non-canonical → Organization
+        "WORKS_FOR",
+        source="agent:test:coerce-rel",
+        session_id="s-coerce-rel",
+        turn_id="t1",
+    )
+
+    async with neo4j_driver.session() as session:
+        subj_rec = await (
+            await session.run(
+                "MATCH (e:Entity {name: 'Frank Engineer'}) RETURN e.type AS t, e.subtype AS st"
+            )
+        ).single()
+        obj_rec = await (
+            await session.run(
+                "MATCH (e:Entity {name: 'TechCorp Solutions'}) RETURN e.type AS t, e.subtype AS st"
+            )
+        ).single()
+
+    assert subj_rec is not None
+    assert subj_rec["t"] == "Person", (
+        f"Expected 'Person' for SoftwareEngineer, got {subj_rec['t']!r}"
+    )
+    assert subj_rec["st"] == "SoftwareEngineer", (
+        f"Expected subtype 'SoftwareEngineer', got {subj_rec['st']!r}"
+    )
+
+    assert obj_rec is not None
+    assert obj_rec["t"] == "Organization", (
+        f"Expected 'Organization' for Company, got {obj_rec['t']!r}"
+    )
+    assert obj_rec["st"] == "Company", (
+        f"Expected subtype 'Company', got {obj_rec['st']!r}"
+    )

@@ -164,7 +164,12 @@ async def add_entity(
 
     Args:
         name:        Entity name (e.g. "Alice Chen").
-        entity_type: Entity type (e.g. "Person", "Organization").
+        entity_type: Entity type. Prefer the 8 canonical types: Person,
+                     Organization, Project, Technology, Location, Concept,
+                     Event, Document. Non-canonical types are coerced to the
+                     nearest canonical via embedding similarity (threshold
+                     0.55); the original type is preserved as ``subtype`` on
+                     the node so nuance is not lost.
         source:      Provenance label (e.g. "agent:session-1:turn-3").
         session_id:  Conversation session identifier.
         turn_id:     Turn identifier within the session.
@@ -233,11 +238,14 @@ async def add_relation(
 
     Args:
         subject:      Name of the subject entity (e.g. "Alice Chen").
-        subject_type: Entity type of the subject. Required. Examples: "Person",
-                      "Organization", "Project", "Technology".
+        subject_type: Entity type of the subject. Required. Prefer canonical
+                      types: Person, Organization, Project, Technology,
+                      Location, Concept, Event, Document. Non-canonical types
+                      are coerced to the nearest canonical and preserved as
+                      ``subtype`` on the node.
         object:       Name of the object entity (e.g. "Beacon Corp").
-        object_type:  Entity type of the object. Required. Examples: "Person",
-                      "Organization", "Project", "Technology".
+        object_type:  Entity type of the object. Required. Same canonical-type
+                      coercion applies as for subject_type.
         rel_type:     Relationship type (e.g. "WORKS_FOR", "LEADS").
         source:       Provenance label.
         session_id:   Conversation session identifier.

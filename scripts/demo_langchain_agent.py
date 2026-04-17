@@ -273,7 +273,9 @@ def build_agent():
         description=(
             "Record a new relationship between two entities in memory. "
             "Use this when the user shares new information to update what is known. "
-            "You must supply subject_type and object_type (e.g. Person, Organization, Project, Technology). "
+            "You must supply subject_type and object_type using canonical entity types: "
+            "Person, Organization, Project, Technology, Location, Concept, Event, Document. "
+            "Non-canonical types are coerced automatically and the original is stored as subtype. "
             "For employment changes (joining/moving to a company), always use rel_type=WORKS_FOR."
         ),
         args_schema=RecordRelationInput,

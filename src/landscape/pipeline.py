@@ -7,6 +7,7 @@ from landscape.embeddings import encoder
 from landscape.entities import resolver
 from landscape.extraction import llm
 from landscape.extraction.chunker import chunk_text
+from landscape.extraction.entity_type_coercion import coerce_entity_type
 from landscape.extraction.rel_type_coercion import coerce_rel_type
 from landscape.storage import neo4j_store, qdrant_store
 
@@ -77,28 +78,33 @@ async def ingest(
 
     # Step 4: entity resolution + write
     for entity in extraction.entities:
-        vector = encoder.encode(f"{entity.name} ({entity.type})")
+        # Coerce LLM-extracted entity type to the canonical vocab.
+        canonical_entity_type, _etype_score = coerce_entity_type(entity.type)
+        etype_subtype: str | None = entity.type if canonical_entity_type != entity.type else None
+
+        vector = encoder.encode(f"{entity.name} ({canonical_entity_type})")
         canonical_id, is_new, sim = await resolver.resolve_entity(
             name=entity.name,
-            entity_type=entity.type,
+            entity_type=canonical_entity_type,
             vector=vector,
             source_doc=title,
         )
         if is_new:
             canonical_id = await neo4j_store.merge_entity(
                 name=entity.name,
-                entity_type=entity.type,
+                entity_type=canonical_entity_type,
                 source_doc=title,
                 confidence=entity.confidence,
                 doc_element_id=doc_id,
                 model=settings.llm_model,
                 session_id=session_id,
                 turn_id=turn_id,
+                subtype=etype_subtype,
             )
             await qdrant_store.upsert_entity(
                 neo4j_element_id=canonical_id,
                 name=entity.name,
-                entity_type=entity.type,
+                entity_type=canonical_entity_type,
                 source_doc=title,
                 timestamp=now,
                 vector=vector,
