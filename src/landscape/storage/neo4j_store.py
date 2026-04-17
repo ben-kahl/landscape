@@ -233,8 +233,11 @@ async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict
         conv_result = await session.run(
             """
             MATCH (c:Conversation {id: $session_id})
-            RETURN c.id AS id, c.title AS title, c.agent_id AS agent_id,
-                   c.started_at AS started_at, c.last_active_at AS last_active_at
+            RETURN c.id AS id,
+                   properties(c).title AS title,
+                   properties(c).agent_id AS agent_id,
+                   c.started_at AS started_at,
+                   c.last_active_at AS last_active_at
             """,
             session_id=session_id,
         )
@@ -259,9 +262,9 @@ async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict
             OPTIONAL MATCH (e:Entity)-[:MENTIONED_IN]->(t)
             RETURN elementId(t) AS id,
                    t.turn_id AS turn_id,
-                   t.turn_number AS turn_number,
-                   t.role AS role,
-                   t.summary AS summary,
+                   properties(t).turn_number AS turn_number,
+                   properties(t).role AS role,
+                   properties(t).summary AS summary,
                    t.timestamp AS timestamp,
                    collect(CASE WHEN e IS NOT NULL THEN {eid: elementId(e), name: e.name, type: e.type} END) AS entities_mentioned
             ORDER BY timestamp ASC
