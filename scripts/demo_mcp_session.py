@@ -1,14 +1,16 @@
 """Deterministic MCP transcript demo for Landscape.
 
 Spawns the MCP server as a subprocess over stdio (Option B) and drives a
-5-step session:
+7-step session:
 
   0. Reset  -- wipe Neo4j + Qdrant so the run is reproducible
   1. Ingest -- remember("Alice works for Atlas Corp as a senior engineer.")
   2. Search -- confirm Alice / Atlas surfaces
   3. Write-back -- add_relation(Alice, Beacon, WORKS_FOR) -> superseded
   4. Search -- Atlas relation no longer surfaces (temporally filtered)
-  5. Status -- recent_agent_writes shows the supersession
+  5. Status -- recent_agent_writes shows the supersession;
+               asserts conversation_count >= 1 and turn_count >= 1
+  6. Conversation graph -- graph_query proves Conversation/Turn schema is live
 
 Output is plain text formatted for direct inclusion in the README.
 
@@ -125,6 +127,8 @@ async def run_demo() -> None:
                     {
                         "text": "Alice works for Atlas Corp as a senior engineer.",
                         "title": "Personnel record",
+                        "session_id": "demo-mcp-1",
+                        "turn_id": "t1",
                     },
                 )
                 if result.isError:
@@ -135,6 +139,7 @@ async def run_demo() -> None:
                     rc = data.get("relations_created", "?")
                     rs = data.get("relations_superseded", "?")
                     print(f"  -> remember(\"Alice works for Atlas Corp as a senior engineer.\")")
+                    print(f"     session_id=demo-mcp-1  turn_id=t1")
                     print(f"     entities_created={ec}, relations_created={rc},")
                     print(f"     relations_superseded={rs}")
             except Exception as exc:
@@ -182,9 +187,9 @@ async def run_demo() -> None:
                         "subject": "Alice",
                         "object": "Beacon",
                         "rel_type": "WORKS_FOR",
-                        "source": "agent:demo:3",
-                        "session_id": "demo",
-                        "turn_id": "3",
+                        "source": "agent:demo-mcp-1:t2",
+                        "session_id": "demo-mcp-1",
+                        "turn_id": "t2",
                     },
                 )
                 if result.isError:
@@ -194,6 +199,7 @@ async def run_demo() -> None:
                     outcome = data.get("outcome", "?")
                     rid = data.get("relation_id", "?")
                     print(f"  -> add_relation(Alice, Beacon, WORKS_FOR)")
+                    print(f"     session_id=demo-mcp-1  turn_id=t2")
                     print(f"     outcome={outcome}  relation_id={rid}")
                     if outcome == "superseded":
                         superseded = True
@@ -254,9 +260,13 @@ async def run_demo() -> None:
                 else:
                     data = _parse(result)
                     print(f"  -> status()")
-                    print(f"     entity_count    = {data.get('entity_count', '?')}")
-                    print(f"     document_count  = {data.get('document_count', '?')}")
-                    print(f"     relation_count  = {data.get('relation_count', '?')}")
+                    print(f"     entity_count        = {data.get('entity_count', '?')}")
+                    print(f"     document_count      = {data.get('document_count', '?')}")
+                    print(f"     relation_count      = {data.get('relation_count', '?')}")
+                    conv_count = data.get("conversation_count", 0)
+                    turn_count = data.get("turn_count", 0)
+                    print(f"     conversation_count  = {conv_count}")
+                    print(f"     turn_count          = {turn_count}")
                     top = data.get("top_entities", [])
                     print(f"     top_entities ({len(top)}):")
                     for e in top:
@@ -269,12 +279,52 @@ async def run_demo() -> None:
                               f"{w.get('object')}  "
                               f"session={w.get('session_id')}  turn={w.get('turn_id')}")
                     demo_write_found = any(
-                        w.get("session_id") == "demo" for w in writes
+                        w.get("session_id") == "demo-mcp-1" for w in writes
                     )
                     if demo_write_found:
-                        print("  [OK] agent:demo:3 write appears in recent_agent_writes.")
+                        print("  [OK] demo-mcp-1 write appears in recent_agent_writes.")
                     else:
                         print("  [NOTE] Demo write not yet in recent_agent_writes.")
+                    if conv_count >= 1:
+                        print("  [OK] conversation_count >= 1 (Conversation node created).")
+                    else:
+                        print("  [WARN] conversation_count = 0 -- Conversation node not found.")
+                    if turn_count >= 1:
+                        print("  [OK] turn_count >= 1 (Turn nodes created).")
+                    else:
+                        print("  [WARN] turn_count = 0 -- Turn nodes not found.")
+            except Exception as exc:
+                print(f"  EXCEPTION: {exc}")
+            print()
+
+            # -------------------------------------------------------------- #
+            # Step 6: Conversation graph (proves Conversation/Turn schema)    #
+            # -------------------------------------------------------------- #
+            print("==== Step 6: Conversation graph (proves Conversation/Turn schema is live) ====")
+            try:
+                result = await session.call_tool(
+                    "graph_query",
+                    {
+                        "cypher": (
+                            "MATCH (c:Conversation {id: 'demo-mcp-1'})-[:HAS_TURN]->(t:Turn) "
+                            "RETURN c.id AS conv, t.id AS turn_id, t.timestamp AS ts "
+                            "ORDER BY t.timestamp"
+                        ),
+                    },
+                )
+                if result.isError:
+                    print(f"  ERROR: {result.content[0].text if result.content else 'unknown'}")
+                else:
+                    data = _parse(result)
+                    rows = data.get("rows", [])
+                    print(f"  -> graph_query(Conversation/Turn for demo-mcp-1) -- {len(rows)} row(s)")
+                    for row in rows:
+                        print(f"     conv={row.get('conv')}  turn_id={row.get('turn_id')}  ts={row.get('ts')}")
+                    if rows:
+                        print("  [OK] Conversation/Turn schema confirmed live in Neo4j.")
+                    else:
+                        print("  [NOTE] No rows returned -- Conversation node may use a different id.")
+                        print("         Check that remember() and add_relation() received session_id.")
             except Exception as exc:
                 print(f"  EXCEPTION: {exc}")
             print()
