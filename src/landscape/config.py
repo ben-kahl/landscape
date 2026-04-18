@@ -31,15 +31,10 @@ LLM_PROFILES: dict[str, LLMProfile] = {
         thinking=False,
         notes="Phase 2 baseline. Known-good for the killer-demo corpus.",
     ),
-    "qwen3_14b_no_think": LLMProfile(
-           ollama_tag="qwen3:14b",
+    "qwen25_7b_nothink": LLMProfile(
+           ollama_tag="qwen2.5:7b",
            thinking=False,
-           notes="Qwen 3 14B with thinking disabled — quality test vs. llama31_8b",
-    ),
-    "qwen3_14b_thinking": LLMProfile(
-           ollama_tag="qwen3:14b",
-           thinking=True,
-           notes="Qwen 3 14B with thinking enabled — quality vs. speed test",
+           notes="Qwen 2.5 7B with thinking disabled",
     ),
 }
 
