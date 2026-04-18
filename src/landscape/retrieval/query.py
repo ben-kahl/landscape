@@ -80,7 +80,7 @@ async def retrieve(
         eid = ent["eid"]
         # A chunk-derived entity inherits the max similarity across any
         # chunks it was extracted from.
-        src_chunk_ids = ent.get("chunk_eids") or chunk_ids
+        src_chunk_ids = ent["chunk_eids"] if ent.get("chunk_eids") is not None else chunk_ids
         best = max(
             (chunk_score_by_id.get(cid, 0.0) for cid in src_chunk_ids),
             default=0.0,
