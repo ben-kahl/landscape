@@ -702,7 +702,9 @@ async def upsert_relation(
 
 async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[str, Any]]:
     """For a set of :Chunk elementIds, return the canonical :Entity nodes
-    extracted from the parent :Document of each chunk."""
+    extracted from the parent :Document of each chunk, together with the
+    list of seed chunk elementIds each entity was reached via (so the caller
+    can propagate chunk-hit similarity scores to the right entities)."""
     if not chunk_element_ids:
         return []
     driver = get_driver()
@@ -711,12 +713,14 @@ async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[st
             """
             MATCH (c:Chunk)-[:PART_OF]->(d:Document)<-[:EXTRACTED_FROM]-(e:Entity)
             WHERE elementId(c) IN $chunk_ids AND e.canonical = true
-            RETURN DISTINCT
+            WITH e, collect(DISTINCT elementId(c)) AS chunk_eids
+            RETURN
                 elementId(e) AS eid,
                 e.name AS name,
                 e.type AS type,
                 coalesce(e.access_count, 0) AS access_count,
-                e.last_accessed AS last_accessed
+                e.last_accessed AS last_accessed,
+                chunk_eids
             """,
             chunk_ids=chunk_element_ids,
         )

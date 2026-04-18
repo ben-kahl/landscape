@@ -62,15 +62,30 @@ async def retrieve(
         seed_sims[neo4j_id] = max(seed_sims.get(neo4j_id, 0.0), float(hit.score))
 
     # 2. Chunk seeds → walk back to canonical entities via EXTRACTED_FROM.
+    #    Propagate the chunk's similarity score so entities reached only via
+    #    chunk seeding still enter expansion with real similarity signal.
     chunk_hits = await qdrant_store.search_chunks(query_vector, limit=5)
-    chunk_ids = [
-        h.payload["chunk_neo4j_id"]
-        for h in chunk_hits
-        if h.payload and h.payload.get("chunk_neo4j_id")
-    ]
+    chunk_ids: list[str] = []
+    chunk_score_by_id: dict[str, float] = {}
+    for hit in chunk_hits:
+        payload = hit.payload or {}
+        cid = payload.get("chunk_neo4j_id")
+        if not cid:
+            continue
+        chunk_ids.append(cid)
+        chunk_score_by_id[cid] = float(hit.score)
+
     chunk_entities = await neo4j_store.get_entities_from_chunks(chunk_ids)
     for ent in chunk_entities:
-        seed_sims.setdefault(ent["eid"], 0.0)
+        eid = ent["eid"]
+        # A chunk-derived entity inherits the max similarity across any
+        # chunks it was extracted from.
+        src_chunk_ids = ent.get("chunk_eids") or chunk_ids
+        best = max(
+            (chunk_score_by_id.get(cid, 0.0) for cid in src_chunk_ids),
+            default=0.0,
+        )
+        seed_sims[eid] = max(seed_sims.get(eid, 0.0), best)
 
     if not seed_sims:
         return RetrievalResult(
