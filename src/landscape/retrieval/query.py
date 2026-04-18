@@ -27,11 +27,22 @@ class RetrievedEntity:
 
 
 @dataclass
+class RetrievedChunk:
+    chunk_neo4j_id: str
+    text: str
+    doc_id: str
+    source_doc: str
+    position: int
+    score: float
+
+
+@dataclass
 class RetrievalResult:
     query: str
     results: list[RetrievedEntity]
     touched_entity_ids: list[str]
     touched_edge_ids: list[str]
+    chunks: list[RetrievedChunk] = field(default_factory=list)
 
 
 async def retrieve(
