@@ -55,6 +55,10 @@ ENTITY_TYPE_VOCAB: frozenset[str] = frozenset(
         "Concept",
         "Event",
         "Document",
+        # v2 additions (vocab_expansion spec)
+        "Role",
+        "DateTime",
+        "Task",
     ]
 )
 
@@ -92,6 +96,18 @@ CANONICAL_DESCRIPTORS: dict[str, str] = {
     ),
     "Document": (
         "Document — report, memo, spec, contract, paper, file, document"
+    ),
+    "Role": (
+        "Role — job title, position, rank, designation, role in organization, "
+        "senior engineer, CTO, director, manager title"
+    ),
+    "DateTime": (
+        "DateTime — date, time, timestamp, calendar day, year, month, "
+        "week, last Friday, 2026-03-05, moment in time"
+    ),
+    "Task": (
+        "Task — action item, todo, assignment, chore, errand, work to do, "
+        "thing to finish, to-do list entry"
     ),
 }
 
@@ -191,6 +207,29 @@ _SYNONYMS: dict[str, str] = {
     "file": "Document",
     "doc": "Document",
     "article": "Document",
+    # Role
+    "title": "Role",
+    "jobtitle": "Role",
+    "position": "Role",
+    "rank": "Role",
+    "designation": "Role",
+    # DateTime
+    "date": "DateTime",
+    "datetime": "DateTime",
+    "time": "DateTime",
+    "timestamp": "DateTime",
+    "day": "DateTime",
+    "year": "DateTime",
+    "month": "DateTime",
+    "week": "DateTime",
+    # Task
+    "task": "Task",
+    "todo": "Task",
+    "to-do": "Task",
+    "actionitem": "Task",
+    "assignment": "Task",
+    "chore": "Task",
+    "errand": "Task",
 }
 
 

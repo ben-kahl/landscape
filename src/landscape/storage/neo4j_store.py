@@ -525,40 +525,82 @@ async def upsert_relation(
             )
             return ("reinforced", exact["rid"])
 
-        # Case 2: same (s, rel_type) with a different object. Supersede the
-        # old edge *only* if rel_type is functional (one-object-per-subject).
-        # For non-functional rels (LEADS, USES, APPROVED, ...) the new edge
-        # is additive — both targets can coexist.
-        from landscape.extraction.schema import FUNCTIONAL_RELATION_TYPES
+        # Case 2: a live edge already occupies the "slot" the new edge would
+        # land in, per FUNCTIONAL_KEYS. Supersede the old edge.
+        #
+        # Slot identity is (subject, type) plus each extra key field declared
+        # in FUNCTIONAL_KEYS[rel_type]. Extra fields ("object", "subtype") are
+        # null-safe: if either the incoming or existing edge has NULL for a
+        # declared field, treat the slot as non-matching rather than colliding
+        # two unknowns. This keeps object/subtype-keyed rels additive until
+        # the subtype write-through (rollout step 3) populates the field.
+        from landscape.extraction.schema import FUNCTIONAL_KEYS
 
-        is_functional = relation_type in FUNCTIONAL_RELATION_TYPES
+        key_fields = FUNCTIONAL_KEYS.get(relation_type)
 
-        result = await session.run(
-            """
-            MATCH (s:Entity {name: $subject})-[old:RELATES_TO {type: $rel_type}]->(other:Entity)
-            WHERE other.name <> $object AND old.valid_until IS NULL
-            RETURN elementId(old) AS old_rid, elementId(s) AS sid, elementId(other) AS oid
-            LIMIT 1
-            """,
-            subject=subject_name,
-            object=object_name,
-            rel_type=relation_type,
-        )
-        conflict = await result.single()
+        conflict = None
+        if key_fields is not None:
+            # Build key-field match predicates. "object" is matched against the
+            # NEW edge's object (via `other.name = $object`, inverted below to
+            # allow "other.name <> $object" when object is NOT a key field).
+            # "subtype" isn't written yet in step 2, but the null-safe clause
+            # keeps this structurally correct for step 3.
+            if "object" in key_fields:
+                # Slot is identified by the object → only a different subtype
+                # on the same (s, o) would conflict. In step 2 (no subtype),
+                # Case 1 already caught the reinforce; a different object is
+                # a different slot, so no conflict.
+                object_clause = "AND other.name = $object"
+            else:
+                # Slot is subject-keyed or subtype-keyed: a different object
+                # is the conflict signal.
+                object_clause = "AND other.name <> $object"
 
-        if conflict and is_functional:
-            # Mark old edge as superseded (old edge keeps its original provenance)
-            await session.run(
-                """
-                MATCH (s:Entity {name: $subject})-[old:RELATES_TO {type: $rel_type}]->(other:Entity)
-                WHERE other.name <> $object AND old.valid_until IS NULL
-                SET old.valid_until = $now, old.superseded_by_doc = $source_doc
+            subtype_clause = ""
+            if "subtype" in key_fields:
+                # Subtype-keyed: require both sides to have a non-null,
+                # matching subtype to count as a conflict.
+                subtype_clause = (
+                    "AND old.subtype IS NOT NULL AND $subtype IS NOT NULL "
+                    "AND old.subtype = $subtype"
+                )
+
+            result = await session.run(
+                f"""
+                MATCH (s:Entity {{name: $subject}})
+                      -[old:RELATES_TO {{type: $rel_type}}]->(other:Entity)
+                WHERE old.valid_until IS NULL
+                  {object_clause}
+                  {subtype_clause}
+                RETURN elementId(old) AS old_rid,
+                       elementId(s) AS sid,
+                       elementId(other) AS oid
+                LIMIT 1
                 """,
                 subject=subject_name,
                 object=object_name,
                 rel_type=relation_type,
+                # subtype wired in step 3 — passed as None here so the
+                # subtype_clause's null-safety predicate rejects matches.
+                subtype=None,
+            )
+            conflict = await result.single()
+
+        if conflict:
+            # Mark old edge as superseded (old edge keeps its original provenance)
+            await session.run(
+                f"""
+                MATCH (s:Entity {{name: $subject}})
+                      -[old:RELATES_TO {{type: $rel_type}}]->(other:Entity)
+                WHERE old.valid_until IS NULL
+                  AND elementId(old) = $old_rid
+                SET old.valid_until = $now, old.superseded_by_doc = $source_doc
+                """,
+                subject=subject_name,
+                rel_type=relation_type,
                 now=now,
                 source_doc=source_doc,
+                old_rid=conflict["old_rid"],
             )
             # Build source_docs for new edge, appending agent entry if applicable
             new_edge_docs = [source_doc]

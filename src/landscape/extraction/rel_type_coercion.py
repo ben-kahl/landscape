@@ -102,6 +102,37 @@ CANONICAL_DESCRIPTORS: dict[str, str] = {
         "RELATED_TO — general relationship, connected to, associated with, "
         "related, linked"
     ),
+    # v2 additions (vocab_expansion spec)
+    "HAS_TITLE": (
+        "HAS_TITLE — holds job title, is a senior engineer, role at company, "
+        "promoted to director, appointed as CTO, works as manager"
+    ),
+    "HAS_PREFERENCE": (
+        "HAS_PREFERENCE — personal preference, favorite thing, likes best, "
+        "dietary preference, preferred option"
+    ),
+    "HAS_ATTRIBUTE": (
+        "HAS_ATTRIBUTE — personal attribute, trait, height, pronouns, "
+        "characteristic, property of person"
+    ),
+    "FAMILY_OF": (
+        "FAMILY_OF — family relation, parent, child, sibling, spouse, "
+        "married to, daughter of, uncle, kin"
+    ),
+    "RECOMMENDED": (
+        "RECOMMENDED — recommended to, suggested, advised, endorsed"
+    ),
+    "DISCUSSED": (
+        "DISCUSSED — talked about, mentioned, brought up, conversation topic"
+    ),
+    "HAPPENED_ON": (
+        "HAPPENED_ON — event occurred on date, took place on, scheduled for, "
+        "date of event"
+    ),
+    "LIVES_IN": (
+        "LIVES_IN — home address, residence, lives at, currently resides in, "
+        "household location"
+    ),
 }
 
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 # section in CLAUDE.md for the broader problem and the path forward.
 RELATION_VOCAB: frozenset[str] = frozenset(
     {
+        # Original v1
         "WORKS_FOR",
         "LEADS",
         "MEMBER_OF",
@@ -18,23 +19,56 @@ RELATION_VOCAB: frozenset[str] = frozenset(
         "LOCATED_IN",
         "CREATED",
         "RELATED_TO",
+        # v2 additions (vocab_expansion spec)
+        "HAS_TITLE",
+        "HAS_PREFERENCE",
+        "HAS_ATTRIBUTE",
+        "FAMILY_OF",
+        "RECOMMENDED",
+        "DISCUSSED",
+        "HAPPENED_ON",
+        "LIVES_IN",
     }
 )
 
-# Relation types where a subject has at most one live object at a time.
-# When a new edge lands with a (subject, rel_type) already present but a
-# *different* object, the old edge gets superseded (valid_until set).
+# Per-rel-type functional keys. An edge is "functional" in a given slot when
+# its (subject, type, <declared-key-fields>) tuple matches a live edge; if
+# that slot already has a different object, the old edge is superseded.
 #
-# Non-functional rels like LEADS, MEMBER_OF, APPROVED, USES, CREATED, LOCATED_IN,
-# RELATED_TO are additive: a person can lead multiple teams, a project can use
-# multiple technologies, a company can be headquartered in multiple offices.
-# Treating those as functional silently marks correct facts stale.
+# Patterns:
+#   ()           — subject-keyed: one object per (subject, type)
+#   ("object",)  — object-keyed: one subtype per (subject, type, object)
+#   ("subtype",) — subtype-keyed: one object per (subject, type, subtype)
+#
+# Absent from the dict → additive (both edges coexist).
+#
+# Null-safety: for any declared key field, if EITHER the new or the old edge
+# carries NULL for that field, treat it as a non-match. This keeps object-
+# and subtype-keyed rels safe when subtype hasn't been extracted yet (step 3
+# of the vocab-expansion rollout) — no silent supersession on missing data.
+FUNCTIONAL_KEYS: dict[str, tuple[str, ...]] = {
+    # Subject-keyed (at most one live object per subject)
+    "WORKS_FOR": (),
+    "REPORTS_TO": (),
+    "BELONGS_TO": (),
+    "LIVES_IN": (),
+    "HAPPENED_ON": (),
+    # Object-keyed (one subtype per subject+object pair) — superseded once
+    # subtype write-through lands (step 3); behaves additively until then.
+    "HAS_TITLE": ("object",),
+    # Subtype-keyed (one object per subject+subtype pair) — no-op until
+    # subtype write-through lands.
+    "HAS_PREFERENCE": ("subtype",),
+    "HAS_ATTRIBUTE": ("subtype",),
+    # Absent (additive): LEADS, MEMBER_OF, APPROVED, USES, CREATED,
+    # LOCATED_IN, RELATED_TO, FAMILY_OF, RECOMMENDED, DISCUSSED.
+}
+
+# Backwards-compat alias — collapses to the set of subject-keyed rels. Kept
+# for one release; callers should migrate to FUNCTIONAL_KEYS. Removal planned
+# alongside the step-3 subtype write-through commit.
 FUNCTIONAL_RELATION_TYPES: frozenset[str] = frozenset(
-    {
-        "WORKS_FOR",
-        "REPORTS_TO",
-        "BELONGS_TO",
-    }
+    rel for rel, key in FUNCTIONAL_KEYS.items() if key == ()
 )
 
 # Synonym → canonical mapping. Only includes *same-direction* synonyms —
@@ -87,6 +121,44 @@ RELATION_SYNONYMS: dict[str, str] = {
     "DEVELOPED": "CREATED",
     "WROTE": "CREATED",
     "FOUNDED": "CREATED",
+    # HAS_TITLE family (Person → Org, title rides in subtype)
+    "TITLE": "HAS_TITLE",
+    "ROLE": "HAS_TITLE",
+    "POSITION": "HAS_TITLE",
+    "WORKS_AS": "HAS_TITLE",
+    "HAS_JOB_TITLE": "HAS_TITLE",
+    "HAS_ROLE": "HAS_TITLE",
+    "APPOINTED_AS": "HAS_TITLE",
+    "PROMOTED_TO": "HAS_TITLE",
+    # HAS_PREFERENCE family
+    "PREFERS": "HAS_PREFERENCE",
+    "LIKES_BEST": "HAS_PREFERENCE",
+    "FAVORITE": "HAS_PREFERENCE",
+    "FAVORITE_OF": "HAS_PREFERENCE",
+    # HAS_ATTRIBUTE family (dangerous — generic IS/HAS needs a careful coercion threshold)
+    "HAS_TRAIT": "HAS_ATTRIBUTE",
+    "ATTRIBUTE_OF": "HAS_ATTRIBUTE",
+    # FAMILY_OF family (specifics ride in subtype: daughter, uncle, parent, etc.)
+    "RELATED_TO_FAMILY": "FAMILY_OF",
+    "KIN_OF": "FAMILY_OF",
+    "MARRIED_TO": "FAMILY_OF",
+    "SPOUSE_OF": "FAMILY_OF",
+    "PARENT_OF": "FAMILY_OF",
+    "CHILD_OF": "FAMILY_OF",
+    "SIBLING_OF": "FAMILY_OF",
+    # LIVES_IN family (subject-keyed; distinct from LOCATED_IN which is additive)
+    "RESIDES_IN": "LIVES_IN",
+    "LIVES_AT": "LIVES_IN",
+    "HOME_IS": "LIVES_IN",
+    "CURRENTLY_LIVES_IN": "LIVES_IN",
+    # RECOMMENDED / DISCUSSED / HAPPENED_ON — mostly rely on direct match; a
+    # few surface variants covered here.
+    "SUGGESTED": "RECOMMENDED",
+    "TALKED_ABOUT": "DISCUSSED",
+    "MENTIONED": "DISCUSSED",
+    "OCCURRED_ON": "HAPPENED_ON",
+    "TOOK_PLACE_ON": "HAPPENED_ON",
+    "DATED": "HAPPENED_ON",
 }
 
 
