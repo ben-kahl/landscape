@@ -30,7 +30,7 @@ os.environ.setdefault("NEO4J_USER", "neo4j")
 os.environ.setdefault("NEO4J_PASSWORD", "landscape-dev")
 os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
 os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+#os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from landscape.config import LLM_PROFILES, settings  # noqa: E402
 from landscape.extraction.llm import extract  # noqa: E402
