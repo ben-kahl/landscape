@@ -5,15 +5,15 @@ from landscape.extraction.schema import Extraction
 
 _SYSTEM_PROMPT = (
     "You are a precise knowledge-graph extractor. Given a passage of text, extract:\n"
-    "1. Named entities with their types"
-    " (PERSON, ORGANIZATION, PROJECT, TECHNOLOGY, LOCATION, OTHER).\n"
-    "2. Relationships between those entities as (subject, relation_type, object) triples.\n"
+    "1. Named entities with their types (PERSON, ORGANIZATION, PROJECT, TECHNOLOGY,\n"
+    "   LOCATION, CONCEPT, EVENT, DOCUMENT, ROLE, DATETIME, TASK).\n"
+    "2. Relationships between those entities as (subject, relation_type, object)\n"
+    "   triples, with an optional snake_case `subtype` preserving nuance.\n"
     "\n"
     "CRITICAL rules:\n"
     "- Extract IMPLICIT relationships. A nominalized verb like 'approval' or 'migration'\n"
     "  still encodes a relationship: 'Sarah approved the PostgreSQL migration' means\n"
-    "  Sarah -[APPROVED]-> PostgreSQL. The object of the approval is PostgreSQL, not\n"
-    "  the migration event itself.\n"
+    "  Sarah -[APPROVED]-> PostgreSQL.\n"
     "- Prepositional phrases encode membership/affiliation:\n"
     "  'Alice leads Project Atlas at Acme Corp' means Alice -[WORKS_FOR]-> Acme Corp\n"
     "  AND Project Atlas -[BELONGS_TO]-> Acme Corp.\n"
@@ -22,14 +22,35 @@ _SYSTEM_PROMPT = (
     "- Include only relationships between entities you have identified.\n"
     "- Use SCREAMING_SNAKE_CASE for relation_type.\n"
     "- CRITICAL — choose relation_type ONLY from this closed vocabulary:\n"
-    "  WORKS_FOR, LEADS, MEMBER_OF, REPORTS_TO, APPROVED, USES,\n"
-    "  BELONGS_TO, LOCATED_IN, CREATED, RELATED_TO.\n"
-    "  Map synonyms: 'employed by'/'hired by'/'works at' → WORKS_FOR.\n"
-    "  'manages'/'heads'/'owns a project' → LEADS. 'part of a team' → MEMBER_OF.\n"
-    "  'signed off on'/'authorized' → APPROVED. 'depends on'/'built on' → USES.\n"
-    "  'subsidiary of'/'owned by an org' → BELONGS_TO. 'based in' → LOCATED_IN.\n"
-    "  'authored'/'built'/'founded' → CREATED.\n"
+    "  WORKS_FOR, LEADS, MEMBER_OF, REPORTS_TO, APPROVED, USES, BELONGS_TO,\n"
+    "  LOCATED_IN, CREATED, RELATED_TO, HAS_TITLE, HAS_PREFERENCE, HAS_ATTRIBUTE,\n"
+    "  FAMILY_OF, RECOMMENDED, DISCUSSED, HAPPENED_ON, LIVES_IN.\n"
+    "  Synonym hints:\n"
+    "    'employed by'/'hired by'/'works at' → WORKS_FOR\n"
+    "    'manages'/'heads'/'owns a project' → LEADS\n"
+    "    'part of a team' → MEMBER_OF\n"
+    "    'signed off on'/'authorized' → APPROVED\n"
+    "    'depends on'/'built on' → USES\n"
+    "    'subsidiary of'/'owned by an org' → BELONGS_TO\n"
+    "    'based in' (org/office) → LOCATED_IN\n"
+    "    'authored'/'built'/'founded' → CREATED\n"
+    "    'is a senior engineer'/'promoted to director'/'title is X' → HAS_TITLE\n"
+    "      (subject=Person, object=Organization, subtype=snake_case(title))\n"
+    "    'favorite color is X'/'prefers X'/'likes X best' → HAS_PREFERENCE\n"
+    "      (subtype=axis, e.g. favorite_color, favorite_food, dietary)\n"
+    "    'height is 6ft'/'pronouns are they/them' → HAS_ATTRIBUTE\n"
+    "      (subtype=attribute name, e.g. height, pronouns)\n"
+    "    'daughter'/'uncle'/'married to'/'spouse of' → FAMILY_OF\n"
+    "      (subtype=relation kind, e.g. daughter, uncle, spouse, parent)\n"
+    "    'recommended X'/'suggested' → RECOMMENDED\n"
+    "    'talked about'/'mentioned' → DISCUSSED\n"
+    "    'happened on'/'occurred on'/'scheduled for' → HAPPENED_ON\n"
+    "      (subject=Event, object=DateTime)\n"
+    "    'lives in'/'resides in'/'home is' → LIVES_IN (personal residence only)\n"
     "  If nothing fits, use RELATED_TO. Do NOT invent new relation_types.\n"
+    "- `subtype` is optional. When the relation_type collapses nuance (title, family\n"
+    "  kind, preference axis), populate `subtype` with a short snake_case phrase that\n"
+    "  preserves the specifics. Omit (null) otherwise.\n"
     "- Return strict JSON matching the schema. No prose, no markdown fences.\n"
     "\n"
     "--- EXAMPLE 1 ---\n"
@@ -90,6 +111,58 @@ _SYSTEM_PROMPT = (
     "  ]\n"
     "}\n"
     "\n"
+    "--- EXAMPLE 4 (personal facts, subtypes) ---\n"
+    'Input: "Maya Chen is a senior engineer at Atlas Corp. Her daughter Riley\n'
+    '        loves jazz. Maya\'s favorite color is blue."\n'
+    "Reasoning: 'senior engineer at Atlas' → HAS_TITLE(Maya→Atlas,\n"
+    "subtype=senior_engineer). 'her daughter Riley' → FAMILY_OF(Maya→Riley,\n"
+    "subtype=daughter). 'loves jazz' → HAS_PREFERENCE(Riley→Jazz,\n"
+    "subtype=loves) or LIKES depending on vocabulary. 'favorite color is blue' →\n"
+    "HAS_PREFERENCE(Maya→Blue, subtype=favorite_color).\n"
+    "Output:\n"
+    "{\n"
+    '  "entities": [\n'
+    '    {"name": "Maya Chen", "type": "PERSON", "confidence": 0.95, "aliases": ["Maya"]},\n'
+    '    {"name": "Atlas Corp", "type": "ORGANIZATION", "confidence": 0.95, "aliases": []},\n'
+    '    {"name": "Riley", "type": "PERSON", "confidence": 0.9, "aliases": []},\n'
+    '    {"name": "Jazz", "type": "CONCEPT", "confidence": 0.85, "aliases": []},\n'
+    '    {"name": "Blue", "type": "CONCEPT", "confidence": 0.85, "aliases": []}\n'
+    "  ],\n"
+    '  "relations": [\n'
+    '    {"subject": "Maya Chen", "object": "Atlas Corp",'
+    ' "relation_type": "HAS_TITLE",'
+    ' "subtype": "senior_engineer", "confidence": 0.9},\n'
+    '    {"subject": "Maya Chen", "object": "Riley",'
+    ' "relation_type": "FAMILY_OF",'
+    ' "subtype": "daughter", "confidence": 0.9},\n'
+    '    {"subject": "Riley", "object": "Jazz",'
+    ' "relation_type": "HAS_PREFERENCE",'
+    ' "subtype": "loves_music", "confidence": 0.8},\n'
+    '    {"subject": "Maya Chen", "object": "Blue",'
+    ' "relation_type": "HAS_PREFERENCE",'
+    ' "subtype": "favorite_color", "confidence": 0.9}\n'
+    "  ]\n"
+    "}\n"
+    "\n"
+    "--- EXAMPLE 5 (temporal, residence) ---\n"
+    'Input: "The kickoff happened on 2026-03-05. Alice lives in Brooklyn now."\n'
+    "Output:\n"
+    "{\n"
+    '  "entities": [\n'
+    '    {"name": "Kickoff", "type": "EVENT", "confidence": 0.8, "aliases": []},\n'
+    '    {"name": "2026-03-05", "type": "DATETIME", "confidence": 0.95,'
+    ' "aliases": []},\n'
+    '    {"name": "Alice", "type": "PERSON", "confidence": 0.95, "aliases": []},\n'
+    '    {"name": "Brooklyn", "type": "LOCATION", "confidence": 0.95, "aliases": []}\n'
+    "  ],\n"
+    '  "relations": [\n'
+    '    {"subject": "Kickoff", "object": "2026-03-05",'
+    ' "relation_type": "HAPPENED_ON", "confidence": 0.9},\n'
+    '    {"subject": "Alice", "object": "Brooklyn",'
+    ' "relation_type": "LIVES_IN", "confidence": 0.9}\n'
+    "  ]\n"
+    "}\n"
+    "\n"
     "Now extract from the following text:"
 )
 
@@ -97,6 +170,11 @@ _SYSTEM_PROMPT = (
 def _should_disable_thinking() -> bool:
     profile = LLM_PROFILES.get(settings.llm_profile)
     return profile is not None and not profile.thinking
+
+
+def _thinking_enabled() -> bool | None:
+    profile = LLM_PROFILES.get(settings.llm_profile)
+    return profile.thinking if profile is not None else None
 
 
 def extract(text: str) -> Extraction:
@@ -110,5 +188,6 @@ def extract(text: str) -> Extraction:
             {"role": "user", "content": prompt},
         ],
         format=Extraction.model_json_schema(),
+        think=_thinking_enabled(),
     )
     return Extraction.model_validate_json(response.message.content)

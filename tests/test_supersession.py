@@ -147,6 +147,139 @@ async def test_additive_different_rel_type(http_client, neo4j_driver):
 
 
 @pytest.mark.asyncio
+async def test_object_keyed_subtype_supersedes(http_client, neo4j_driver):
+    """HAS_TITLE is object-keyed — a new subtype on the same (s, o) supersedes.
+
+    Alice HAS_TITLE Atlas[senior_engineer] → Alice HAS_TITLE Atlas[principal_engineer]
+    The old edge should be marked superseded; the new edge live.
+    """
+    title1 = "supersession-test-has-title-1"
+    title2 = "supersession-test-has-title-2"
+    for t in (title1, title2):
+        await _clear_doc(neo4j_driver, t)
+
+    from landscape.storage import neo4j_store
+
+    doc_id1, _ = await neo4j_store.merge_document("hash-ht-1", title1, "text")
+    doc_id2, _ = await neo4j_store.merge_document("hash-ht-2", title2, "text")
+    await neo4j_store.merge_entity("Alice", "Person", title1, 0.9, doc_id1, "test")
+    await neo4j_store.merge_entity("Atlas Corp", "Organization", title1, 0.9, doc_id1, "test")
+
+    await _clear_relation(neo4j_driver, "Alice", "HAS_TITLE")
+
+    o1, _ = await neo4j_store.upsert_relation(
+        "Alice", "Atlas Corp", "HAS_TITLE", 0.9, title1, subtype="senior_engineer"
+    )
+    o2, _ = await neo4j_store.upsert_relation(
+        "Alice", "Atlas Corp", "HAS_TITLE", 0.9, title2, subtype="principal_engineer"
+    )
+    assert o1 == "created"
+    assert o2 == "superseded"
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (s:Entity {name: 'Alice'})-[r:RELATES_TO {type: 'HAS_TITLE'}]->
+                  (o:Entity {name: 'Atlas Corp'})
+            RETURN r.subtype AS subtype, r.valid_until AS valid_until
+            ORDER BY r.valid_from
+            """
+        )
+        records = await result.data()
+
+    assert len(records) == 2
+    sr = next(r for r in records if r["subtype"] == "senior_engineer")
+    pr = next(r for r in records if r["subtype"] == "principal_engineer")
+    assert sr["valid_until"] is not None, "old title must be superseded"
+    assert pr["valid_until"] is None, "new title must be live"
+
+
+@pytest.mark.asyncio
+async def test_object_keyed_different_object_is_additive(http_client, neo4j_driver):
+    """HAS_TITLE at different orgs coexists — Alice held titles at both.
+
+    Past Atlas title remains a live fact alongside current Beacon title,
+    because the story of "no longer at Atlas" lives on WORKS_FOR, not HAS_TITLE.
+    """
+    title = "supersession-test-has-title-multi-org"
+    await _clear_doc(neo4j_driver, title)
+
+    from landscape.storage import neo4j_store
+
+    doc_id, _ = await neo4j_store.merge_document("hash-htm", title, "text")
+    await neo4j_store.merge_entity("Alice", "Person", title, 0.9, doc_id, "test")
+    await neo4j_store.merge_entity("Atlas Corp", "Organization", title, 0.9, doc_id, "test")
+    await neo4j_store.merge_entity("Beacon Corp", "Organization", title, 0.9, doc_id, "test")
+
+    await _clear_relation(neo4j_driver, "Alice", "HAS_TITLE")
+
+    o1, _ = await neo4j_store.upsert_relation(
+        "Alice", "Atlas Corp", "HAS_TITLE", 0.9, title, subtype="senior_engineer"
+    )
+    o2, _ = await neo4j_store.upsert_relation(
+        "Alice", "Beacon Corp", "HAS_TITLE", 0.9, title, subtype="principal_engineer"
+    )
+    assert o1 == "created"
+    assert o2 == "created"
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (s:Entity {name: 'Alice'})-[r:RELATES_TO {type: 'HAS_TITLE'}]->(o)
+            WHERE r.valid_until IS NULL
+            RETURN count(r) AS cnt
+            """
+        )
+        record = await result.single()
+    assert record["cnt"] == 2
+
+
+@pytest.mark.asyncio
+async def test_subtype_keyed_pref_supersedes_on_same_axis(http_client, neo4j_driver):
+    """HAS_PREFERENCE is subtype-keyed. Changing favorite_color supersedes."""
+    title = "supersession-test-pref-axis"
+    await _clear_doc(neo4j_driver, title)
+
+    from landscape.storage import neo4j_store
+
+    doc_id, _ = await neo4j_store.merge_document("hash-pref-1", title, "text")
+    await neo4j_store.merge_entity("Alice", "Person", title, 0.9, doc_id, "test")
+    await neo4j_store.merge_entity("Blue", "Concept", title, 0.9, doc_id, "test")
+    await neo4j_store.merge_entity("Green", "Concept", title, 0.9, doc_id, "test")
+    await neo4j_store.merge_entity("Sushi", "Concept", title, 0.9, doc_id, "test")
+
+    await _clear_relation(neo4j_driver, "Alice", "HAS_PREFERENCE")
+
+    # Same axis, different object → supersede
+    o1, _ = await neo4j_store.upsert_relation(
+        "Alice", "Blue", "HAS_PREFERENCE", 0.9, title, subtype="favorite_color"
+    )
+    o2, _ = await neo4j_store.upsert_relation(
+        "Alice", "Green", "HAS_PREFERENCE", 0.9, title, subtype="favorite_color"
+    )
+    # Different axis → additive, coexists
+    o3, _ = await neo4j_store.upsert_relation(
+        "Alice", "Sushi", "HAS_PREFERENCE", 0.9, title, subtype="favorite_food"
+    )
+    assert o1 == "created"
+    assert o2 == "superseded"
+    assert o3 == "created"
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (s:Entity {name: 'Alice'})-[r:RELATES_TO {type: 'HAS_PREFERENCE'}]->(o)
+            WHERE r.valid_until IS NULL
+            RETURN o.name AS target, r.subtype AS subtype
+            ORDER BY target
+            """
+        )
+        records = await result.data()
+    targets = {(r["target"], r["subtype"]) for r in records}
+    assert targets == {("Green", "favorite_color"), ("Sushi", "favorite_food")}
+
+
+@pytest.mark.asyncio
 async def test_current_facts_query(http_client, neo4j_driver):
     """Query with valid_until IS NULL returns only current state.
 

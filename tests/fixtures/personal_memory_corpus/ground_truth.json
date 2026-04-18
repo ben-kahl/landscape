@@ -1,0 +1,452 @@
+{
+  "_meta": {
+    "description": "Per-document extraction ground truth for the personal memory corpus. Used to benchmark extraction precision/recall under the expanded vocab + subtype model (see specs/vocab_expansion.md).",
+    "canonical_rel_types": [
+      "WORKS_FOR", "LEADS", "MEMBER_OF", "REPORTS_TO", "APPROVED", "USES",
+      "BELONGS_TO", "LOCATED_IN", "CREATED", "RELATED_TO",
+      "HAS_TITLE", "HAS_PREFERENCE", "HAS_ATTRIBUTE", "FAMILY_OF",
+      "RECOMMENDED", "DISCUSSED", "HAPPENED_ON", "LIVES_IN"
+    ],
+    "canonical_entity_types": [
+      "Person", "Organization", "Project", "Technology", "Location",
+      "Concept", "Event", "Document", "Role", "DateTime", "Task"
+    ],
+    "functional_keys": {
+      "WORKS_FOR": [], "LIVES_IN": [], "MARRIED_TO": [], "REPORTS_TO": [],
+      "BELONGS_TO": [], "HAPPENED_ON": [],
+      "HAS_TITLE": ["object"],
+      "HAS_PREFERENCE": ["subtype"],
+      "HAS_ATTRIBUTE": ["subtype"]
+    },
+    "relation_field_schema": {
+      "subject": "canonical entity name",
+      "object": "canonical entity name",
+      "type": "canonical rel type from canonical_rel_types",
+      "subtype": "snake_case nuance string, or null if the primitive suffices",
+      "acceptable_synonyms": "list of rel_type strings the LLM may produce that should coerce to `type` — precision/recall scoring treats these as correct",
+      "notes": "optional — clarifies edge cases (direction, implicit vs explicit, functionality trigger)"
+    }
+  },
+
+  "doc_01_alice_intro": {
+    "scenario": "employment_trajectory",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Atlas Robotics", "type": "Organization"},
+      {"name": "Hiro Tanaka", "type": "Person"},
+      {"name": "perception team", "type": "Organization", "acceptable_subtypes": ["team"]}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "Atlas Robotics", "type": "WORKS_FOR", "subtype": null,
+       "acceptable_synonyms": ["EMPLOYED_BY", "WORKS_AT", "EMPLOYED_AT", "WORKED_AT"]},
+      {"subject": "Alice Chen", "object": "Atlas Robotics", "type": "HAS_TITLE", "subtype": "senior_engineer",
+       "acceptable_synonyms": ["HAS_ROLE", "WORKS_AS", "HAS_JOB_TITLE", "TITLE"],
+       "notes": "Object-keyed functional: one title per (subject, employer)."},
+      {"subject": "Alice Chen", "object": "perception team", "type": "MEMBER_OF", "subtype": null,
+       "acceptable_synonyms": ["PART_OF", "ON_TEAM", "IN_TEAM"]},
+      {"subject": "Alice Chen", "object": "Hiro Tanaka", "type": "REPORTS_TO", "subtype": null,
+       "acceptable_synonyms": ["MANAGED_BY"],
+       "notes": "Direction: Alice reports to Hiro. LLM saying 'Hiro manages Alice' should flip or be treated equivalently."}
+    ]
+  },
+
+  "doc_02_alice_promotion": {
+    "scenario": "employment_trajectory",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Atlas Robotics", "type": "Organization"},
+      {"name": "perception team", "type": "Organization"}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "Atlas Robotics", "type": "HAS_TITLE", "subtype": "staff_engineer",
+       "acceptable_synonyms": ["HAS_ROLE", "WORKS_AS", "PROMOTED_TO"],
+       "notes": "Supersedes the senior_engineer edge from doc_01 via object-keyed functional."},
+      {"subject": "Alice Chen", "object": "perception team", "type": "LEADS", "subtype": null,
+       "acceptable_synonyms": ["MANAGES", "HEADS", "RUNS", "DIRECTS"]}
+    ]
+  },
+
+  "doc_03_alice_job_change": {
+    "scenario": "employment_trajectory",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Atlas Robotics", "type": "Organization"},
+      {"name": "Beacon AI", "type": "Organization"},
+      {"name": "foundations team", "type": "Organization"},
+      {"name": "inference infrastructure", "type": "Concept"}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "Beacon AI", "type": "WORKS_FOR", "subtype": null,
+       "acceptable_synonyms": ["EMPLOYED_BY", "WORKS_AT", "JOINED", "HIRED_BY"],
+       "notes": "Supersedes WORKS_FOR Atlas Robotics via subject-keyed functional."},
+      {"subject": "Alice Chen", "object": "Beacon AI", "type": "HAS_TITLE", "subtype": "principal_engineer",
+       "acceptable_synonyms": ["HAS_ROLE", "WORKS_AS", "HAS_JOB_TITLE"]},
+      {"subject": "Alice Chen", "object": "foundations team", "type": "LEADS", "subtype": null,
+       "acceptable_synonyms": ["MANAGES", "HEADS", "RUNS"]}
+    ]
+  },
+
+  "doc_04_felix_still_atlas": {
+    "scenario": "employment_trajectory",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Felix Park", "type": "Person"},
+      {"name": "Atlas Robotics", "type": "Organization"},
+      {"name": "Beacon AI", "type": "Organization"}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "Felix Park", "type": "RELATED_TO", "subtype": "friend",
+       "acceptable_synonyms": ["FRIEND_OF", "KNOWS"],
+       "notes": "FRIEND_OF not in canonical v1 vocab; falls back to RELATED_TO with subtype."},
+      {"subject": "Felix Park", "object": "Atlas Robotics", "type": "WORKS_FOR", "subtype": null,
+       "acceptable_synonyms": ["EMPLOYED_BY", "WORKS_AT"]},
+      {"subject": "Felix Park", "object": "Atlas Robotics", "type": "HAS_TITLE", "subtype": "staff_engineer",
+       "acceptable_synonyms": ["HAS_ROLE", "WORKS_AS"]}
+    ]
+  },
+
+  "doc_05_alice_seattle": {
+    "scenario": "knowledge_update",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Seattle", "type": "Location"},
+      {"name": "Caffeine Lab", "type": "Organization", "acceptable_subtypes": ["coffee_shop", "shop"]},
+      {"name": "dark roast coffee", "type": "Concept", "acceptable_subtypes": ["beverage", "coffee"]}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "Seattle", "type": "LIVES_IN", "subtype": null,
+       "acceptable_synonyms": ["RESIDES_IN", "LIVES_AT", "BASED_IN"],
+       "notes": "Subject-keyed functional. Supersedes on move to Austin in doc_06."},
+      {"subject": "Alice Chen", "object": "dark roast coffee", "type": "HAS_PREFERENCE", "subtype": "favorite_coffee",
+       "acceptable_synonyms": ["PREFERS", "LIKES_BEST", "FAVORITE"],
+       "notes": "Subtype-keyed: one value per (subject, favorite_coffee axis)."},
+      {"subject": "Caffeine Lab", "object": "Seattle", "type": "LOCATED_IN", "subtype": null,
+       "acceptable_synonyms": ["BASED_IN", "HEADQUARTERED_IN"]}
+    ]
+  },
+
+  "doc_06_alice_austin_move": {
+    "scenario": "knowledge_update",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Seattle", "type": "Location"},
+      {"name": "Austin", "type": "Location"},
+      {"name": "Colorado River", "type": "Location"}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "Austin", "type": "LIVES_IN", "subtype": null,
+       "acceptable_synonyms": ["RESIDES_IN", "LIVES_AT", "MOVED_TO"],
+       "notes": "Supersedes LIVES_IN Seattle from doc_05."}
+    ]
+  },
+
+  "doc_07_alice_diet_change": {
+    "scenario": "knowledge_update",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "vegetarian", "type": "Concept", "acceptable_subtypes": ["diet"]},
+      {"name": "pescatarian", "type": "Concept", "acceptable_subtypes": ["diet"]}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "pescatarian", "type": "HAS_PREFERENCE", "subtype": "dietary",
+       "acceptable_synonyms": ["HAS_DIET", "FOLLOWS_DIET", "PREFERS"],
+       "notes": "Supersedes HAS_PREFERENCE(subtype=dietary) → vegetarian via subtype-keyed functional."}
+    ]
+  },
+
+  "doc_08_alice_family": {
+    "scenario": "family",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Ben Carter", "type": "Person"},
+      {"name": "Clara Chen-Carter", "type": "Person"},
+      {"name": "Daniel Chen", "type": "Person"},
+      {"name": "Eleanor Chen", "type": "Person"},
+      {"name": "Portland", "type": "Location"}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "Ben Carter", "type": "FAMILY_OF", "subtype": "spouse",
+       "acceptable_synonyms": ["MARRIED_TO", "SPOUSE_OF"],
+       "notes": "If extractor produces MARRIED_TO as canonical, also acceptable — maps to FAMILY_OF subtype=spouse in v1."},
+      {"subject": "Alice Chen", "object": "Clara Chen-Carter", "type": "FAMILY_OF", "subtype": "daughter",
+       "acceptable_synonyms": ["PARENT_OF", "MOTHER_OF"],
+       "notes": "Direction ambiguous — PARENT_OF from Alice's side or CHILD_OF from Clara's. Accept either; normalize to FAMILY_OF with subtype."},
+      {"subject": "Alice Chen", "object": "Daniel Chen", "type": "FAMILY_OF", "subtype": "brother",
+       "acceptable_synonyms": ["SIBLING_OF", "SISTER_OF"]},
+      {"subject": "Alice Chen", "object": "Eleanor Chen", "type": "FAMILY_OF", "subtype": "mother",
+       "acceptable_synonyms": ["CHILD_OF", "DAUGHTER_OF"],
+       "notes": "Eleanor is the mother; direction flexible."},
+      {"subject": "Eleanor Chen", "object": "Portland", "type": "LIVES_IN", "subtype": null,
+       "acceptable_synonyms": ["RESIDES_IN", "LIVES_AT"]}
+    ]
+  },
+
+  "doc_09_clara_profile": {
+    "scenario": "family",
+    "entities": [
+      {"name": "Clara Chen-Carter", "type": "Person"},
+      {"name": "Maplewood Elementary", "type": "Organization", "acceptable_subtypes": ["school"]},
+      {"name": "drawing", "type": "Concept", "acceptable_subtypes": ["activity", "hobby"]},
+      {"name": "otter", "type": "Concept", "acceptable_subtypes": ["animal"]}
+    ],
+    "relations": [
+      {"subject": "Clara Chen-Carter", "object": "Maplewood Elementary", "type": "MEMBER_OF", "subtype": "student",
+       "acceptable_synonyms": ["ATTENDS", "ENROLLED_IN", "STUDIES_AT"],
+       "notes": "ENROLLED_IN not in v1 canonical; falls back to MEMBER_OF with subtype=student."},
+      {"subject": "Clara Chen-Carter", "object": "drawing", "type": "HAS_PREFERENCE", "subtype": "favorite_hobby",
+       "acceptable_synonyms": ["LIKES", "LOVES", "ENJOYS"]},
+      {"subject": "Clara Chen-Carter", "object": "otter", "type": "HAS_PREFERENCE", "subtype": "favorite_animal",
+       "acceptable_synonyms": ["LIKES_BEST", "FAVORITE"]}
+    ]
+  },
+
+  "doc_10_daniel_profile": {
+    "scenario": "family",
+    "entities": [
+      {"name": "Daniel Chen", "type": "Person"},
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Portland", "type": "Location"},
+      {"name": "Rainfall Records", "type": "Organization", "acceptable_subtypes": ["studio"]}
+    ],
+    "relations": [
+      {"subject": "Daniel Chen", "object": "Alice Chen", "type": "FAMILY_OF", "subtype": "brother"},
+      {"subject": "Daniel Chen", "object": "Portland", "type": "LIVES_IN", "subtype": null,
+       "acceptable_synonyms": ["RESIDES_IN"]},
+      {"subject": "Daniel Chen", "object": "Rainfall Records", "type": "WORKS_FOR", "subtype": null,
+       "acceptable_synonyms": ["EMPLOYED_BY", "WORKS_AT"]},
+      {"subject": "Daniel Chen", "object": "Rainfall Records", "type": "HAS_TITLE", "subtype": "sound_engineer",
+       "acceptable_synonyms": ["HAS_ROLE", "WORKS_AS"]}
+    ]
+  },
+
+  "doc_11_conference": {
+    "scenario": "temporal",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "RoboSystems conference", "type": "Event", "acceptable_subtypes": ["conference"]},
+      {"name": "2026-06-10", "type": "DateTime", "acceptable_subtypes": ["date"]},
+      {"name": "San Francisco", "type": "Location"},
+      {"name": "Stanford", "type": "Organization", "acceptable_subtypes": ["university"]},
+      {"name": "inference latency", "type": "Concept"}
+    ],
+    "relations": [
+      {"subject": "RoboSystems conference", "object": "2026-06-10", "type": "HAPPENED_ON", "subtype": null,
+       "acceptable_synonyms": ["SCHEDULED_FOR", "OCCURRED_ON", "TOOK_PLACE_ON"],
+       "notes": "Subject-keyed functional: one primary date per event."},
+      {"subject": "RoboSystems conference", "object": "San Francisco", "type": "LOCATED_IN", "subtype": null,
+       "acceptable_synonyms": ["HELD_IN", "TOOK_PLACE_IN"]},
+      {"subject": "Alice Chen", "object": "RoboSystems conference", "type": "RELATED_TO", "subtype": "attended",
+       "acceptable_synonyms": ["ATTENDED", "PARTICIPATED_IN"],
+       "notes": "ATTENDED not in v1 canonical; RELATED_TO with subtype=attended is the fallback."},
+      {"subject": "Alice Chen", "object": "inference latency", "type": "DISCUSSED", "subtype": "talk",
+       "acceptable_synonyms": ["PRESENTED", "SPOKE_ABOUT", "GAVE_TALK_ON"]}
+    ]
+  },
+
+  "doc_12_clara_birthday": {
+    "scenario": "temporal",
+    "entities": [
+      {"name": "Clara Chen-Carter", "type": "Person"},
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Clara's ninth birthday party", "type": "Event", "acceptable_subtypes": ["birthday_party", "party"]},
+      {"name": "2026-05-20", "type": "DateTime"},
+      {"name": "Austin", "type": "Location"}
+    ],
+    "relations": [
+      {"subject": "Clara's ninth birthday party", "object": "2026-05-20", "type": "HAPPENED_ON", "subtype": null,
+       "acceptable_synonyms": ["OCCURRED_ON", "TOOK_PLACE_ON"]},
+      {"subject": "Clara's ninth birthday party", "object": "Austin", "type": "LOCATED_IN", "subtype": null,
+       "acceptable_synonyms": ["HELD_IN"]},
+      {"subject": "Alice Chen", "object": "Clara's ninth birthday party", "type": "CREATED", "subtype": "organized",
+       "acceptable_synonyms": ["ORGANIZED", "HOSTED", "PLANNED"]}
+    ]
+  },
+
+  "doc_13_team_offsite": {
+    "scenario": "temporal",
+    "entities": [
+      {"name": "Beacon AI foundations team offsite", "type": "Event", "acceptable_subtypes": ["offsite", "meeting"]},
+      {"name": "2026-09-15", "type": "DateTime"},
+      {"name": "Lake Tahoe", "type": "Location"},
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Iris Morales", "type": "Person"},
+      {"name": "evaluation infrastructure", "type": "Concept"}
+    ],
+    "relations": [
+      {"subject": "Beacon AI foundations team offsite", "object": "2026-09-15", "type": "HAPPENED_ON", "subtype": "scheduled",
+       "acceptable_synonyms": ["SCHEDULED_FOR", "PLANNED_FOR"],
+       "notes": "Future-dated; subtype distinguishes scheduled from past occurrence."},
+      {"subject": "Beacon AI foundations team offsite", "object": "Lake Tahoe", "type": "LOCATED_IN", "subtype": null},
+      {"subject": "Alice Chen", "object": "Beacon AI foundations team offsite", "type": "CREATED", "subtype": "organizing",
+       "acceptable_synonyms": ["ORGANIZING", "PLANNING"]},
+      {"subject": "Iris Morales", "object": "evaluation infrastructure", "type": "DISCUSSED", "subtype": "presenting",
+       "acceptable_synonyms": ["PRESENTING", "WILL_PRESENT_ON"]}
+    ]
+  },
+
+  "doc_14_alice_tech_prefs": {
+    "scenario": "preferences",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Python", "type": "Technology"},
+      {"name": "Rust", "type": "Technology"},
+      {"name": "PyTorch", "type": "Technology"}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "Python", "type": "HAS_PREFERENCE", "subtype": "favorite_programming_language",
+       "acceptable_synonyms": ["PREFERS", "FAVORITE_LANGUAGE", "LIKES_BEST"]},
+      {"subject": "Alice Chen", "object": "Python", "type": "USES", "subtype": null,
+       "acceptable_synonyms": ["WORKS_WITH", "PROGRAMS_IN"]},
+      {"subject": "Alice Chen", "object": "Rust", "type": "RECOMMENDED", "subtype": "for_performance",
+       "acceptable_synonyms": ["SUGGESTED", "ADVISED_USE_OF"]},
+      {"subject": "Alice Chen", "object": "PyTorch", "type": "HAS_PREFERENCE", "subtype": "preferred_framework",
+       "acceptable_synonyms": ["PREFERS", "FAVORITE_FRAMEWORK"]}
+    ]
+  },
+
+  "doc_15_alice_books": {
+    "scenario": "preferences",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "The Soul of a New Machine", "type": "Document", "acceptable_subtypes": ["book"]},
+      {"name": "Tracy Kidder", "type": "Person"},
+      {"name": "Piranesi", "type": "Document", "acceptable_subtypes": ["book", "novel"]},
+      {"name": "Susanna Clarke", "type": "Person"},
+      {"name": "Ada Lovelace", "type": "Person"}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "The Soul of a New Machine", "type": "RECOMMENDED", "subtype": "strongly",
+       "acceptable_synonyms": ["SUGGESTED", "ADVISED"]},
+      {"subject": "Tracy Kidder", "object": "The Soul of a New Machine", "type": "CREATED", "subtype": "authored",
+       "acceptable_synonyms": ["AUTHORED", "WROTE"]},
+      {"subject": "Alice Chen", "object": "Piranesi", "type": "HAS_PREFERENCE", "subtype": "favorite_novel",
+       "acceptable_synonyms": ["FAVORITE", "LIKES_BEST"]},
+      {"subject": "Susanna Clarke", "object": "Piranesi", "type": "CREATED", "subtype": "authored",
+       "acceptable_synonyms": ["AUTHORED", "WROTE"]}
+    ]
+  },
+
+  "doc_16_alice_food": {
+    "scenario": "preferences",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Japanese cuisine", "type": "Concept", "acceptable_subtypes": ["cuisine", "food"]},
+      {"name": "shellfish", "type": "Concept", "acceptable_subtypes": ["food", "allergen"]},
+      {"name": "Uchi", "type": "Organization", "acceptable_subtypes": ["restaurant"]},
+      {"name": "Austin", "type": "Location"}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "Japanese cuisine", "type": "HAS_PREFERENCE", "subtype": "favorite_cuisine",
+       "acceptable_synonyms": ["FAVORITE", "PREFERS"]},
+      {"subject": "Alice Chen", "object": "shellfish", "type": "HAS_ATTRIBUTE", "subtype": "allergy",
+       "acceptable_synonyms": ["ALLERGIC_TO", "AVOIDS"],
+       "notes": "Subtype-keyed: one allergy-to-shellfish fact per subject."},
+      {"subject": "Alice Chen", "object": "Uchi", "type": "HAS_PREFERENCE", "subtype": "favorite_restaurant",
+       "acceptable_synonyms": ["FAVORITE"]},
+      {"subject": "Uchi", "object": "Austin", "type": "LOCATED_IN", "subtype": null,
+       "acceptable_synonyms": ["BASED_IN"]}
+    ]
+  },
+
+  "doc_17_felix_hiro_intro": {
+    "scenario": "multi_hop_connector",
+    "entities": [
+      {"name": "Felix Park", "type": "Person"},
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Hiro Tanaka", "type": "Person"},
+      {"name": "Atlas Robotics", "type": "Organization"},
+      {"name": "perception team", "type": "Organization"},
+      {"name": "Tanaka Labs", "type": "Organization"}
+    ],
+    "relations": [
+      {"subject": "Felix Park", "object": "Atlas Robotics", "type": "WORKS_FOR", "subtype": null},
+      {"subject": "Alice Chen", "object": "Atlas Robotics", "type": "WORKS_FOR", "subtype": null,
+       "notes": "Historical context — may conflict with doc_03 supersession; extraction ground truth per-doc."},
+      {"subject": "Hiro Tanaka", "object": "Atlas Robotics", "type": "WORKS_FOR", "subtype": null,
+       "notes": "Historical."},
+      {"subject": "Hiro Tanaka", "object": "perception team", "type": "LEADS", "subtype": "manager",
+       "acceptable_synonyms": ["MANAGES", "HEADS"],
+       "notes": "Historical; superseded by Hiro's move to Tanaka Labs."},
+      {"subject": "Hiro Tanaka", "object": "Tanaka Labs", "type": "WORKS_FOR", "subtype": null,
+       "notes": "Current. Subject-keyed functional supersedes Atlas."},
+      {"subject": "Hiro Tanaka", "object": "Tanaka Labs", "type": "LEADS", "subtype": "founder",
+       "acceptable_synonyms": ["RUNS", "HEADS", "FOUNDED"]},
+      {"subject": "Hiro Tanaka", "object": "Tanaka Labs", "type": "CREATED", "subtype": "founded",
+       "acceptable_synonyms": ["FOUNDED", "STARTED"]}
+    ]
+  },
+
+  "doc_18_ben_job": {
+    "scenario": "multi_hop_connector",
+    "entities": [
+      {"name": "Ben Carter", "type": "Person"},
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Zenith Capital", "type": "Organization"},
+      {"name": "fixed-income modeling group", "type": "Organization"}
+    ],
+    "relations": [
+      {"subject": "Ben Carter", "object": "Alice Chen", "type": "FAMILY_OF", "subtype": "spouse"},
+      {"subject": "Ben Carter", "object": "Zenith Capital", "type": "WORKS_FOR", "subtype": null,
+       "acceptable_synonyms": ["EMPLOYED_BY", "WORKS_AT"]},
+      {"subject": "Ben Carter", "object": "Zenith Capital", "type": "HAS_TITLE", "subtype": "quantitative_analyst",
+       "acceptable_synonyms": ["HAS_ROLE", "WORKS_AS"]},
+      {"subject": "Ben Carter", "object": "fixed-income modeling group", "type": "LEADS", "subtype": null,
+       "acceptable_synonyms": ["MANAGES", "HEADS"]},
+      {"subject": "fixed-income modeling group", "object": "Zenith Capital", "type": "BELONGS_TO", "subtype": null,
+       "acceptable_synonyms": ["PART_OF", "DIVISION_OF"]}
+    ]
+  },
+
+  "doc_19_iris_hire": {
+    "scenario": "multi_hop_connector",
+    "entities": [
+      {"name": "Iris Morales", "type": "Person"},
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Beacon AI", "type": "Organization"},
+      {"name": "Lumen Robotics", "type": "Organization"},
+      {"name": "foundations team", "type": "Organization"}
+    ],
+    "relations": [
+      {"subject": "Iris Morales", "object": "Beacon AI", "type": "WORKS_FOR", "subtype": null,
+       "acceptable_synonyms": ["EMPLOYED_BY", "JOINED"]},
+      {"subject": "Iris Morales", "object": "Beacon AI", "type": "HAS_TITLE", "subtype": "senior_research_engineer",
+       "acceptable_synonyms": ["HAS_ROLE", "WORKS_AS"]},
+      {"subject": "Iris Morales", "object": "foundations team", "type": "MEMBER_OF", "subtype": null,
+       "acceptable_synonyms": ["PART_OF", "ON_TEAM"]},
+      {"subject": "Iris Morales", "object": "Lumen Robotics", "type": "WORKS_FOR", "subtype": null,
+       "notes": "Historical — should be extracted but supersession will mark it valid_until when Beacon is current."},
+      {"subject": "Alice Chen", "object": "Lumen Robotics", "type": "RELATED_TO", "subtype": "advisor",
+       "acceptable_synonyms": ["ADVISED", "ADVISOR_TO"],
+       "notes": "ADVISOR_TO not in v1 canonical; RELATED_TO with subtype=advisor is the fallback."},
+      {"subject": "Alice Chen", "object": "Iris Morales", "type": "RECOMMENDED", "subtype": "for_role",
+       "acceptable_synonyms": ["SUGGESTED_HIRING", "VOUCHED_FOR"]}
+    ]
+  },
+
+  "doc_20_school_python_course": {
+    "scenario": "multi_hop_connector",
+    "entities": [
+      {"name": "Alice Chen", "type": "Person"},
+      {"name": "Maplewood Elementary", "type": "Organization"},
+      {"name": "Clara Chen-Carter", "type": "Person"},
+      {"name": "Daniel Chen", "type": "Person"},
+      {"name": "Python", "type": "Technology"},
+      {"name": "weekend Python course", "type": "Event", "acceptable_subtypes": ["course", "class"]}
+    ],
+    "relations": [
+      {"subject": "Alice Chen", "object": "weekend Python course", "type": "RECOMMENDED", "subtype": "to_school",
+       "acceptable_synonyms": ["SUGGESTED", "PROPOSED"]},
+      {"subject": "weekend Python course", "object": "Maplewood Elementary", "type": "LOCATED_IN", "subtype": null,
+       "acceptable_synonyms": ["HELD_AT", "TAUGHT_AT"]},
+      {"subject": "weekend Python course", "object": "Python", "type": "RELATED_TO", "subtype": "topic",
+       "acceptable_synonyms": ["ABOUT", "COVERS"]},
+      {"subject": "Clara Chen-Carter", "object": "Maplewood Elementary", "type": "MEMBER_OF", "subtype": "student",
+       "acceptable_synonyms": ["ATTENDS", "ENROLLED_IN"]},
+      {"subject": "Daniel Chen", "object": "weekend Python course", "type": "LEADS", "subtype": "teacher",
+       "acceptable_synonyms": ["TEACHES", "INSTRUCTS"]},
+      {"subject": "Daniel Chen", "object": "Maplewood Elementary", "type": "RELATED_TO", "subtype": "volunteer",
+       "acceptable_synonyms": ["VOLUNTEERS_AT"]},
+      {"subject": "Daniel Chen", "object": "Alice Chen", "type": "FAMILY_OF", "subtype": "brother"}
+    ]
+  }
+}

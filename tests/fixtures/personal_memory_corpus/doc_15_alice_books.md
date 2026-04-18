@@ -1,0 +1,1 @@
+Alice Chen recommends the book "The Soul of a New Machine" by Tracy Kidder to everyone who joins her team. Her favorite novel is "Piranesi" by Susanna Clarke. She is currently reading a biography of Ada Lovelace.

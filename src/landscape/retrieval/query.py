@@ -23,6 +23,7 @@ class RetrievedEntity:
     score: float
     path_edge_ids: list[str] = field(default_factory=list)
     path_edge_types: list[str] = field(default_factory=list)
+    path_edge_subtypes: list[str | None] = field(default_factory=list)
 
 
 @dataclass
@@ -39,6 +40,8 @@ async def retrieve(
     limit: int = 10,
     weights: ScoringWeights | None = None,
     reinforce: bool = True,
+    session_id: str | None = None,
+    since: datetime | None = None,
 ) -> RetrievalResult:
     """Hybrid retrieval: seed by vector similarity, expand by graph BFS,
     score and rank, optionally reinforce touched elements."""
@@ -169,7 +172,30 @@ async def retrieve(
                 score=s,
                 path_edge_ids=list(row["edge_ids"] or []),
                 path_edge_types=list(row["edge_types"] or []),
+                path_edge_subtypes=list(row.get("edge_subtypes") or []),
             )
+
+    # 5. Session/time allowlist filtering (post-search intersection per spec).
+    #    Vector search runs against the full index; we narrow candidates after.
+    if session_id is not None or since is not None:
+        if session_id is not None and since is not None:
+            conv_ids = set(await neo4j_store.get_entities_in_conversation(session_id))
+            since_ids = set(await neo4j_store.get_entities_since(since))
+            allowlist = conv_ids & since_ids
+        elif session_id is not None:
+            allowlist = set(await neo4j_store.get_entities_in_conversation(session_id))
+        else:
+            allowlist = set(await neo4j_store.get_entities_since(since))  # type: ignore[arg-type]
+
+        if not allowlist:
+            return RetrievalResult(
+                query=query_text,
+                results=[],
+                touched_entity_ids=[],
+                touched_edge_ids=[],
+            )
+
+        candidates = {k: v for k, v in candidates.items() if k in allowlist}
 
     ranked = sorted(candidates.values(), key=lambda c: c.score, reverse=True)[:limit]
 

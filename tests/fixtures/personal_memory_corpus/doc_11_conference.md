@@ -1,0 +1,1 @@
+Alice Chen attended the RoboSystems conference on June 10, 2026 in San Francisco. She gave a short talk on inference latency and met several researchers from Stanford. She plans to attend again next year.

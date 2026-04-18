@@ -1,0 +1,214 @@
+{
+  "_meta": {
+    "description": "Multi-document scenarios that test the supersession + subtype + retrieval behavior the vocab-expansion spec targets. Each scenario specifies an ingest sequence (ordered), the expected final graph state assertions, and a set of retrieval queries with expected-top results.",
+    "ingest_order_matters": true,
+    "assertion_format": {
+      "final_state.live_relations": "list of edges that MUST exist with valid_until IS NULL after the full ingest sequence",
+      "final_state.superseded_relations": "list of edges that MUST exist with valid_until IS NOT NULL",
+      "final_state.absent_relations": "list of (subject, type, object) triples that MUST NOT exist in any form",
+      "retrieval_queries": "natural-language queries, with expected entity names in top-k results"
+    }
+  },
+
+  "scenarios": [
+    {
+      "id": "employment_supersession",
+      "description": "Alice's title is promoted at Atlas, then she changes employers to Beacon. Tests object-keyed HAS_TITLE supersession at Atlas plus subject-keyed WORKS_FOR supersession across employers.",
+      "ingest_sequence": [
+        "doc_01_alice_intro",
+        "doc_02_alice_promotion",
+        "doc_03_alice_job_change",
+        "doc_04_felix_still_atlas"
+      ],
+      "final_state": {
+        "live_relations": [
+          {"subject": "Alice Chen", "type": "WORKS_FOR", "object": "Beacon AI"},
+          {"subject": "Alice Chen", "type": "HAS_TITLE", "object": "Beacon AI", "subtype": "principal_engineer"},
+          {"subject": "Alice Chen", "type": "LEADS", "object": "foundations team"},
+          {"subject": "Felix Park", "type": "WORKS_FOR", "object": "Atlas Robotics"},
+          {"subject": "Felix Park", "type": "HAS_TITLE", "object": "Atlas Robotics", "subtype": "staff_engineer"}
+        ],
+        "superseded_relations": [
+          {"subject": "Alice Chen", "type": "WORKS_FOR", "object": "Atlas Robotics"},
+          {"subject": "Alice Chen", "type": "HAS_TITLE", "object": "Atlas Robotics", "subtype": "senior_engineer",
+           "notes": "Superseded by doc_02 (same object, different subtype)."},
+          {"subject": "Alice Chen", "type": "HAS_TITLE", "object": "Atlas Robotics", "subtype": "staff_engineer",
+           "notes": "Lives briefly after doc_02 then is supplanted when Alice leaves — though per spec, leaving Atlas does NOT cascade-supersede the title edge. Staff_engineer@Atlas remains live but stale. This is an explicit known limitation: cross-edge consistency is deferred."}
+        ],
+        "absent_relations": []
+      },
+      "retrieval_queries": [
+        {"query": "Where does Alice Chen work now?", "expect_top_names": ["Beacon AI", "Alice Chen"]},
+        {"query": "What is Alice's current title?", "expect_top_names": ["Beacon AI", "Alice Chen"],
+         "notes": "Should surface the principal_engineer title at Beacon, not Atlas."},
+        {"query": "Who at Atlas does Alice still know?", "expect_top_names": ["Felix Park", "Atlas Robotics"]}
+      ]
+    },
+
+    {
+      "id": "life_update_supersession",
+      "description": "Alice moves cities (subject-keyed LIVES_IN supersession) and changes diet (subtype-keyed HAS_PREFERENCE supersession on dietary axis).",
+      "ingest_sequence": [
+        "doc_05_alice_seattle",
+        "doc_06_alice_austin_move",
+        "doc_07_alice_diet_change"
+      ],
+      "final_state": {
+        "live_relations": [
+          {"subject": "Alice Chen", "type": "LIVES_IN", "object": "Austin"},
+          {"subject": "Alice Chen", "type": "HAS_PREFERENCE", "object": "dark roast coffee", "subtype": "favorite_coffee",
+           "notes": "Favorite-coffee axis is different from the dietary axis, so this survives."},
+          {"subject": "Alice Chen", "type": "HAS_PREFERENCE", "object": "pescatarian", "subtype": "dietary"}
+        ],
+        "superseded_relations": [
+          {"subject": "Alice Chen", "type": "LIVES_IN", "object": "Seattle"},
+          {"subject": "Alice Chen", "type": "HAS_PREFERENCE", "object": "vegetarian", "subtype": "dietary",
+           "notes": "If the extractor emits this from doc_07's 'used to be vegetarian' phrasing."}
+        ],
+        "absent_relations": []
+      },
+      "retrieval_queries": [
+        {"query": "Where does Alice live?", "expect_top_names": ["Austin", "Alice Chen"]},
+        {"query": "What is Alice's diet?", "expect_top_names": ["pescatarian", "Alice Chen"]},
+        {"query": "Does Alice still live in Seattle?", "expect_top_names": ["Austin", "Alice Chen"],
+         "notes": "Temporal filter should prevent Seattle from dominating the answer."}
+      ]
+    },
+
+    {
+      "id": "family_multi_hop",
+      "description": "Multi-hop over family + preferences. Tests that FAMILY_OF remains additive (Alice has multiple family members) and that hop-2 queries can reach a family member's preference.",
+      "ingest_sequence": [
+        "doc_08_alice_family",
+        "doc_09_clara_profile",
+        "doc_10_daniel_profile"
+      ],
+      "final_state": {
+        "live_relations": [
+          {"subject": "Alice Chen", "type": "FAMILY_OF", "object": "Ben Carter", "subtype": "spouse"},
+          {"subject": "Alice Chen", "type": "FAMILY_OF", "object": "Clara Chen-Carter", "subtype": "daughter"},
+          {"subject": "Alice Chen", "type": "FAMILY_OF", "object": "Daniel Chen", "subtype": "brother"},
+          {"subject": "Alice Chen", "type": "FAMILY_OF", "object": "Eleanor Chen", "subtype": "mother"},
+          {"subject": "Clara Chen-Carter", "type": "HAS_PREFERENCE", "object": "drawing", "subtype": "favorite_hobby"},
+          {"subject": "Clara Chen-Carter", "type": "HAS_PREFERENCE", "object": "otter", "subtype": "favorite_animal"},
+          {"subject": "Daniel Chen", "type": "WORKS_FOR", "object": "Rainfall Records"}
+        ],
+        "superseded_relations": [],
+        "absent_relations": []
+      },
+      "retrieval_queries": [
+        {"query": "Who is Alice's daughter?", "expect_top_names": ["Clara Chen-Carter", "Alice Chen"]},
+        {"query": "What does Alice's daughter like to do?", "expect_top_names": ["drawing", "Clara Chen-Carter"],
+         "notes": "2-hop: Alice → FAMILY_OF → Clara → HAS_PREFERENCE → drawing."},
+        {"query": "Where does Alice's brother work?", "expect_top_names": ["Rainfall Records", "Daniel Chen"],
+         "notes": "2-hop: Alice → FAMILY_OF → Daniel → WORKS_FOR → Rainfall Records."}
+      ]
+    },
+
+    {
+      "id": "temporal_events",
+      "description": "Events anchored to DateTime entities with HAPPENED_ON. Distinguishes past occurrence (subtype=null) from scheduled (subtype=scheduled).",
+      "ingest_sequence": [
+        "doc_11_conference",
+        "doc_12_clara_birthday",
+        "doc_13_team_offsite"
+      ],
+      "final_state": {
+        "live_relations": [
+          {"subject": "RoboSystems conference", "type": "HAPPENED_ON", "object": "2026-06-10"},
+          {"subject": "Clara's ninth birthday party", "type": "HAPPENED_ON", "object": "2026-05-20"},
+          {"subject": "Beacon AI foundations team offsite", "type": "HAPPENED_ON", "object": "2026-09-15", "subtype": "scheduled"}
+        ],
+        "superseded_relations": [],
+        "absent_relations": []
+      },
+      "retrieval_queries": [
+        {"query": "When was Clara's birthday party?", "expect_top_names": ["2026-05-20", "Clara's ninth birthday party"]},
+        {"query": "What conference did Alice attend in June?", "expect_top_names": ["RoboSystems conference", "2026-06-10"]},
+        {"query": "What is scheduled for September?", "expect_top_names": ["Beacon AI foundations team offsite", "2026-09-15"]}
+      ]
+    },
+
+    {
+      "id": "preferences_axis_keyed",
+      "description": "Tests subtype-keyed supersession on HAS_PREFERENCE — each preference axis (favorite_cuisine, favorite_programming_language, etc.) has exactly one live value per subject.",
+      "ingest_sequence": [
+        "doc_14_alice_tech_prefs",
+        "doc_15_alice_books",
+        "doc_16_alice_food"
+      ],
+      "final_state": {
+        "live_relations": [
+          {"subject": "Alice Chen", "type": "HAS_PREFERENCE", "object": "Python", "subtype": "favorite_programming_language"},
+          {"subject": "Alice Chen", "type": "HAS_PREFERENCE", "object": "PyTorch", "subtype": "preferred_framework"},
+          {"subject": "Alice Chen", "type": "HAS_PREFERENCE", "object": "Piranesi", "subtype": "favorite_novel"},
+          {"subject": "Alice Chen", "type": "HAS_PREFERENCE", "object": "Japanese cuisine", "subtype": "favorite_cuisine"},
+          {"subject": "Alice Chen", "type": "HAS_PREFERENCE", "object": "Uchi", "subtype": "favorite_restaurant"},
+          {"subject": "Alice Chen", "type": "HAS_ATTRIBUTE", "object": "shellfish", "subtype": "allergy"},
+          {"subject": "Alice Chen", "type": "RECOMMENDED", "object": "Rust", "subtype": "for_performance"},
+          {"subject": "Alice Chen", "type": "RECOMMENDED", "object": "The Soul of a New Machine", "subtype": "strongly"}
+        ],
+        "superseded_relations": [],
+        "absent_relations": [],
+        "notes": "All preferences coexist because each has a distinct subtype (different axis). If a doc ingested 'Alice's favorite programming language is now Rust', THAT would supersede the Python edge via subtype-keyed functional."
+      },
+      "retrieval_queries": [
+        {"query": "What is Alice's favorite programming language?", "expect_top_names": ["Python", "Alice Chen"]},
+        {"query": "What is Alice allergic to?", "expect_top_names": ["shellfish", "Alice Chen"]},
+        {"query": "What books does Alice recommend?", "expect_top_names": ["The Soul of a New Machine", "Tracy Kidder"]}
+      ]
+    },
+
+    {
+      "id": "full_corpus_multi_hop",
+      "description": "Ingest all 20 docs in order. Tests the system end-to-end: multi-hop traversal across scenarios, reinforcement, and retrieval quality under the full graph.",
+      "ingest_sequence": [
+        "doc_01_alice_intro", "doc_02_alice_promotion", "doc_03_alice_job_change",
+        "doc_04_felix_still_atlas", "doc_05_alice_seattle", "doc_06_alice_austin_move",
+        "doc_07_alice_diet_change", "doc_08_alice_family", "doc_09_clara_profile",
+        "doc_10_daniel_profile", "doc_11_conference", "doc_12_clara_birthday",
+        "doc_13_team_offsite", "doc_14_alice_tech_prefs", "doc_15_alice_books",
+        "doc_16_alice_food", "doc_17_felix_hiro_intro", "doc_18_ben_job",
+        "doc_19_iris_hire", "doc_20_school_python_course"
+      ],
+      "final_state": {
+        "entity_count_min": 45,
+        "live_relation_count_min": 55,
+        "notes": "Exact counts depend on entity resolution; minima ensure no catastrophic loss."
+      },
+      "retrieval_queries": [
+        {"query": "Who did Alice recommend for a job?", "expect_top_names": ["Iris Morales", "Alice Chen"]},
+        {"query": "Does Alice's daughter go to the same school where her uncle teaches?",
+         "expect_top_names": ["Maplewood Elementary", "Clara Chen-Carter", "Daniel Chen"],
+         "notes": "3-hop: Alice → FAMILY_OF → Clara → MEMBER_OF → Maplewood; Maplewood ← LEADS ← Daniel ← FAMILY_OF ← Alice (Daniel is her brother, so Clara's uncle)."},
+        {"query": "What did Alice present at the conference?", "expect_top_names": ["inference latency", "RoboSystems conference"]},
+        {"query": "Who does Alice's husband work for?", "expect_top_names": ["Zenith Capital", "Ben Carter"],
+         "notes": "2-hop through FAMILY_OF(spouse)."},
+        {"query": "Where does Alice's mom live?", "expect_top_names": ["Portland", "Eleanor Chen"]},
+        {"query": "What is Alice's relationship with Hiro Tanaka?",
+         "expect_top_names": ["Hiro Tanaka", "Tanaka Labs", "Alice Chen"],
+         "notes": "Tests that historical REPORTS_TO and LEADS edges remain queryable even after supersession."}
+      ]
+    },
+
+    {
+      "id": "session_scoped_retrieval",
+      "description": "Tests that Phase 3 cross-session filtering (#20) composes correctly with the expanded vocab. Ingest the same Alice docs under two session_ids; verify session filter isolates.",
+      "ingest_sequence": [
+        {"doc": "doc_08_alice_family", "session_id": "session-A", "turn_id": "t1"},
+        {"doc": "doc_14_alice_tech_prefs", "session_id": "session-A", "turn_id": "t2"},
+        {"doc": "doc_18_ben_job", "session_id": "session-B", "turn_id": "t1"}
+      ],
+      "retrieval_queries": [
+        {"query": "What does Alice prefer?", "session_id": "session-A",
+         "expect_top_names": ["Python", "PyTorch", "Alice Chen"],
+         "notes": "Session A scope — tech prefs are visible, Ben's job details are not."},
+        {"query": "Where does Ben work?", "session_id": "session-A",
+         "expect_top_names": [],
+         "notes": "Empty — Ben's WORKS_FOR edge was ingested under session-B only."},
+        {"query": "Where does Ben work?", "session_id": "session-B",
+         "expect_top_names": ["Zenith Capital", "Ben Carter"]}
+      ]
+    }
+  ]
+}

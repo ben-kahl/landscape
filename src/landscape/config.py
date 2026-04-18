@@ -13,8 +13,8 @@ class LLMProfile:
       2. `docker compose --profile gpu-nvidia exec ollama-nvidia ollama pull <tag>`
       3. Set `LANDSCAPE_LLM_PROFILE=<name>` in .env or the shell.
 
-    `ollama_tag` is the only load-bearing field today; temperature and num_ctx
-    are reserved for when extraction/llm.py starts honoring them."""
+    `ollama_tag` selects the model and `thinking` is forwarded to Ollama's
+    chat API for thinking-capable models."""
 
     ollama_tag: str
     temperature: float = 0.0
@@ -28,12 +28,13 @@ class LLMProfile:
 LLM_PROFILES: dict[str, LLMProfile] = {
     "llama31_8b": LLMProfile(
         ollama_tag="llama3.1:8b",
+        thinking=False,
         notes="Phase 2 baseline. Known-good for the killer-demo corpus.",
     ),
-    "qwen3_8b_nothink": LLMProfile(
-           ollama_tag="qwen3:8b",
+    "qwen25_7b_nothink": LLMProfile(
+           ollama_tag="qwen2.5:7b",
            thinking=False,
-           notes="Qwen 3 8B with thinking disabled — speed vs quality test",
+           notes="Qwen 2.5 7B with thinking disabled",
     ),
 }
 

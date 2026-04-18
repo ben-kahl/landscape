@@ -1,0 +1,226 @@
+{
+  "summary": {
+    "slice": "single-session-user",
+    "n_questions": 10,
+    "max_sessions_per_q": 4,
+    "k": 10,
+    "hit_at_k_rate": 0.8,
+    "avg_ingest_s": 91.5,
+    "avg_query_s": 0.056
+  },
+  "results": [
+    {
+      "question_id": "94f70d80",
+      "question": "How long did it take me to assemble the IKEA bookshelf?",
+      "answer": "4 hours",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 4,
+      "hit_at_k": true,
+      "top_names": [
+        "IKEA",
+        "coffee table with storage",
+        "West Elm",
+        "Crate and Barrel",
+        "English",
+        "Retail",
+        "grammar",
+        "Sydney",
+        "Health and Social Services",
+        "Information Media and Telecommunications"
+      ],
+      "ingest_s": 102.21,
+      "query_s": 0.069
+    },
+    {
+      "question_id": "bc8a6e93_abs",
+      "question": "What did I bake for my uncle's birthday party?",
+      "answer": "You did not mention this information. You mentioned baking for your niece's birthday party but not your uncle's",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 4,
+      "hit_at_k": true,
+      "top_names": [
+        "sugar",
+        "flour",
+        "honey",
+        "Kate Spade",
+        "lemon"
+      ],
+      "ingest_s": 64.97,
+      "query_s": 0.041
+    },
+    {
+      "question_id": "6ade9755",
+      "question": "Where do I take yoga classes?",
+      "answer": "Serenity Yoga",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 6,
+      "hit_at_k": true,
+      "top_names": [
+        "Serenity Yoga",
+        "Romania",
+        "Prague",
+        "The Rest and Relaxation",
+        "The Magic Tree House series",
+        "Sloth",
+        "The Lazy Day",
+        "The Comfy Life",
+        "Down Dog",
+        "Yelp"
+      ],
+      "ingest_s": 89.54,
+      "query_s": 0.043
+    },
+    {
+      "question_id": "bc8a6e93",
+      "question": "What did I bake for my niece's birthday party?",
+      "answer": "a lemon blueberry cake",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 5,
+      "hit_at_k": true,
+      "top_names": [
+        "bread flour",
+        "honey",
+        "all-purpose flour",
+        "La P\u00e2tisserie des Gobelins",
+        "granulated sugar",
+        "lemon"
+      ],
+      "ingest_s": 137.46,
+      "query_s": 0.042
+    },
+    {
+      "question_id": "6f9b354f",
+      "question": "What color did I repaint my bedroom walls?",
+      "answer": "a lighter shade of gray",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 5,
+      "hit_at_k": true,
+      "top_names": [
+        "table lamps",
+        "natural wood accents",
+        "Homeowners",
+        "pendant light",
+        "floating desk",
+        "built-in shelving"
+      ],
+      "ingest_s": 53.7,
+      "query_s": 0.063
+    },
+    {
+      "question_id": "6b168ec8",
+      "question": "How many bikes do I own?",
+      "answer": "three",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 2,
+      "hit_at_k": true,
+      "top_names": [
+        "Abus SmartX",
+        "colleagues",
+        "USER",
+        "Kryptonite New York Fahgettaboudit",
+        "best friend",
+        "ASSISTANT",
+        "Main Street",
+        "baby books",
+        "Secret Santa gifts",
+        "soft toy"
+      ],
+      "ingest_s": 89.21,
+      "query_s": 0.06
+    },
+    {
+      "question_id": "ec81a493",
+      "question": "How many copies of my favorite artist's debut album were released worldwide?",
+      "answer": "500",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 0,
+      "hit_at_k": false,
+      "top_names": [
+        "Alice",
+        "California",
+        "Lead",
+        "Product or service",
+        "San Francisco",
+        "Brooklyn",
+        "Consideration funnel",
+        "Awareness funnel",
+        "Retention funnel",
+        "Referral funnel"
+      ],
+      "ingest_s": 85.85,
+      "query_s": 0.047
+    },
+    {
+      "question_id": "af8d2e46",
+      "question": "How many shirts did I pack for my 5-day trip to Costa Rica?",
+      "answer": "7",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 2,
+      "hit_at_k": true,
+      "top_names": [
+        "Costa Rica",
+        "TSA guidelines",
+        "California's Central Valley",
+        "Polyface Farms",
+        "Photos",
+        "Family reunion"
+      ],
+      "ingest_s": 69.11,
+      "query_s": 0.059
+    },
+    {
+      "question_id": "66f24dbb",
+      "question": "What did I buy for my sister's birthday gift?",
+      "answer": "a yellow dress",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 21,
+      "hit_at_k": true,
+      "top_names": [
+        "Sister's Birthday",
+        "Rachel",
+        "Best Friend's Baby Shower",
+        "Brother's New Apartment",
+        "I",
+        "Yellow dress",
+        "pair of earrings",
+        "groceries",
+        "pearl",
+        "flowers"
+      ],
+      "ingest_s": 148.43,
+      "query_s": 0.082
+    },
+    {
+      "question_id": "311778f1",
+      "question": "How many hours did I spend watching documentaries on Netflix last month?",
+      "answer": "10",
+      "n_sessions_ingested": 4,
+      "n_gold_sessions": 1,
+      "n_gold_entities": 6,
+      "hit_at_k": false,
+      "top_names": [
+        "The Motivation Minute",
+        "How I Built This",
+        "The Tim Ferriss Show",
+        "Happier with Gretchen Rubin",
+        "Tiger Woods",
+        "Taylor Swift",
+        "Katy Perry",
+        "Imagine Dragons",
+        "The Daily Boost",
+        "The School of Greatness with Lewis Howes"
+      ],
+      "ingest_s": 74.53,
+      "query_s": 0.058
+    }
+  ]
+}

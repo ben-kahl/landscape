@@ -11,6 +11,7 @@ Usage:
     retriever = LandscapeRetriever(hops=2, limit=10)
     docs = await retriever.ainvoke("who approved Aurora's db choice?")
 """
+from datetime import datetime
 from typing import Any
 
 from langchain_core.callbacks import (
@@ -39,6 +40,8 @@ class LandscapeRetriever(BaseRetriever):
     limit: int = 10
     reinforce: bool = True
     weights: ScoringWeights | None = Field(default=None)
+    session_id: str | None = None
+    since: datetime | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -54,6 +57,8 @@ class LandscapeRetriever(BaseRetriever):
             limit=self.limit,
             weights=self.weights,
             reinforce=self.reinforce,
+            session_id=self.session_id,
+            since=self.since,
         )
         return [_entity_to_document(e) for e in result.results]
 
@@ -73,8 +78,20 @@ class LandscapeRetriever(BaseRetriever):
         )
 
 
+def _format_edge(rel_type: str, subtype: str | None) -> str:
+    """Render a single edge as ``TYPE`` or ``TYPE[subtype]`` when present."""
+    return f"{rel_type}[{subtype}]" if subtype else rel_type
+
+
 def _entity_to_document(entity: RetrievedEntity) -> Document:
-    path = " → ".join(entity.path_edge_types) if entity.path_edge_types else ""
+    # Zip subtype list (may be empty/shorter on old edges) against types so
+    # display stays stable when a path includes pre-subtype edges.
+    subtypes = entity.path_edge_subtypes or [None] * len(entity.path_edge_types)
+    if len(subtypes) < len(entity.path_edge_types):
+        subtypes = list(subtypes) + [None] * (len(entity.path_edge_types) - len(subtypes))
+    path_parts = [_format_edge(t, s) for t, s in zip(entity.path_edge_types, subtypes)]
+    path = " → ".join(path_parts) if path_parts else ""
+
     header = f"{entity.name} ({entity.type})"
     if entity.distance > 0 and path:
         content = f"{header} [{entity.distance} hops via {path}]"
@@ -94,5 +111,6 @@ def _entity_to_document(entity: RetrievedEntity) -> Document:
         "edge_confidence": entity.edge_confidence,
         "path_edge_ids": entity.path_edge_ids,
         "path_edge_types": entity.path_edge_types,
+        "path_edge_subtypes": entity.path_edge_subtypes,
     }
     return Document(page_content=content, metadata=metadata)
