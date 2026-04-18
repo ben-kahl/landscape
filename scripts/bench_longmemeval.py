@@ -63,7 +63,7 @@ async def _wipe_stack() -> None:
     driver = neo4j_store.get_driver()
     async with driver.session() as session:
         await session.run("MATCH (n) DETACH DELETE n")
-    client = await qdrant_store.get_client()
+    client = qdrant_store.get_client()
     existing = await client.get_collections()
     names = {c.name for c in existing.collections}
     for coll in (qdrant_store.COLLECTION, qdrant_store.CHUNKS_COLLECTION):
