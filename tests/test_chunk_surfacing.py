@@ -68,3 +68,36 @@ async def test_chunk_only_seed_propagates_score(http_client, neo4j_driver):
         "chunk-seeded entities should inherit the chunk's Qdrant similarity score "
         "— if this is 0 for every result, the seed_sims bug has returned"
     )
+
+
+@pytest.mark.asyncio
+async def test_query_returns_chunk_text(http_client, neo4j_driver):
+    """A hybrid query should return a chunks array with raw text and score."""
+    await _clear(neo4j_driver, TITLE)
+    r = await http_client.post("/ingest", json={"text": BASIC_DOC, "title": TITLE})
+    assert r.status_code == 200
+
+    q = await http_client.post(
+        "/query",
+        json={
+            "text": "where is Diego located",
+            "hops": 2,
+            "limit": 10,
+            "chunk_limit": 3,
+        },
+    )
+    assert q.status_code == 200
+    body = q.json()
+    chunks = body.get("chunks")
+    assert chunks is not None, "response should include a chunks field"
+    assert len(chunks) >= 1
+    assert len(chunks) <= 3
+    # At least one surfaced chunk should mention "Austin" — that's the fact
+    # the graph-only path was missing in the original Diego scenario.
+    assert any("Austin" in c["text"] for c in chunks), (
+        f"expected Austin-mentioning chunk, got: {[c['text'] for c in chunks]}"
+    )
+    for c in chunks:
+        assert "score" in c and c["score"] > 0
+        assert "source_doc" in c
+        assert "position" in c

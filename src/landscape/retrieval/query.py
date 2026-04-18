@@ -28,10 +28,10 @@ class RetrievedEntity:
 
 @dataclass
 class RetrievedChunk:
-    chunk_neo4j_id: str
+    chunk_neo4j_id: str  # Neo4j elementId of the :Chunk node
     text: str
-    doc_id: str
-    source_doc: str
+    doc_id: str          # Document node ID from the chunk payload
+    source_doc: str      # Human-readable document title/filename slug
     position: int
     score: float
 
@@ -49,6 +49,7 @@ async def retrieve(
     query_text: str,
     hops: int = 2,
     limit: int = 10,
+    chunk_limit: int = 3,
     weights: ScoringWeights | None = None,
     reinforce: bool = True,
     session_id: str | None = None,
@@ -78,6 +79,7 @@ async def retrieve(
     chunk_hits = await qdrant_store.search_chunks(query_vector, limit=5)
     chunk_ids: list[str] = []
     chunk_score_by_id: dict[str, float] = {}
+    retrieved_chunks: list[RetrievedChunk] = []
     for hit in chunk_hits:
         payload = hit.payload or {}
         cid = payload.get("chunk_neo4j_id")
@@ -85,13 +87,23 @@ async def retrieve(
             continue
         chunk_ids.append(cid)
         chunk_score_by_id[cid] = float(hit.score)
+        retrieved_chunks.append(
+            RetrievedChunk(
+                chunk_neo4j_id=cid,
+                text=payload.get("text", ""),
+                doc_id=payload.get("doc_id", ""),
+                source_doc=payload.get("source_doc", ""),
+                position=int(payload.get("position", 0)),
+                score=float(hit.score),
+            )
+        )
 
     chunk_entities = await neo4j_store.get_entities_from_chunks(chunk_ids)
     for ent in chunk_entities:
         eid = ent["eid"]
-        # A chunk-derived entity inherits the max similarity across any
-        # chunks it was extracted from.
-        src_chunk_ids = ent["chunk_eids"] if ent.get("chunk_eids") is not None else chunk_ids
+        src_chunk_ids = (
+            ent["chunk_eids"] if ent.get("chunk_eids") is not None else chunk_ids
+        )
         best = max(
             (chunk_score_by_id.get(cid, 0.0) for cid in src_chunk_ids),
             default=0.0,
@@ -104,6 +116,7 @@ async def retrieve(
             results=[],
             touched_entity_ids=[],
             touched_edge_ids=[],
+            chunks=retrieved_chunks[:chunk_limit],
         )
 
     # 3. Hydrate seed entity info (name, type, access_count, last_accessed).
@@ -219,6 +232,7 @@ async def retrieve(
                 results=[],
                 touched_entity_ids=[],
                 touched_edge_ids=[],
+                chunks=retrieved_chunks[:chunk_limit],
             )
 
         candidates = {k: v for k, v in candidates.items() if k in allowlist}
@@ -244,6 +258,7 @@ async def retrieve(
         results=ranked,
         touched_entity_ids=touched_entity_ids,
         touched_edge_ids=touched_edge_ids,
+        chunks=retrieved_chunks[:chunk_limit],
     )
 
 
