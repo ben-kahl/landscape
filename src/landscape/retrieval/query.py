@@ -23,6 +23,7 @@ class RetrievedEntity:
     score: float
     path_edge_ids: list[str] = field(default_factory=list)
     path_edge_types: list[str] = field(default_factory=list)
+    path_edge_subtypes: list[str | None] = field(default_factory=list)
 
 
 @dataclass
@@ -171,6 +172,7 @@ async def retrieve(
                 score=s,
                 path_edge_ids=list(row["edge_ids"] or []),
                 path_edge_types=list(row["edge_types"] or []),
+                path_edge_subtypes=list(row.get("edge_subtypes") or []),
             )
 
     # 5. Session/time allowlist filtering (post-search intersection per spec).

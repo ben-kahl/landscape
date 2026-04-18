@@ -228,6 +228,7 @@ async def add_relation(
     session_id: str,
     turn_id: str,
     confidence: float = 0.8,
+    subtype: str | None = None,
 ) -> str:
     """Persist an agent-authored relationship between two entities.
 
@@ -265,6 +266,12 @@ async def add_relation(
         session_id:   Conversation session identifier.
         turn_id:      Turn identifier within the session.
         confidence:   Extraction confidence.  Default 0.8.
+        subtype:      Optional snake_case nuance for the edge — preserved as
+                      edge metadata. Examples: "senior_engineer" on HAS_TITLE,
+                      "daughter" on FAMILY_OF, "favorite_color" on HAS_PREFERENCE.
+                      Object-keyed rels (HAS_TITLE) treat subtype as part of
+                      the edge's slot identity: writing a new subtype on the
+                      same (subject, object) pair supersedes the old edge.
 
     Returns:
         JSON object ``{relation_id, outcome, subject_id, object_id}`` where
@@ -299,6 +306,7 @@ async def add_relation(
         confidence=confidence,
         session_id=session_id,
         turn_id=turn_id,
+        subtype=subtype,
     )
     return json.dumps(
         {

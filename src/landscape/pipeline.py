@@ -9,6 +9,7 @@ from landscape.extraction import llm
 from landscape.extraction.chunker import chunk_text
 from landscape.extraction.entity_type_coercion import coerce_entity_type
 from landscape.extraction.rel_type_coercion import coerce_rel_type
+from landscape.extraction.schema import normalize_subtype
 from landscape.storage import neo4j_store, qdrant_store
 
 
@@ -131,6 +132,15 @@ async def ingest(
     relations_superseded = 0
     for relation in extraction.relations:
         canonical_rel_type, _coerce_score = coerce_rel_type(relation.relation_type)
+        # If coercion changed the rel type, preserve the LLM's original
+        # phrasing as the subtype — captures nuance even when the LLM didn't
+        # produce an explicit subtype field. Explicit subtype (step 3 schema)
+        # still wins when present.
+        raw_upper = (relation.relation_type or "").strip().upper().replace(" ", "_")
+        subtype_source = relation.subtype or (
+            raw_upper if raw_upper and raw_upper != canonical_rel_type else None
+        )
+        canonical_subtype = normalize_subtype(subtype_source)
         outcome, _ = await neo4j_store.upsert_relation(
             subject_name=relation.subject,
             object_name=relation.object,
@@ -139,6 +149,7 @@ async def ingest(
             source_doc=title,
             session_id=session_id,
             turn_id=turn_id,
+            subtype=canonical_subtype,
         )
         if outcome == "created":
             relations_created += 1

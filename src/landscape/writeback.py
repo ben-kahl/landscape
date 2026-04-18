@@ -26,6 +26,7 @@ from landscape.embeddings import encoder
 from landscape.entities import resolver
 from landscape.extraction.entity_type_coercion import coerce_entity_type
 from landscape.extraction.rel_type_coercion import coerce_rel_type
+from landscape.extraction.schema import normalize_subtype
 from landscape.storage import neo4j_store, qdrant_store
 
 
@@ -174,6 +175,7 @@ async def add_relation(
     confidence: float = 0.8,
     session_id: str | None = None,
     turn_id: str | None = None,
+    subtype: str | None = None,
 ) -> AddRelationResult:
     """Persist a relationship authored by an agent.
 
@@ -228,6 +230,13 @@ async def add_relation(
     )
 
     canonical_rel_type, _coerce_score = coerce_rel_type(rel_type)
+    # Preserve LLM/agent nuance as subtype when rel_type got coerced; explicit
+    # subtype kwarg wins.
+    raw_upper = (rel_type or "").strip().upper().replace(" ", "_")
+    subtype_source = subtype or (
+        raw_upper if raw_upper and raw_upper != canonical_rel_type else None
+    )
+    canonical_subtype = normalize_subtype(subtype_source)
 
     outcome, relation_id = await neo4j_store.upsert_relation(
         subject_name=subject,
@@ -238,6 +247,7 @@ async def add_relation(
         created_by="agent",
         session_id=session_id,
         turn_id=turn_id,
+        subtype=canonical_subtype,
     )
 
     return AddRelationResult(

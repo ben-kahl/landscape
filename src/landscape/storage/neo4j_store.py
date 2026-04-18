@@ -474,6 +474,7 @@ async def upsert_relation(
     created_by: str = "ingest",
     session_id: str | None = None,
     turn_id: str | None = None,
+    subtype: str | None = None,
 ) -> tuple[str, str | None]:
     """
     Returns (outcome, relation_id) where outcome is "created" | "reinforced" | "superseded".
@@ -487,18 +488,42 @@ async def upsert_relation(
     # Build agent provenance entry to append to source_docs when created_by=="agent"
     agent_entry = f"agent:{session_id or '?'}:{turn_id or '?'}" if created_by == "agent" else None
 
+    # Load the per-rel-type functional key declaration (step 2).
+    from landscape.extraction.schema import FUNCTIONAL_KEYS
+
+    key_fields = FUNCTIONAL_KEYS.get(relation_type)
+    # Object-keyed rels treat `subtype` as part of edge identity — a new
+    # subtype on the same (s, o) is a distinct fact (promotion/demotion) and
+    # triggers Case 2 supersession, not Case 1 reinforce. Non-object-keyed
+    # rels ignore subtype in identity; Case 1 reinforces and updates subtype
+    # to the newer value (non-null wins).
+    object_keyed = key_fields == ("object",)
+
     async with driver.session() as session:
-        # Case 1: exact match — same (s, rel_type, o), still valid
+        # Case 1: exact match on (s, rel_type, o). Null-safe subtype check
+        # gates reinforce for object-keyed rels.
+        if object_keyed:
+            subtype_identity_clause = (
+                "AND (r.subtype IS NULL OR $subtype IS NULL OR r.subtype = $subtype)"
+            )
+        else:
+            subtype_identity_clause = ""
+
         result = await session.run(
-            """
-            MATCH (s:Entity {name: $subject})-[r:RELATES_TO {type: $rel_type}]->
-                  (o:Entity {name: $object})
+            f"""
+            MATCH (s:Entity {{name: $subject}})-[r:RELATES_TO {{type: $rel_type}}]->
+                  (o:Entity {{name: $object}})
             WHERE r.valid_until IS NULL
-            RETURN elementId(r) AS rid, r.source_docs AS source_docs, r.confidence AS conf
+              {subtype_identity_clause}
+            RETURN elementId(r) AS rid,
+                   r.source_docs AS source_docs,
+                   r.confidence AS conf,
+                   r.subtype AS subtype
             """,
             subject=subject_name,
             object=object_name,
             rel_type=relation_type,
+            subtype=subtype,
         )
         exact = await result.single()
 
@@ -510,18 +535,20 @@ async def upsert_relation(
             if agent_entry and agent_entry not in new_docs:
                 new_docs = new_docs + [agent_entry]
             new_conf = max(exact["conf"] or confidence, confidence)
+            # Subtype: newer non-null value wins; null input preserves existing.
+            new_subtype = subtype if subtype is not None else exact["subtype"]
             await session.run(
                 """
-                MATCH (s:Entity {name: $subject})-[r:RELATES_TO {type: $rel_type}]->
-                      (o:Entity {name: $object})
-                WHERE r.valid_until IS NULL
-                SET r.source_docs = $source_docs, r.confidence = $conf
+                MATCH ()-[r:RELATES_TO]->()
+                WHERE elementId(r) = $rid
+                SET r.source_docs = $source_docs,
+                    r.confidence = $conf,
+                    r.subtype = $subtype
                 """,
-                subject=subject_name,
-                object=object_name,
-                rel_type=relation_type,
+                rid=exact["rid"],
                 source_docs=new_docs,
                 conf=new_conf,
+                subtype=new_subtype,
             )
             return ("reinforced", exact["rid"])
 
@@ -532,38 +559,33 @@ async def upsert_relation(
         # in FUNCTIONAL_KEYS[rel_type]. Extra fields ("object", "subtype") are
         # null-safe: if either the incoming or existing edge has NULL for a
         # declared field, treat the slot as non-matching rather than colliding
-        # two unknowns. This keeps object/subtype-keyed rels additive until
-        # the subtype write-through (rollout step 3) populates the field.
-        from landscape.extraction.schema import FUNCTIONAL_KEYS
-
-        key_fields = FUNCTIONAL_KEYS.get(relation_type)
-
+        # two unknowns — prevents spurious supersession on missing data.
         conflict = None
         if key_fields is not None:
-            # Build key-field match predicates. "object" is matched against the
-            # NEW edge's object (via `other.name = $object`, inverted below to
-            # allow "other.name <> $object" when object is NOT a key field).
-            # "subtype" isn't written yet in step 2, but the null-safe clause
-            # keeps this structurally correct for step 3.
+            # Object-keyed (HAS_TITLE): same (s, rel_type, o), different
+            # subtype. Case 1 already rejected null-safe matches.
+            # Subject-/subtype-keyed: different object is the conflict signal.
             if "object" in key_fields:
-                # Slot is identified by the object → only a different subtype
-                # on the same (s, o) would conflict. In step 2 (no subtype),
-                # Case 1 already caught the reinforce; a different object is
-                # a different slot, so no conflict.
                 object_clause = "AND other.name = $object"
             else:
-                # Slot is subject-keyed or subtype-keyed: a different object
-                # is the conflict signal.
                 object_clause = "AND other.name <> $object"
 
-            subtype_clause = ""
             if "subtype" in key_fields:
-                # Subtype-keyed: require both sides to have a non-null,
-                # matching subtype to count as a conflict.
+                # Subtype-keyed: both sides must carry a matching non-null
+                # subtype for the slot to collide.
                 subtype_clause = (
                     "AND old.subtype IS NOT NULL AND $subtype IS NOT NULL "
                     "AND old.subtype = $subtype"
                 )
+            elif "object" in key_fields:
+                # Object-keyed: both sides must carry a non-null differing
+                # subtype — Case 1 already absorbed null-either and equal.
+                subtype_clause = (
+                    "AND old.subtype IS NOT NULL AND $subtype IS NOT NULL "
+                    "AND old.subtype <> $subtype"
+                )
+            else:
+                subtype_clause = ""
 
             result = await session.run(
                 f"""
@@ -580,9 +602,7 @@ async def upsert_relation(
                 subject=subject_name,
                 object=object_name,
                 rel_type=relation_type,
-                # subtype wired in step 3 — passed as None here so the
-                # subtype_clause's null-safety predicate rejects matches.
-                subtype=None,
+                subtype=subtype,
             )
             conflict = await result.single()
 
@@ -613,6 +633,7 @@ async def upsert_relation(
                 MATCH (o:Entity {name: $object}) WITH s, o LIMIT 1
                 CREATE (s)-[r:RELATES_TO {
                     type: $rel_type,
+                    subtype: $subtype,
                     confidence: $confidence,
                     source_docs: $source_docs,
                     valid_from: $now,
@@ -629,6 +650,7 @@ async def upsert_relation(
                 subject=subject_name,
                 object=object_name,
                 rel_type=relation_type,
+                subtype=subtype,
                 confidence=confidence,
                 source_docs=new_edge_docs,
                 now=now,
@@ -650,6 +672,7 @@ async def upsert_relation(
             MATCH (o:Entity {name: $object}) WITH s, o LIMIT 1
             CREATE (s)-[r:RELATES_TO {
                 type: $rel_type,
+                subtype: $subtype,
                 confidence: $confidence,
                 source_docs: $source_docs,
                 valid_from: $now,
@@ -665,6 +688,7 @@ async def upsert_relation(
             subject=subject_name,
             object=object_name,
             rel_type=relation_type,
+            subtype=subtype,
             confidence=confidence,
             source_docs=fresh_docs,
             now=now,
@@ -734,6 +758,7 @@ async def bfs_expand(
         length(path) AS distance,
         [r IN rels | elementId(r)] AS edge_ids,
         [r IN rels | r.type] AS edge_types,
+        [r IN rels | r.subtype] AS edge_subtypes,
         [r IN rels | coalesce(r.confidence, 0.0)] AS edge_confidences,
         [r IN rels | coalesce(r.access_count, 0)] AS edge_access_counts,
         [r IN rels | r.last_accessed] AS edge_last_accessed

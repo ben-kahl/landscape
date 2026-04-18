@@ -1,3 +1,5 @@
+import re
+
 from pydantic import BaseModel
 
 # Closed vocabulary of relation types. Any rel_type the LLM produces that's
@@ -187,6 +189,20 @@ class ExtractedRelation(BaseModel):
     object: str
     relation_type: str
     confidence: float
+    subtype: str | None = None
+
+
+_SNAKE_RE = re.compile(r"[^a-z0-9]+")
+
+
+def normalize_subtype(raw: str | None) -> str | None:
+    """snake_case an LLM-supplied subtype. Whitespace/punctuation collapse to
+    single underscores; leading/trailing underscores stripped. Returns None
+    for empty/None/whitespace-only input so callers can test truthiness."""
+    if raw is None:
+        return None
+    cleaned = _SNAKE_RE.sub("_", raw.strip().lower()).strip("_")
+    return cleaned or None
 
 
 class Extraction(BaseModel):
