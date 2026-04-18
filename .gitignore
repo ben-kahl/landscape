@@ -6,4 +6,5 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+.worktrees/
 /tests/longmemeval_s_cleaned.json
