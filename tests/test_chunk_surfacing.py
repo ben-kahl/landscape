@@ -16,12 +16,28 @@ TITLE = "chunk-surfacing-test"
 
 async def _clear(neo4j_driver, title: str) -> None:
     async with neo4j_driver.session() as session:
+        # Remove chunks + entities tied to this document title.
         await session.run(
             "MATCH (c:Chunk)-[:PART_OF]->(d:Document {title: $t}) DETACH DELETE c",
             t=title,
         )
         await session.run(
             "MATCH (e:Entity)-[:EXTRACTED_FROM]->(d:Document {title: $t}) DETACH DELETE e",
+            t=title,
+        )
+        # Remove the Turn nodes that ingested this document, plus Conversation
+        # nodes that have no other live turns. Otherwise session_id-keyed tests
+        # rerun against stale session state.
+        await session.run(
+            """
+            MATCH (d:Document {title: $t})-[:INGESTED_IN]->(t:Turn)
+            OPTIONAL MATCH (c:Conversation)-[:HAS_TURN]->(t)
+            DETACH DELETE t
+            WITH DISTINCT c
+            WHERE c IS NOT NULL
+              AND NOT EXISTS { MATCH (c)-[:HAS_TURN]->(:Turn) }
+            DETACH DELETE c
+            """,
             t=title,
         )
         await session.run("MATCH (d:Document {title: $t}) DETACH DELETE d", t=title)

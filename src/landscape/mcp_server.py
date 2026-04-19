@@ -90,7 +90,7 @@ async def search(
 
     since = (
         datetime.now(UTC) - timedelta(hours=since_hours)
-        if since_hours and since_hours > 0
+        if since_hours is not None and since_hours >= 1
         else None
     )
     result = await retrieve(query, hops=hops, limit=limit, session_id=session_id, since=since)
