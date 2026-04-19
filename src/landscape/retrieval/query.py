@@ -221,10 +221,22 @@ async def retrieve(
             conv_ids = set(await neo4j_store.get_entities_in_conversation(session_id))
             since_ids = set(await neo4j_store.get_entities_since(since))
             allowlist = conv_ids & since_ids
+            conv_cids = set(await neo4j_store.get_chunks_in_conversation(session_id))
+            since_cids = set(await neo4j_store.get_chunks_since(since))
+            chunk_allowlist = conv_cids & since_cids
         elif session_id is not None:
             allowlist = set(await neo4j_store.get_entities_in_conversation(session_id))
+            chunk_allowlist = set(
+                await neo4j_store.get_chunks_in_conversation(session_id)
+            )
         else:
-            allowlist = set(await neo4j_store.get_entities_since(since))  # type: ignore[arg-type]
+            assert since is not None
+            allowlist = set(await neo4j_store.get_entities_since(since))
+            chunk_allowlist = set(await neo4j_store.get_chunks_since(since))
+
+        retrieved_chunks = [
+            c for c in retrieved_chunks if c.chunk_neo4j_id in chunk_allowlist
+        ]
 
         if not allowlist:
             return RetrievalResult(

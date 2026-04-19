@@ -224,6 +224,39 @@ async def get_entities_since(since: datetime) -> list[str]:
         return [record["eid"] async for record in result]
 
 
+async def get_chunks_in_conversation(session_id: str) -> list[str]:
+    """Return elementIds of :Chunk nodes belonging to Documents ingested in
+    any Turn of the named Conversation. Empty list if session_id unknown."""
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)
+                  <-[:INGESTED_IN]-(d:Document)<-[:PART_OF]-(ch:Chunk)
+            RETURN DISTINCT elementId(ch) AS cid
+            """,
+            session_id=session_id,
+        )
+        return [record["cid"] async for record in result]
+
+
+async def get_chunks_since(since: datetime) -> list[str]:
+    """Return elementIds of :Chunk nodes belonging to Documents ingested in
+    Turns with t.timestamp >= since (ISO string compare)."""
+    since_iso = since.isoformat()
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (ch:Chunk)-[:PART_OF]->(d:Document)-[:INGESTED_IN]->(t:Turn)
+            WHERE t.timestamp >= $since_iso
+            RETURN DISTINCT elementId(ch) AS cid
+            """,
+            since_iso=since_iso,
+        )
+        return [record["cid"] async for record in result]
+
+
 async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict:
     """Return {"conversation": {id, title, agent_id, started_at, last_active_at} | None,
              "turns": [{id, turn_id, turn_number, role, summary, timestamp, entities_mentioned: [{eid, name, type}]}]}

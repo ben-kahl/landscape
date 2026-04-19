@@ -101,3 +101,51 @@ async def test_query_returns_chunk_text(http_client, neo4j_driver):
         assert "score" in c and c["score"] > 0
         assert "source_doc" in c
         assert "position" in c
+
+
+@pytest.mark.asyncio
+async def test_chunk_filter_scopes_to_session(http_client, neo4j_driver):
+    """If session_id is supplied, only chunks ingested within that session's
+    turns should be returned."""
+    await _clear(neo4j_driver, TITLE)
+    await _clear(neo4j_driver, TITLE + "-other")
+
+    # In-scope doc under session sess-A / turn t-A-1.
+    r1 = await http_client.post(
+        "/ingest",
+        json={
+            "text": BASIC_DOC,
+            "title": TITLE,
+            "session_id": "sess-A",
+            "turn_id": "t-A-1",
+        },
+    )
+    assert r1.status_code == 200
+    # Out-of-scope doc under a different session.
+    r2 = await http_client.post(
+        "/ingest",
+        json={
+            "text": "Marvin is located in Boston at the east coast office.",
+            "title": TITLE + "-other",
+            "session_id": "sess-B",
+            "turn_id": "t-B-1",
+        },
+    )
+    assert r2.status_code == 200
+
+    q = await http_client.post(
+        "/query",
+        json={
+            "text": "where is everyone located",
+            "hops": 2,
+            "limit": 10,
+            "chunk_limit": 10,
+            "session_id": "sess-A",
+        },
+    )
+    assert q.status_code == 200
+    body = q.json()
+    # No chunk from the other session should appear.
+    assert not any("Marvin" in c["text"] for c in body["chunks"])
+    # The in-scope Austin chunk should still be present.
+    assert any("Austin" in c["text"] for c in body["chunks"])
