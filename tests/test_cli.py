@@ -50,8 +50,9 @@ class FakeNeo4jStore:
 
 
 class FakePipeline:
-    def __init__(self):
+    def __init__(self, ingest_error=None):
         self.calls = []
+        self.ingest_error = ingest_error
 
     async def ingest(self, text, title, source_type="text", session_id=None, turn_id=None):
         self.calls.append(
@@ -63,6 +64,8 @@ class FakePipeline:
                 "turn_id": turn_id,
             }
         )
+        if self.ingest_error is not None:
+            raise self.ingest_error
         return FakeIngestResult()
 
 
@@ -82,6 +85,31 @@ def fake_runtime(monkeypatch):
         "neo4j_store": neo4j_store,
         "pipeline": pipeline,
     }
+
+
+def test_ingest_unexpected_failure_closes_runtime(tmp_path, capsys, monkeypatch):
+    path = tmp_path / "failure.md"
+    path.write_text("Alice leads Project Atlas.", encoding="utf-8")
+
+    encoder = FakeEncoder()
+    qdrant_store = FakeQdrantStore()
+    neo4j_store = FakeNeo4jStore()
+    pipeline = FakePipeline(ingest_error=RuntimeError("ingest exploded"))
+    monkeypatch.setattr(cli, "encoder", encoder)
+    monkeypatch.setattr(cli, "qdrant_store", qdrant_store)
+    monkeypatch.setattr(cli, "neo4j_store", neo4j_store)
+    monkeypatch.setattr(cli, "pipeline", pipeline)
+
+    exit_code = cli.main(["ingest", str(path)])
+
+    assert exit_code == 1
+    stderr = capsys.readouterr().err
+    assert "ingest exploded" in stderr or "Error:" in stderr
+    assert encoder.loaded is True
+    assert qdrant_store.entity_collection_initialized is True
+    assert qdrant_store.chunk_collection_initialized is True
+    assert neo4j_store.closed is True
+    assert qdrant_store.closed is True
 
 
 def test_ingest_uses_file_stem_as_default_title(tmp_path, capsys, fake_runtime):
