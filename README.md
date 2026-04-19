@@ -99,6 +99,17 @@ uv run python scripts/demo_mcp_session.py      # supersession demo transcript
 
 Ollama GPU profiles: pass `--profile gpu-nvidia` or `--profile gpu-amd` to `docker compose up`. Default (no profile) starts Neo4j and Qdrant only; Ollama can run on the host and be reached via `host.docker.internal:11434`.
 
+## CLI ingest
+
+Use the CLI to ingest a local document into the running stack:
+
+```bash
+uv run landscape ingest /path/to/document.md
+uv run landscape ingest /path/to/document.md --title "Architecture Notes" --source-type markdown
+```
+
+It expects Neo4j, Qdrant, and Ollama to be reachable through the usual local settings.
+
 ## Use Landscape as MCP memory in Claude Code
 
 Add to `~/.claude/mcp.json`:
