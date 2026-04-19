@@ -226,6 +226,35 @@ def test_incomplete_provenance_exits_before_initialization(tmp_path, fake_runtim
     assert_runtime_untouched(fake_runtime)
 
 
+@pytest.mark.parametrize(
+    "session_id, turn_id",
+    [
+        ("", "turn-1"),
+        ("  ", "\t"),
+    ],
+)
+def test_blank_provenance_exits_before_initialization(
+    tmp_path, fake_runtime, session_id, turn_id
+):
+    path = tmp_path / "doc.md"
+    path.write_text("Alice leads Project Atlas.", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "ingest",
+                str(path),
+                "--session-id",
+                session_id,
+                "--turn-id",
+                turn_id,
+            ]
+        )
+
+    assert exc.value.code == 2
+    assert_runtime_untouched(fake_runtime)
+
+
 def test_directory_path_exits_before_initialization(tmp_path, fake_runtime):
     with pytest.raises(SystemExit) as exc:
         cli.main(["ingest", str(tmp_path)])
@@ -242,6 +271,22 @@ def test_read_error_exits_before_initialization(tmp_path, monkeypatch, fake_runt
         raise OSError("read failed")
 
     monkeypatch.setattr("pathlib.Path.read_text", raise_oserror)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["ingest", str(path)])
+
+    assert exc.value.code == 2
+    assert_runtime_untouched(fake_runtime)
+
+
+def test_unicode_decode_error_exits_before_initialization(tmp_path, monkeypatch, fake_runtime):
+    path = tmp_path / "doc.md"
+    path.write_text("Alice leads Project Atlas.", encoding="utf-8")
+
+    def raise_unicode_decode_error(self, *args, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"x", 0, 1, "bad byte")
+
+    monkeypatch.setattr("pathlib.Path.read_text", raise_unicode_decode_error)
 
     with pytest.raises(SystemExit) as exc:
         cli.main(["ingest", str(path)])

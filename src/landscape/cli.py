@@ -37,8 +37,12 @@ def _validate_ingest_args(
         parser.error(f"path does not exist: {path}")
     if not path.is_file():
         parser.error(f"path is not a file: {path}")
-    if (args.session_id is None) != (args.turn_id is None):
+    session_id = args.session_id
+    turn_id = args.turn_id
+    if (session_id is None) != (turn_id is None):
         parser.error("session-id and turn-id must be provided together")
+    if session_id is not None and (not session_id.strip() or not turn_id.strip()):
+        parser.error("session-id and turn-id must be non-empty")
 
     try:
         text = path.read_text(encoding="utf-8")
@@ -46,7 +50,7 @@ def _validate_ingest_args(
         parser.error(str(exc))
 
     title = args.title or path.stem
-    return text, title, args.session_id, args.turn_id
+    return text, title, session_id, turn_id
 
 
 async def _run_ingest(
