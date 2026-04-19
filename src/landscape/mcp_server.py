@@ -65,6 +65,7 @@ async def search(
     query: str,
     hops: int = 2,
     limit: int = 10,
+    chunk_limit: int = 3,
     session_id: str | None = None,
     since_hours: int | None = None,
 ) -> str:
@@ -73,17 +74,29 @@ async def search(
     Combines vector similarity (Qdrant) with graph BFS expansion (Neo4j) to
     surface entities relevant to *query*.  Returns up to *limit* results
     ranked by a composite score (vector_sim × graph_distance × recency).
+    Also returns raw chunk text passages up to *chunk_limit* items, providing
+    verbatim source context alongside the ranked entity list.
 
     Args:
         query:       Natural-language search query.
         hops:        BFS depth for graph expansion (1–3 recommended). Default 2.
-        limit:       Maximum number of results to return. Default 10.
+        limit:       Maximum number of entity results to return. Default 10.
+        chunk_limit: Maximum number of raw chunk passages to return. Default 3.
+                     Chunks are filtered by *session_id* and *since_hours* the
+                     same way entities are.
         session_id:  If supplied, tag retrieval reinforcement to this session.
-        since_hours: If supplied (int > 0), exclude facts older than this many hours.
+        since_hours: If supplied (int >= 1), exclude facts older than this many
+                     hours.  Values of 0 or below are treated as unset (no
+                     temporal filter applied), matching the behaviour of the
+                     HTTP /query endpoint.
 
     Returns:
         JSON object ``{results: [{name, type, score, path_edge_types}],
-        touched_entity_count}``.
+        touched_entity_count,
+        chunks: [{text, source_doc, doc_id, position, score}]}``.
+        *chunks* contains verbatim chunk text ordered by score descending.
+        Both *results* and *chunks* respect the *session_id* and *since_hours*
+        filters when supplied.
     """
     await _ensure_init()
     from landscape.retrieval.query import retrieve
@@ -93,7 +106,14 @@ async def search(
         if since_hours is not None and since_hours >= 1
         else None
     )
-    result = await retrieve(query, hops=hops, limit=limit, session_id=session_id, since=since)
+    result = await retrieve(
+        query,
+        hops=hops,
+        limit=limit,
+        chunk_limit=chunk_limit,
+        session_id=session_id,
+        since=since,
+    )
     output = {
         "results": [
             {
@@ -105,6 +125,16 @@ async def search(
             for r in result.results
         ],
         "touched_entity_count": len(result.touched_entity_ids),
+        "chunks": [
+            {
+                "text": c.text,
+                "source_doc": c.source_doc,
+                "doc_id": c.doc_id,
+                "position": c.position,
+                "score": round(c.score, 6),
+            }
+            for c in result.chunks
+        ],
     }
     return json.dumps(output)
 
