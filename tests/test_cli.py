@@ -152,6 +152,10 @@ def test_missing_file_exits_before_initialization(tmp_path, fake_runtime):
     assert exc.value.code == 2
     assert fake_runtime["pipeline"].calls == []
     assert fake_runtime["encoder"].loaded is False
+    assert fake_runtime["qdrant_store"].entity_collection_initialized is False
+    assert fake_runtime["qdrant_store"].chunk_collection_initialized is False
+    assert fake_runtime["qdrant_store"].closed is False
+    assert fake_runtime["neo4j_store"].closed is False
 
 
 def test_incomplete_provenance_exits_before_initialization(tmp_path, fake_runtime):
@@ -164,3 +168,7 @@ def test_incomplete_provenance_exits_before_initialization(tmp_path, fake_runtim
     assert exc.value.code == 2
     assert fake_runtime["pipeline"].calls == []
     assert fake_runtime["encoder"].loaded is False
+    assert fake_runtime["qdrant_store"].entity_collection_initialized is False
+    assert fake_runtime["qdrant_store"].chunk_collection_initialized is False
+    assert fake_runtime["qdrant_store"].closed is False
+    assert fake_runtime["neo4j_store"].closed is False
