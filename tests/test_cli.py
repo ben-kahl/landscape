@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from landscape import cli
+from landscape.cli import ingest as ingest_cli
 
 
 @dataclass
@@ -112,16 +113,51 @@ def test_cli_process_defaults_preserve_explicit_environment(monkeypatch):
     assert cli.os.environ["CUDA_VISIBLE_DEVICES"] == "0"
 
 
+def test_top_level_help_lists_operator_commands(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--help"])
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "Landscape local memory CLI" in output
+    assert "ingest" in output
+    assert "ingest-dir" in output
+    assert "query" in output
+    assert "graph" in output
+    assert "status" in output
+    assert "seed" in output
+    assert "wipe" in output
+
+
+def test_graph_help_lists_nested_commands(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["graph", "--help"])
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "counts" in output
+    assert "entity" in output
+    assert "neighbors" in output
+
+
+def test_seed_killer_demo_requires_confirm(capsys):
+    exit_code = cli.main(["seed", "killer-demo"])
+
+    assert exit_code == 2
+    output = capsys.readouterr().out
+    assert "without --confirm" in output
+
+
 @pytest.fixture
 def fake_runtime(monkeypatch):
     encoder = FakeEncoder()
     qdrant_store = FakeQdrantStore()
     neo4j_store = FakeNeo4jStore()
     pipeline = FakePipeline()
-    monkeypatch.setattr(cli, "encoder", encoder)
-    monkeypatch.setattr(cli, "qdrant_store", qdrant_store)
-    monkeypatch.setattr(cli, "neo4j_store", neo4j_store)
-    monkeypatch.setattr(cli, "pipeline", pipeline)
+    monkeypatch.setattr(ingest_cli, "encoder", encoder)
+    monkeypatch.setattr(ingest_cli, "qdrant_store", qdrant_store)
+    monkeypatch.setattr(ingest_cli, "neo4j_store", neo4j_store)
+    monkeypatch.setattr(ingest_cli, "pipeline", pipeline)
     return {
         "encoder": encoder,
         "qdrant_store": qdrant_store,
@@ -138,10 +174,10 @@ def test_ingest_unexpected_failure_closes_runtime(tmp_path, capsys, monkeypatch)
     qdrant_store = FakeQdrantStore()
     neo4j_store = FakeNeo4jStore()
     pipeline = FakePipeline(ingest_error=RuntimeError("ingest exploded"))
-    monkeypatch.setattr(cli, "encoder", encoder)
-    monkeypatch.setattr(cli, "qdrant_store", qdrant_store)
-    monkeypatch.setattr(cli, "neo4j_store", neo4j_store)
-    monkeypatch.setattr(cli, "pipeline", pipeline)
+    monkeypatch.setattr(ingest_cli, "encoder", encoder)
+    monkeypatch.setattr(ingest_cli, "qdrant_store", qdrant_store)
+    monkeypatch.setattr(ingest_cli, "neo4j_store", neo4j_store)
+    monkeypatch.setattr(ingest_cli, "pipeline", pipeline)
 
     exit_code = cli.main(["ingest", str(path)])
 
@@ -163,10 +199,10 @@ def test_ingest_cleanup_warning_does_not_override_success(tmp_path, capsys, monk
     qdrant_store = FakeQdrantStore()
     neo4j_store = FakeNeo4jStore(close_error=RuntimeError("neo4j close exploded"))
     pipeline = FakePipeline()
-    monkeypatch.setattr(cli, "encoder", encoder)
-    monkeypatch.setattr(cli, "qdrant_store", qdrant_store)
-    monkeypatch.setattr(cli, "neo4j_store", neo4j_store)
-    monkeypatch.setattr(cli, "pipeline", pipeline)
+    monkeypatch.setattr(ingest_cli, "encoder", encoder)
+    monkeypatch.setattr(ingest_cli, "qdrant_store", qdrant_store)
+    monkeypatch.setattr(ingest_cli, "neo4j_store", neo4j_store)
+    monkeypatch.setattr(ingest_cli, "pipeline", pipeline)
 
     exit_code = cli.main(["ingest", str(path)])
 
