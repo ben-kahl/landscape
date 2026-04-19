@@ -1,9 +1,9 @@
+import builtins
 from dataclasses import dataclass
 
 import pytest
 
 from landscape import cli
-from landscape.cli import ingest as ingest_cli
 
 
 @dataclass
@@ -129,6 +129,32 @@ def test_top_level_help_lists_operator_commands(capsys):
     assert "wipe" in output
 
 
+def test_top_level_help_does_not_import_runtime_heavy_modules(monkeypatch, capsys):
+    blocked_prefixes = (
+        "landscape.pipeline",
+        "landscape.embeddings",
+        "landscape.storage",
+        "landscape.retrieval",
+        "ollama",
+        "neo4j",
+        "qdrant_client",
+    )
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.startswith(blocked_prefixes):
+            raise AssertionError(f"help imported runtime-heavy module {name}")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--help"])
+
+    assert exc.value.code == 0
+    assert "Landscape local memory CLI" in capsys.readouterr().out
+
+
 def test_graph_help_lists_nested_commands(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["graph", "--help"])
@@ -150,14 +176,17 @@ def test_seed_killer_demo_requires_confirm(capsys):
 
 @pytest.fixture
 def fake_runtime(monkeypatch):
+    from landscape.cli import ingest as ingest_cli
+
     encoder = FakeEncoder()
     qdrant_store = FakeQdrantStore()
     neo4j_store = FakeNeo4jStore()
     pipeline = FakePipeline()
-    monkeypatch.setattr(ingest_cli, "encoder", encoder)
-    monkeypatch.setattr(ingest_cli, "qdrant_store", qdrant_store)
-    monkeypatch.setattr(ingest_cli, "neo4j_store", neo4j_store)
-    monkeypatch.setattr(ingest_cli, "pipeline", pipeline)
+    monkeypatch.setattr(
+        ingest_cli,
+        "_get_runtime",
+        lambda: (pipeline, encoder, neo4j_store, qdrant_store),
+    )
     return {
         "encoder": encoder,
         "qdrant_store": qdrant_store,
@@ -167,6 +196,8 @@ def fake_runtime(monkeypatch):
 
 
 def test_ingest_unexpected_failure_closes_runtime(tmp_path, capsys, monkeypatch):
+    from landscape.cli import ingest as ingest_cli
+
     path = tmp_path / "failure.md"
     path.write_text("Alice leads Project Atlas.", encoding="utf-8")
 
@@ -174,10 +205,11 @@ def test_ingest_unexpected_failure_closes_runtime(tmp_path, capsys, monkeypatch)
     qdrant_store = FakeQdrantStore()
     neo4j_store = FakeNeo4jStore()
     pipeline = FakePipeline(ingest_error=RuntimeError("ingest exploded"))
-    monkeypatch.setattr(ingest_cli, "encoder", encoder)
-    monkeypatch.setattr(ingest_cli, "qdrant_store", qdrant_store)
-    monkeypatch.setattr(ingest_cli, "neo4j_store", neo4j_store)
-    monkeypatch.setattr(ingest_cli, "pipeline", pipeline)
+    monkeypatch.setattr(
+        ingest_cli,
+        "_get_runtime",
+        lambda: (pipeline, encoder, neo4j_store, qdrant_store),
+    )
 
     exit_code = cli.main(["ingest", str(path)])
 
@@ -192,6 +224,8 @@ def test_ingest_unexpected_failure_closes_runtime(tmp_path, capsys, monkeypatch)
 
 
 def test_ingest_cleanup_warning_does_not_override_success(tmp_path, capsys, monkeypatch):
+    from landscape.cli import ingest as ingest_cli
+
     path = tmp_path / "success.md"
     path.write_text("Alice leads Project Atlas.", encoding="utf-8")
 
@@ -199,10 +233,11 @@ def test_ingest_cleanup_warning_does_not_override_success(tmp_path, capsys, monk
     qdrant_store = FakeQdrantStore()
     neo4j_store = FakeNeo4jStore(close_error=RuntimeError("neo4j close exploded"))
     pipeline = FakePipeline()
-    monkeypatch.setattr(ingest_cli, "encoder", encoder)
-    monkeypatch.setattr(ingest_cli, "qdrant_store", qdrant_store)
-    monkeypatch.setattr(ingest_cli, "neo4j_store", neo4j_store)
-    monkeypatch.setattr(ingest_cli, "pipeline", pipeline)
+    monkeypatch.setattr(
+        ingest_cli,
+        "_get_runtime",
+        lambda: (pipeline, encoder, neo4j_store, qdrant_store),
+    )
 
     exit_code = cli.main(["ingest", str(path)])
 

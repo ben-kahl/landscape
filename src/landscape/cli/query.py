@@ -3,9 +3,14 @@ from __future__ import annotations
 import argparse
 
 from landscape.cli.runtime import close_runtime
-from landscape.embeddings import encoder
-from landscape.retrieval.query import retrieve
-from landscape.storage import neo4j_store, qdrant_store
+
+
+def _get_runtime():
+    from landscape.embeddings import encoder
+    from landscape.retrieval.query import retrieve
+    from landscape.storage import neo4j_store, qdrant_store
+
+    return encoder, retrieve, neo4j_store, qdrant_store
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -22,6 +27,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 async def handle_query(args: argparse.Namespace) -> int:
+    encoder, retrieve, neo4j_store, qdrant_store = _get_runtime()
     try:
         encoder.load_model()
         await qdrant_store.init_collection()

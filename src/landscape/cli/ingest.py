@@ -3,10 +3,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from landscape import pipeline
 from landscape.cli.runtime import close_runtime
-from landscape.embeddings import encoder
-from landscape.storage import neo4j_store, qdrant_store
+
+
+def _get_runtime():
+    from landscape import pipeline
+    from landscape.embeddings import encoder
+    from landscape.storage import neo4j_store, qdrant_store
+
+    return pipeline, encoder, neo4j_store, qdrant_store
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -85,6 +90,7 @@ async def _ingest_text(
     session_id: str | None = None,
     turn_id: str | None = None,
 ):
+    pipeline, encoder, neo4j_store, qdrant_store = _get_runtime()
     try:
         encoder.load_model()
         await qdrant_store.init_collection()

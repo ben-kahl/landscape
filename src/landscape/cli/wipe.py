@@ -2,12 +2,6 @@ from __future__ import annotations
 
 import argparse
 
-from neo4j import AsyncGraphDatabase
-from qdrant_client import AsyncQdrantClient
-
-from landscape.config import settings
-from landscape.storage import qdrant_store
-
 
 def register(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("wipe", help="Clear local Landscape state")
@@ -16,6 +10,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 async def wipe_state() -> None:
+    from neo4j import AsyncGraphDatabase
+    from qdrant_client import AsyncQdrantClient
+
+    from landscape.config import settings
+    from landscape.storage import qdrant_store
+
     driver = AsyncGraphDatabase.driver(
         settings.neo4j_uri,
         auth=(settings.neo4j_user, settings.neo4j_password),

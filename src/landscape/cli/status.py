@@ -3,11 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 
-import ollama
-
 from landscape.cli.runtime import close_runtime
-from landscape.config import settings
-from landscape.storage import neo4j_store, qdrant_store
+
+
+def _get_runtime():
+    import ollama
+
+    from landscape.config import settings
+    from landscape.storage import neo4j_store, qdrant_store
+
+    return ollama, settings, neo4j_store, qdrant_store
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -21,6 +26,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 async def _neo4j_counts() -> dict:
+    _ollama, _settings, neo4j_store, _qdrant_store = _get_runtime()
     driver = neo4j_store.get_driver()
     async with driver.session() as session:
         result = await session.run(
@@ -46,6 +52,7 @@ async def _neo4j_counts() -> dict:
 
 
 async def handle_status(args: argparse.Namespace) -> int:
+    ollama, settings, neo4j_store, qdrant_store = _get_runtime()
     data = {
         "config": {
             "neo4j_uri": settings.neo4j_uri,

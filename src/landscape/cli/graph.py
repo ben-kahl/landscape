@@ -3,7 +3,12 @@ from __future__ import annotations
 import argparse
 
 from landscape.cli.runtime import close_runtime
-from landscape.storage import neo4j_store, qdrant_store
+
+
+def _get_runtime():
+    from landscape.storage import neo4j_store, qdrant_store
+
+    return neo4j_store, qdrant_store
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -28,6 +33,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 async def handle_counts(args: argparse.Namespace) -> int:
+    neo4j_store, qdrant_store = _get_runtime()
     driver = neo4j_store.get_driver()
     try:
         async with driver.session() as session:
@@ -63,6 +69,7 @@ async def handle_counts(args: argparse.Namespace) -> int:
 
 
 async def handle_entity(args: argparse.Namespace) -> int:
+    neo4j_store, qdrant_store = _get_runtime()
     driver = neo4j_store.get_driver()
     try:
         async with driver.session() as session:
@@ -91,6 +98,7 @@ async def handle_entity(args: argparse.Namespace) -> int:
 
 
 async def handle_neighbors(args: argparse.Namespace) -> int:
+    neo4j_store, qdrant_store = _get_runtime()
     driver = neo4j_store.get_driver()
     try:
         async with driver.session() as session:

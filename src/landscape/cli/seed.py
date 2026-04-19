@@ -5,9 +5,14 @@ from importlib import resources
 
 from landscape.cli.runtime import close_runtime
 from landscape.cli.wipe import wipe_state
-from landscape.embeddings import encoder
-from landscape.pipeline import ingest
-from landscape.storage import neo4j_store, qdrant_store
+
+
+def _get_runtime():
+    from landscape.embeddings import encoder
+    from landscape.pipeline import ingest
+    from landscape.storage import neo4j_store, qdrant_store
+
+    return encoder, ingest, neo4j_store, qdrant_store
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -33,6 +38,8 @@ async def handle_killer_demo(args: argparse.Namespace) -> int:
     print(f"Session id: {session_id}")
     print("Step 1/3  Wiping Neo4j + Qdrant state...")
     await wipe_state()
+
+    encoder, ingest, neo4j_store, qdrant_store = _get_runtime()
 
     print("Step 2/3  Initializing encoder + Qdrant collections...")
     encoder.load_model()
