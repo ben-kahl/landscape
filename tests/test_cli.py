@@ -42,10 +42,13 @@ class FakeQdrantStore:
 
 
 class FakeNeo4jStore:
-    def __init__(self):
+    def __init__(self, close_error=None):
         self.closed = False
+        self.close_error = close_error
 
     async def close_driver(self):
+        if self.close_error is not None:
+            raise self.close_error
         self.closed = True
 
 
@@ -119,6 +122,28 @@ def test_ingest_unexpected_failure_closes_runtime(tmp_path, capsys, monkeypatch)
     assert qdrant_store.chunk_collection_initialized is True
     assert neo4j_store.closed is True
     assert qdrant_store.closed is True
+
+
+def test_ingest_cleanup_warning_does_not_override_success(tmp_path, capsys, monkeypatch):
+    path = tmp_path / "success.md"
+    path.write_text("Alice leads Project Atlas.", encoding="utf-8")
+
+    encoder = FakeEncoder()
+    qdrant_store = FakeQdrantStore()
+    neo4j_store = FakeNeo4jStore(close_error=RuntimeError("neo4j close exploded"))
+    pipeline = FakePipeline()
+    monkeypatch.setattr(cli, "encoder", encoder)
+    monkeypatch.setattr(cli, "qdrant_store", qdrant_store)
+    monkeypatch.setattr(cli, "neo4j_store", neo4j_store)
+    monkeypatch.setattr(cli, "pipeline", pipeline)
+
+    exit_code = cli.main(["ingest", str(path)])
+
+    assert exit_code == 0
+    assert qdrant_store.closed is True
+    stderr = capsys.readouterr().err
+    assert "Warning:" in stderr
+    assert "neo4j close exploded" in stderr
 
 
 def test_ingest_uses_file_stem_as_default_title(tmp_path, capsys, fake_runtime):

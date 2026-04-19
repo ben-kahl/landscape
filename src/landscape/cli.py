@@ -68,8 +68,19 @@ async def _run_ingest(
             turn_id=turn_id,
         )
     finally:
+        await _close_runtime()
+
+
+async def _close_runtime() -> None:
+    try:
         await neo4j_store.close_driver()
+    except Exception as exc:
+        print(f"Warning: neo4j close failed: {exc}", file=sys.stderr)
+
+    try:
         await qdrant_store.close_client()
+    except Exception as exc:
+        print(f"Warning: qdrant close failed: {exc}", file=sys.stderr)
 
 
 def _format_summary(result) -> str:
