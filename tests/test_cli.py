@@ -81,6 +81,37 @@ def assert_runtime_untouched(fake_runtime):
     assert fake_runtime["neo4j_store"].closed is False
 
 
+def test_cli_process_defaults_use_host_service_urls(monkeypatch):
+    for name in (
+        "NEO4J_URI",
+        "QDRANT_URL",
+        "OLLAMA_URL",
+        "CUDA_VISIBLE_DEVICES",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    cli._apply_cli_process_defaults()
+
+    assert cli.os.environ["NEO4J_URI"] == "bolt://localhost:7687"
+    assert cli.os.environ["QDRANT_URL"] == "http://localhost:6333"
+    assert cli.os.environ["OLLAMA_URL"] == "http://localhost:11434"
+    assert cli.os.environ["CUDA_VISIBLE_DEVICES"] == ""
+
+
+def test_cli_process_defaults_preserve_explicit_environment(monkeypatch):
+    monkeypatch.setenv("NEO4J_URI", "bolt://custom-neo4j:7687")
+    monkeypatch.setenv("QDRANT_URL", "http://custom-qdrant:6333")
+    monkeypatch.setenv("OLLAMA_URL", "http://custom-ollama:11434")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+
+    cli._apply_cli_process_defaults()
+
+    assert cli.os.environ["NEO4J_URI"] == "bolt://custom-neo4j:7687"
+    assert cli.os.environ["QDRANT_URL"] == "http://custom-qdrant:6333"
+    assert cli.os.environ["OLLAMA_URL"] == "http://custom-ollama:11434"
+    assert cli.os.environ["CUDA_VISIBLE_DEVICES"] == "0"
+
+
 @pytest.fixture
 def fake_runtime(monkeypatch):
     encoder = FakeEncoder()

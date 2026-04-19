@@ -2,12 +2,30 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
-from landscape import pipeline
-from landscape.embeddings import encoder
-from landscape.storage import neo4j_store, qdrant_store
+
+def _apply_cli_process_defaults() -> None:
+    """Prefer host-reachable defaults for the local console command.
+
+    The Docker app runs inside the compose network, where service names like
+    ``qdrant`` and ``neo4j`` resolve. The console script runs on the host, so
+    process env defaults need to beat docker-oriented values from ``.env``.
+    Explicitly exported values still win.
+    """
+    os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
+    os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
+    os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+
+
+_apply_cli_process_defaults()
+
+from landscape import pipeline  # noqa: E402
+from landscape.embeddings import encoder  # noqa: E402
+from landscape.storage import neo4j_store, qdrant_store  # noqa: E402
 
 
 def _build_parser() -> argparse.ArgumentParser:
