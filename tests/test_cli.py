@@ -69,6 +69,15 @@ class FakePipeline:
         return FakeIngestResult()
 
 
+def assert_runtime_untouched(fake_runtime):
+    assert fake_runtime["pipeline"].calls == []
+    assert fake_runtime["encoder"].loaded is False
+    assert fake_runtime["qdrant_store"].entity_collection_initialized is False
+    assert fake_runtime["qdrant_store"].chunk_collection_initialized is False
+    assert fake_runtime["qdrant_store"].closed is False
+    assert fake_runtime["neo4j_store"].closed is False
+
+
 @pytest.fixture
 def fake_runtime(monkeypatch):
     encoder = FakeEncoder()
@@ -178,12 +187,7 @@ def test_missing_file_exits_before_initialization(tmp_path, fake_runtime):
         cli.main(["ingest", str(path)])
 
     assert exc.value.code == 2
-    assert fake_runtime["pipeline"].calls == []
-    assert fake_runtime["encoder"].loaded is False
-    assert fake_runtime["qdrant_store"].entity_collection_initialized is False
-    assert fake_runtime["qdrant_store"].chunk_collection_initialized is False
-    assert fake_runtime["qdrant_store"].closed is False
-    assert fake_runtime["neo4j_store"].closed is False
+    assert_runtime_untouched(fake_runtime)
 
 
 def test_incomplete_provenance_exits_before_initialization(tmp_path, fake_runtime):
@@ -194,9 +198,28 @@ def test_incomplete_provenance_exits_before_initialization(tmp_path, fake_runtim
         cli.main(["ingest", str(path), "--session-id", "session-1"])
 
     assert exc.value.code == 2
-    assert fake_runtime["pipeline"].calls == []
-    assert fake_runtime["encoder"].loaded is False
-    assert fake_runtime["qdrant_store"].entity_collection_initialized is False
-    assert fake_runtime["qdrant_store"].chunk_collection_initialized is False
-    assert fake_runtime["qdrant_store"].closed is False
-    assert fake_runtime["neo4j_store"].closed is False
+    assert_runtime_untouched(fake_runtime)
+
+
+def test_directory_path_exits_before_initialization(tmp_path, fake_runtime):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["ingest", str(tmp_path)])
+
+    assert exc.value.code == 2
+    assert_runtime_untouched(fake_runtime)
+
+
+def test_read_error_exits_before_initialization(tmp_path, monkeypatch, fake_runtime):
+    path = tmp_path / "doc.md"
+    path.write_text("Alice leads Project Atlas.", encoding="utf-8")
+
+    def raise_oserror(self, *args, **kwargs):
+        raise OSError("read failed")
+
+    monkeypatch.setattr("pathlib.Path.read_text", raise_oserror)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["ingest", str(path)])
+
+    assert exc.value.code == 2
+    assert_runtime_untouched(fake_runtime)
