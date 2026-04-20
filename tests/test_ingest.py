@@ -150,3 +150,77 @@ async def test_ingest_idempotent(http_client):
     assert body2["relations_reinforced"] == 0
     assert body2["relations_superseded"] == 0
     assert body2["chunks_created"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ingest_passes_relation_quantity_fields(monkeypatch):
+    from landscape import pipeline
+    from landscape.extraction.schema import ExtractedEntity, ExtractedRelation
+
+    captured_relation_kwargs = {}
+
+    async def fake_merge_document(content_hash, title, source_type):
+        return "doc-1", True
+
+    async def fake_create_chunk(doc_id, chunk_index, text, content_hash):
+        return f"chunk-{chunk_index}"
+
+    async def fake_upsert_chunk(**kwargs):
+        return None
+
+    async def fake_resolve_entity(name, entity_type, vector, source_doc):
+        return f"{name}-id", True, 0.0
+
+    async def fake_merge_entity(**kwargs):
+        return f"{kwargs['name']}-id"
+
+    async def fake_upsert_entity(**kwargs):
+        return None
+
+    async def fake_upsert_relation(**kwargs):
+        captured_relation_kwargs.update(kwargs)
+        return "created", "rel-1"
+
+    monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
+    monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", fake_upsert_chunk)
+    monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
+    monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
+    monkeypatch.setattr(pipeline.neo4j_store, "upsert_relation", fake_upsert_relation)
+    monkeypatch.setattr(pipeline, "coerce_rel_type", lambda rel_type: (rel_type, 1.0))
+    monkeypatch.setattr(
+        pipeline.encoder,
+        "embed_documents",
+        lambda texts: [[0.1, 0.2] for _ in texts],
+    )
+    monkeypatch.setattr(
+        pipeline.llm,
+        "extract",
+        lambda text: Extraction(
+            entities=[
+                ExtractedEntity(name="Eric", type="PERSON", confidence=0.9),
+                ExtractedEntity(name="Netflix", type="TECHNOLOGY", confidence=0.9),
+            ],
+            relations=[
+                ExtractedRelation(
+                    subject="Eric",
+                    object="Netflix",
+                    relation_type="DISCUSSED",
+                    subtype="watched",
+                    confidence=0.9,
+                    quantity_value=10,
+                    quantity_unit="hour",
+                    quantity_kind="duration",
+                    time_scope="last_month",
+                )
+            ],
+        ),
+    )
+
+    await pipeline.ingest("Eric watched Netflix.", "quantity-pipeline")
+
+    assert captured_relation_kwargs["quantity_value"] == 10
+    assert captured_relation_kwargs["quantity_unit"] == "hour"
+    assert captured_relation_kwargs["quantity_kind"] == "duration"
+    assert captured_relation_kwargs["time_scope"] == "last_month"
