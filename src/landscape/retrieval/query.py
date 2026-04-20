@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -27,17 +28,29 @@ class RetrievedEntity:
 
 
 @dataclass
+class RetrievedChunk:
+    chunk_neo4j_id: str  # Neo4j elementId of the :Chunk node
+    text: str
+    doc_id: str          # Document node ID from the chunk payload
+    source_doc: str      # Human-readable document title/filename slug
+    position: int
+    score: float
+
+
+@dataclass
 class RetrievalResult:
     query: str
     results: list[RetrievedEntity]
     touched_entity_ids: list[str]
     touched_edge_ids: list[str]
+    chunks: list[RetrievedChunk] = field(default_factory=list)
 
 
 async def retrieve(
     query_text: str,
     hops: int = 2,
     limit: int = 10,
+    chunk_limit: int = 3,
     weights: ScoringWeights | None = None,
     reinforce: bool = True,
     session_id: str | None = None,
@@ -50,9 +63,12 @@ async def retrieve(
 
     query_vector = encoder.embed_query(query_text)
 
-    # 1. Entity seeds by vector similarity (no type filter — we don't know
-    #    the target type in advance).
-    entity_hits = await qdrant_store.search_entities_any_type(query_vector, limit=5)
+    # Seed searches: independent Qdrant queries against two collections.
+    entity_hits, chunk_hits = await asyncio.gather(
+        qdrant_store.search_entities_any_type(query_vector, limit=5),
+        qdrant_store.search_chunks(query_vector, limit=5),
+    )
+
     seed_sims: dict[str, float] = {}
     for hit in entity_hits:
         payload = hit.payload or {}
@@ -61,16 +77,38 @@ async def retrieve(
             continue
         seed_sims[neo4j_id] = max(seed_sims.get(neo4j_id, 0.0), float(hit.score))
 
-    # 2. Chunk seeds → walk back to canonical entities via EXTRACTED_FROM.
-    chunk_hits = await qdrant_store.search_chunks(query_vector, limit=5)
-    chunk_ids = [
-        h.payload["chunk_neo4j_id"]
-        for h in chunk_hits
-        if h.payload and h.payload.get("chunk_neo4j_id")
-    ]
+    chunk_ids: list[str] = []
+    chunk_score_by_id: dict[str, float] = {}
+    retrieved_chunks: list[RetrievedChunk] = []
+    for hit in chunk_hits:
+        payload = hit.payload or {}
+        cid = payload.get("chunk_neo4j_id")
+        if not cid:
+            continue
+        chunk_ids.append(cid)
+        chunk_score_by_id[cid] = float(hit.score)
+        retrieved_chunks.append(
+            RetrievedChunk(
+                chunk_neo4j_id=cid,
+                text=payload.get("text", ""),
+                doc_id=payload.get("doc_id", ""),
+                source_doc=payload.get("source_doc", ""),
+                position=int(payload.get("position", 0)),
+                score=float(hit.score),
+            )
+        )
+
     chunk_entities = await neo4j_store.get_entities_from_chunks(chunk_ids)
     for ent in chunk_entities:
-        seed_sims.setdefault(ent["eid"], 0.0)
+        eid = ent["eid"]
+        src_chunk_ids = (
+            ent["chunk_eids"] if ent.get("chunk_eids") is not None else chunk_ids
+        )
+        best = max(
+            (chunk_score_by_id.get(cid, 0.0) for cid in src_chunk_ids),
+            default=0.0,
+        )
+        seed_sims[eid] = max(seed_sims.get(eid, 0.0), best)
 
     if not seed_sims:
         return RetrievalResult(
@@ -78,6 +116,7 @@ async def retrieve(
             results=[],
             touched_entity_ids=[],
             touched_edge_ids=[],
+            chunks=retrieved_chunks[:chunk_limit],
         )
 
     # 3. Hydrate seed entity info (name, type, access_count, last_accessed).
@@ -179,13 +218,33 @@ async def retrieve(
     #    Vector search runs against the full index; we narrow candidates after.
     if session_id is not None or since is not None:
         if session_id is not None and since is not None:
-            conv_ids = set(await neo4j_store.get_entities_in_conversation(session_id))
-            since_ids = set(await neo4j_store.get_entities_since(since))
-            allowlist = conv_ids & since_ids
+            conv_ids, since_ids, conv_cids, since_cids = await asyncio.gather(
+                neo4j_store.get_entities_in_conversation(session_id),
+                neo4j_store.get_entities_since(since),
+                neo4j_store.get_chunks_in_conversation(session_id),
+                neo4j_store.get_chunks_since(since),
+            )
+            allowlist = set(conv_ids) & set(since_ids)
+            chunk_allowlist = set(conv_cids) & set(since_cids)
         elif session_id is not None:
-            allowlist = set(await neo4j_store.get_entities_in_conversation(session_id))
+            ents, chunks_in_conv = await asyncio.gather(
+                neo4j_store.get_entities_in_conversation(session_id),
+                neo4j_store.get_chunks_in_conversation(session_id),
+            )
+            allowlist = set(ents)
+            chunk_allowlist = set(chunks_in_conv)
         else:
-            allowlist = set(await neo4j_store.get_entities_since(since))  # type: ignore[arg-type]
+            assert since is not None
+            ents, chunks_since = await asyncio.gather(
+                neo4j_store.get_entities_since(since),
+                neo4j_store.get_chunks_since(since),
+            )
+            allowlist = set(ents)
+            chunk_allowlist = set(chunks_since)
+
+        retrieved_chunks = [
+            c for c in retrieved_chunks if c.chunk_neo4j_id in chunk_allowlist
+        ]
 
         if not allowlist:
             return RetrievalResult(
@@ -193,6 +252,7 @@ async def retrieve(
                 results=[],
                 touched_entity_ids=[],
                 touched_edge_ids=[],
+                chunks=retrieved_chunks[:chunk_limit],
             )
 
         candidates = {k: v for k, v in candidates.items() if k in allowlist}
@@ -210,14 +270,17 @@ async def retrieve(
 
     if reinforce:
         now_iso = now.isoformat()
-        await neo4j_store.touch_entities(touched_entity_ids, now_iso)
-        await neo4j_store.touch_relations(touched_edge_ids, now_iso)
+        await asyncio.gather(
+            neo4j_store.touch_entities(touched_entity_ids, now_iso),
+            neo4j_store.touch_relations(touched_edge_ids, now_iso),
+        )
 
     return RetrievalResult(
         query=query_text,
         results=ranked,
         touched_entity_ids=touched_entity_ids,
         touched_edge_ids=touched_edge_ids,
+        chunks=retrieved_chunks[:chunk_limit],
     )
 
 

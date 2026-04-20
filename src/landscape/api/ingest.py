@@ -10,6 +10,8 @@ class IngestRequest(BaseModel):
     text: str
     title: str
     source_type: str = "text"
+    session_id: str | None = None
+    turn_id: str | None = None
 
 
 class IngestResponse(BaseModel):
@@ -25,7 +27,13 @@ class IngestResponse(BaseModel):
 
 @router.post("/ingest", response_model=IngestResponse)
 async def ingest_document(req: IngestRequest) -> IngestResponse:
-    result = await pipeline.ingest(req.text, req.title, req.source_type)
+    result = await pipeline.ingest(
+        req.text,
+        req.title,
+        req.source_type,
+        session_id=req.session_id,
+        turn_id=req.turn_id,
+    )
     return IngestResponse(
         doc_id=result.doc_id,
         already_existed=result.already_existed,

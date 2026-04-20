@@ -15,7 +15,10 @@ from landscape.config import settings
 
 COLLECTION = "entities"
 CHUNKS_COLLECTION = "chunks"
-DIMS = 768
+
+
+def _dims() -> int:
+    return settings.embedding_dims
 
 _client: AsyncQdrantClient | None = None
 
@@ -41,7 +44,7 @@ async def init_collection() -> None:
     if COLLECTION not in names:
         await client.create_collection(
             collection_name=COLLECTION,
-            vectors_config=VectorParams(size=DIMS, distance=Distance.COSINE),
+            vectors_config=VectorParams(size=_dims(), distance=Distance.COSINE),
         )
 
 
@@ -52,7 +55,7 @@ async def init_chunks_collection() -> None:
     if CHUNKS_COLLECTION not in names:
         await client.create_collection(
             collection_name=CHUNKS_COLLECTION,
-            vectors_config=VectorParams(size=DIMS, distance=Distance.COSINE),
+            vectors_config=VectorParams(size=_dims(), distance=Distance.COSINE),
         )
 
 

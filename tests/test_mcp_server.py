@@ -317,3 +317,26 @@ async def test_conversation_history_unknown_session(http_client):
     data = _parse(result)
     assert data["conversation"] is None
     assert data["turns"] == []
+
+
+@pytest.mark.asyncio
+async def test_search_returns_chunks(http_client):
+    """search() with chunk_limit should include a 'chunks' key with the right shape."""
+    await _seed_document()
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "search",
+            {"query": "Maria Santos Vision Team", "chunk_limit": 3},
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+
+    assert "chunks" in data, "'chunks' key missing from search response"
+    assert isinstance(data["chunks"], list)
+    assert len(data["chunks"]) <= 3
+
+    for chunk in data["chunks"]:
+        for key in ("text", "source_doc", "doc_id", "position", "score"):
+            assert key in chunk, f"Chunk missing key '{key}': {chunk}"

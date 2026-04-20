@@ -39,6 +39,14 @@ LLM_PROFILES: dict[str, LLMProfile] = {
 }
 
 
+# Embedding model → output dimension. Extend this when switching/adding models.
+# Source: published model card of each encoder.
+EMBEDDING_MODEL_DIMS: dict[str, int] = {
+    "nomic-ai/nomic-embed-text-v1.5": 768,
+    "sentence-transformers/all-MiniLM-L6-v2": 384,
+}
+
+
 class Settings(BaseSettings):
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"
@@ -74,6 +82,18 @@ class Settings(BaseSettings):
             # Resolve the profile's ollama_tag into llm_model so every caller
             # (pipeline.py, extraction/llm.py) keeps reading a single field.
             self.llm_model = LLM_PROFILES[self.llm_profile].ollama_tag
+
+    @property
+    def embedding_dims(self) -> int:
+        try:
+            return EMBEDDING_MODEL_DIMS[self.embedding_model]
+        except KeyError as exc:
+            known = ", ".join(sorted(EMBEDDING_MODEL_DIMS))
+            raise ValueError(
+                f"Unknown embedding model {self.embedding_model!r}. "
+                f"Add it to EMBEDDING_MODEL_DIMS in src/landscape/config.py. "
+                f"Known: {known}."
+            ) from exc
 
 
 settings = Settings()
