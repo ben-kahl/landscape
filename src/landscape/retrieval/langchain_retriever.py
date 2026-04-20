@@ -22,7 +22,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import Field
 
-from landscape.retrieval.query import RetrievedEntity, retrieve
+from landscape.retrieval.query import RetrievedChunk, RetrievedEntity, retrieve
 from landscape.retrieval.scoring import ScoringWeights
 
 
@@ -38,6 +38,7 @@ class LandscapeRetriever(BaseRetriever):
 
     hops: int = 2
     limit: int = 10
+    chunk_limit: int = 3
     reinforce: bool = True
     weights: ScoringWeights | None = Field(default=None)
     session_id: str | None = None
@@ -55,12 +56,15 @@ class LandscapeRetriever(BaseRetriever):
             query_text=query,
             hops=self.hops,
             limit=self.limit,
+            chunk_limit=self.chunk_limit,
             weights=self.weights,
             reinforce=self.reinforce,
             session_id=self.session_id,
             since=self.since,
         )
-        return [_entity_to_document(e) for e in result.results]
+        return [_entity_to_document(e) for e in result.results] + [
+            _chunk_to_document(c) for c in result.chunks
+        ]
 
     def _get_relevant_documents(
         self,
@@ -83,13 +87,42 @@ def _format_edge(rel_type: str, subtype: str | None) -> str:
     return f"{rel_type}[{subtype}]" if subtype else rel_type
 
 
+def _format_quantity(quantity: dict[str, object | None]) -> str:
+    value = quantity.get("quantity_value")
+    unit = quantity.get("quantity_unit")
+    kind = quantity.get("quantity_kind")
+    scope = quantity.get("time_scope")
+    parts = []
+    if value is not None:
+        label = str(kind) if kind else "quantity"
+        rendered = f"{label}={value}"
+        if unit:
+            rendered = f"{rendered} {unit}"
+        parts.append(rendered)
+    if scope:
+        parts.append(f"scope={scope}")
+    return ", ".join(parts)
+
+
 def _entity_to_document(entity: RetrievedEntity) -> Document:
     # Zip subtype list (may be empty/shorter on old edges) against types so
     # display stays stable when a path includes pre-subtype edges.
     subtypes = entity.path_edge_subtypes or [None] * len(entity.path_edge_types)
     if len(subtypes) < len(entity.path_edge_types):
         subtypes = list(subtypes) + [None] * (len(entity.path_edge_types) - len(subtypes))
-    path_parts = [_format_edge(t, s) for t, s in zip(entity.path_edge_types, subtypes)]
+    quantities = entity.path_edge_quantities or [{} for _ in entity.path_edge_types]
+    if len(quantities) < len(entity.path_edge_types):
+        quantities = list(quantities) + [
+            {} for _ in range(len(entity.path_edge_types) - len(quantities))
+        ]
+
+    path_parts = []
+    for rel_type, subtype, quantity in zip(entity.path_edge_types, subtypes, quantities):
+        edge = _format_edge(rel_type, subtype)
+        rendered_quantity = _format_quantity(quantity)
+        if rendered_quantity:
+            edge = f"{edge} {{{rendered_quantity}}}"
+        path_parts.append(edge)
     path = " → ".join(path_parts) if path_parts else ""
 
     header = f"{entity.name} ({entity.type})"
@@ -101,6 +134,7 @@ def _entity_to_document(entity: RetrievedEntity) -> Document:
         content = f"{header} [seed]"
 
     metadata: dict[str, Any] = {
+        "kind": "entity",
         "neo4j_id": entity.neo4j_id,
         "name": entity.name,
         "type": entity.type,
@@ -112,5 +146,20 @@ def _entity_to_document(entity: RetrievedEntity) -> Document:
         "path_edge_ids": entity.path_edge_ids,
         "path_edge_types": entity.path_edge_types,
         "path_edge_subtypes": entity.path_edge_subtypes,
+        "path_edge_quantities": entity.path_edge_quantities,
     }
     return Document(page_content=content, metadata=metadata)
+
+
+def _chunk_to_document(chunk: RetrievedChunk) -> Document:
+    return Document(
+        page_content=chunk.text,
+        metadata={
+            "kind": "chunk",
+            "chunk_neo4j_id": chunk.chunk_neo4j_id,
+            "doc_id": chunk.doc_id,
+            "source_doc": chunk.source_doc,
+            "position": chunk.position,
+            "score": chunk.score,
+        },
+    )

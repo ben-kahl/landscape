@@ -26,6 +26,12 @@ import tempfile
 
 import pytest
 
+pytestmark = pytest.mark.xfail(
+    importlib.util.find_spec("chromadb") is None,
+    reason="chromadb is an optional bench dependency; install with `uv run --extra bench ...`",
+    strict=False,
+)
+
 # Add scripts/ to sys.path so we can import bench_chromadb directly
 _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:

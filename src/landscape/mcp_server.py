@@ -121,6 +121,8 @@ async def search(
                 "type": r.type,
                 "score": round(r.score, 6),
                 "path_edge_types": r.path_edge_types,
+                "path_edge_subtypes": r.path_edge_subtypes,
+                "path_edge_quantities": r.path_edge_quantities,
             }
             for r in result.results
         ],

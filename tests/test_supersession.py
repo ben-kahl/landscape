@@ -68,6 +68,117 @@ async def test_reinforcement_appends_source_docs(http_client, neo4j_driver):
 
 
 @pytest.mark.asyncio
+async def test_relation_quantity_fields_written_on_create(http_client, neo4j_driver):
+    title = "quantity-edge-create"
+    await _clear_doc(neo4j_driver, title)
+
+    from landscape.storage import neo4j_store
+
+    doc_id, _ = await neo4j_store.merge_document("hash-quantity-create", title, "text")
+    await neo4j_store.merge_entity("Eric", "PERSON", title, 0.9, doc_id, "test")
+    await neo4j_store.merge_entity("Netflix", "TECHNOLOGY", title, 0.9, doc_id, "test")
+    await _clear_relation(neo4j_driver, "Eric", "DISCUSSED")
+
+    outcome, _ = await neo4j_store.upsert_relation(
+        "Eric",
+        "Netflix",
+        "DISCUSSED",
+        0.9,
+        title,
+        subtype="watched",
+        quantity_value=8,
+        quantity_unit="hour",
+        quantity_kind="duration",
+        time_scope="today",
+    )
+
+    assert outcome == "created"
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (:Entity {name: 'Eric'})-[r:RELATES_TO {type: 'DISCUSSED'}]->
+                  (:Entity {name: 'Netflix'})
+            WHERE r.valid_until IS NULL
+            RETURN r.quantity_value AS quantity_value,
+                   r.quantity_unit AS quantity_unit,
+                   r.quantity_kind AS quantity_kind,
+                   r.time_scope AS time_scope
+            """
+        )
+        record = await result.single()
+
+    assert record["quantity_value"] == 8
+    assert record["quantity_unit"] == "hour"
+    assert record["quantity_kind"] == "duration"
+    assert record["time_scope"] == "today"
+
+
+@pytest.mark.asyncio
+async def test_relation_quantity_fields_reinforce_with_non_null_wins(http_client, neo4j_driver):
+    title1 = "quantity-edge-reinforce-1"
+    title2 = "quantity-edge-reinforce-2"
+    for title in (title1, title2):
+        await _clear_doc(neo4j_driver, title)
+
+    from landscape.storage import neo4j_store
+
+    doc_id, _ = await neo4j_store.merge_document("hash-quantity-reinforce", title1, "text")
+    await neo4j_store.merge_entity("Eric", "PERSON", title1, 0.9, doc_id, "test")
+    await neo4j_store.merge_entity("Netflix", "TECHNOLOGY", title1, 0.9, doc_id, "test")
+    await _clear_relation(neo4j_driver, "Eric", "DISCUSSED")
+
+    created, _ = await neo4j_store.upsert_relation(
+        "Eric",
+        "Netflix",
+        "DISCUSSED",
+        0.8,
+        title1,
+        subtype="watched",
+        quantity_value=None,
+        quantity_unit=None,
+        quantity_kind=None,
+        time_scope=None,
+    )
+    reinforced, _ = await neo4j_store.upsert_relation(
+        "Eric",
+        "Netflix",
+        "DISCUSSED",
+        0.9,
+        title2,
+        subtype=None,
+        quantity_value=10,
+        quantity_unit="hour",
+        quantity_kind="duration",
+        time_scope="last_month",
+    )
+
+    assert created == "created"
+    assert reinforced == "reinforced"
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (:Entity {name: 'Eric'})-[r:RELATES_TO {type: 'DISCUSSED'}]->
+                  (:Entity {name: 'Netflix'})
+            WHERE r.valid_until IS NULL
+            RETURN r.subtype AS subtype,
+                   r.quantity_value AS quantity_value,
+                   r.quantity_unit AS quantity_unit,
+                   r.quantity_kind AS quantity_kind,
+                   r.time_scope AS time_scope
+            """
+        )
+        record = await result.single()
+
+    assert record["subtype"] == "watched"
+    assert record["quantity_value"] == 10
+    assert record["quantity_unit"] == "hour"
+    assert record["quantity_kind"] == "duration"
+    assert record["time_scope"] == "last_month"
+
+
+@pytest.mark.asyncio
 async def test_supersession_marks_valid_until(http_client, neo4j_driver):
     """Alice WORKS_FOR Acme (doc1) → Alice WORKS_FOR Zylos (doc2) → old edge gets valid_until."""
     title1 = "supersession-test-sup-1"

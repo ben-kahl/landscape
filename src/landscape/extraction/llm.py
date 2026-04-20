@@ -8,7 +8,8 @@ _SYSTEM_PROMPT = (
     "1. Named entities with their types (PERSON, ORGANIZATION, PROJECT, TECHNOLOGY,\n"
     "   LOCATION, CONCEPT, EVENT, DOCUMENT, ROLE, DATETIME, TASK).\n"
     "2. Relationships between those entities as (subject, relation_type, object)\n"
-    "   triples, with an optional snake_case `subtype` preserving nuance.\n"
+    "   triples, with optional `subtype` and optional numeric qualifiers:\n"
+    "   `quantity_value`, `quantity_unit`, `quantity_kind`, and `time_scope`.\n"
     "\n"
     "CRITICAL rules:\n"
     "- Extract IMPLICIT relationships. A nominalized verb like 'approval' or 'migration'\n"
@@ -51,6 +52,13 @@ _SYSTEM_PROMPT = (
     "- `subtype` is optional. When the relation_type collapses nuance (title, family\n"
     "  kind, preference axis), populate `subtype` with a short snake_case phrase that\n"
     "  preserves the specifics. Omit (null) otherwise.\n"
+    "- When a relationship includes a count, duration, frequency, price, distance,\n"
+    "  percentage, rating, or measurement, preserve it on the relation using:\n"
+    "  `quantity_value`, `quantity_unit`, `quantity_kind`, and `time_scope`.\n"
+    "  Examples: 10 hours → quantity_value=10, quantity_unit=hour,\n"
+    "  quantity_kind=duration; three bikes → quantity_value=3,\n"
+    "  quantity_unit=bike, quantity_kind=count. Keep relation_type in the closed\n"
+    "  vocabulary; quantities are edge qualifiers, not new relation types.\n"
     "- Return strict JSON matching the schema. No prose, no markdown fences.\n"
     "\n"
     "--- EXAMPLE 1 ---\n"
@@ -160,6 +168,27 @@ _SYSTEM_PROMPT = (
     ' "relation_type": "HAPPENED_ON", "confidence": 0.9},\n'
     '    {"subject": "Alice", "object": "Brooklyn",'
     ' "relation_type": "LIVES_IN", "confidence": 0.9}\n'
+    "  ]\n"
+    "}\n"
+    "\n"
+    "--- EXAMPLE 6 (quantified facts) ---\n"
+    'Input: "Eric spent 10 hours last month watching documentaries on Netflix. '
+    'He owns three bikes."\n'
+    "Output:\n"
+    "{\n"
+    '  "entities": [\n'
+    '    {"name": "Eric", "type": "PERSON", "confidence": 0.95, "aliases": []},\n'
+    '    {"name": "Netflix", "type": "TECHNOLOGY", "confidence": 0.9, "aliases": []},\n'
+    '    {"name": "Bike", "type": "CONCEPT", "confidence": 0.85, "aliases": ["bikes"]}\n'
+    "  ],\n"
+    '  "relations": [\n'
+    '    {"subject": "Eric", "object": "Netflix", "relation_type": "DISCUSSED", '
+    '"subtype": "watched_documentaries", "confidence": 0.9, '
+    '"quantity_value": 10, "quantity_unit": "hour", '
+    '"quantity_kind": "duration", "time_scope": "last_month"},\n'
+    '    {"subject": "Eric", "object": "Bike", "relation_type": "HAS_ATTRIBUTE", '
+    '"subtype": "owned_count", "confidence": 0.9, '
+    '"quantity_value": 3, "quantity_unit": "bike", "quantity_kind": "count"}\n'
     "  ]\n"
     "}\n"
     "\n"
