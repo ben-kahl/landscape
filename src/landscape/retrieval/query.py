@@ -270,8 +270,10 @@ async def retrieve(
 
     if reinforce:
         now_iso = now.isoformat()
-        await neo4j_store.touch_entities(touched_entity_ids, now_iso)
-        await neo4j_store.touch_relations(touched_edge_ids, now_iso)
+        await asyncio.gather(
+            neo4j_store.touch_entities(touched_entity_ids, now_iso),
+            neo4j_store.touch_relations(touched_edge_ids, now_iso),
+        )
 
     return RetrievalResult(
         query=query_text,

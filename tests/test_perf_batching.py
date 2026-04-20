@@ -171,3 +171,40 @@ async def test_retrieve_runs_seed_searches_in_parallel():
         f"seed searches not parallel: entities={times['entities']:.3f}, "
         f"chunks={times['chunks']:.3f}"
     )
+
+
+@pytest.mark.asyncio
+async def test_retrieve_runs_reinforcement_writes_in_parallel():
+    from landscape.retrieval import query as query_mod
+
+    start = asyncio.get_event_loop().time()
+    times: dict[str, float] = {}
+
+    async def slow_ents(*a, **kw):
+        await asyncio.sleep(0.05)
+        times["ents"] = asyncio.get_event_loop().time() - start
+
+    async def slow_rels(*a, **kw):
+        await asyncio.sleep(0.05)
+        times["rels"] = asyncio.get_event_loop().time() - start
+
+    # Seed the retrieval with a single entity hit so reinforce runs.
+    fake_hit = MagicMock()
+    fake_hit.payload = {"neo4j_node_id": "e1"}
+    fake_hit.score = 0.9
+
+    with patch.object(query_mod.qdrant_store, "search_entities_any_type", AsyncMock(return_value=[fake_hit])), \
+         patch.object(query_mod.qdrant_store, "search_chunks", AsyncMock(return_value=[])), \
+         patch.object(query_mod.encoder, "embed_query", return_value=[0.0] * 4), \
+         patch.object(query_mod.neo4j_store, "get_entities_from_chunks", AsyncMock(return_value=[])), \
+         patch.object(query_mod.neo4j_store, "bfs_expand", AsyncMock(return_value=[])), \
+         patch.object(query_mod, "_hydrate_entities", AsyncMock(return_value=[
+             {"eid": "e1", "name": "E1", "type": "T", "access_count": 0, "last_accessed": None}
+         ])), \
+         patch.object(query_mod.neo4j_store, "touch_entities", AsyncMock(side_effect=slow_ents)), \
+         patch.object(query_mod.neo4j_store, "touch_relations", AsyncMock(side_effect=slow_rels)):
+        await query_mod.retrieve("q", reinforce=True)
+
+    assert abs(times["ents"] - times["rels"]) < 0.03, (
+        f"reinforce writes not parallel: ents={times['ents']:.3f}, rels={times['rels']:.3f}"
+    )
