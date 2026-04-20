@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -218,21 +219,29 @@ async def retrieve(
     #    Vector search runs against the full index; we narrow candidates after.
     if session_id is not None or since is not None:
         if session_id is not None and since is not None:
-            conv_ids = set(await neo4j_store.get_entities_in_conversation(session_id))
-            since_ids = set(await neo4j_store.get_entities_since(since))
-            allowlist = conv_ids & since_ids
-            conv_cids = set(await neo4j_store.get_chunks_in_conversation(session_id))
-            since_cids = set(await neo4j_store.get_chunks_since(since))
-            chunk_allowlist = conv_cids & since_cids
-        elif session_id is not None:
-            allowlist = set(await neo4j_store.get_entities_in_conversation(session_id))
-            chunk_allowlist = set(
-                await neo4j_store.get_chunks_in_conversation(session_id)
+            conv_ids, since_ids, conv_cids, since_cids = await asyncio.gather(
+                neo4j_store.get_entities_in_conversation(session_id),
+                neo4j_store.get_entities_since(since),
+                neo4j_store.get_chunks_in_conversation(session_id),
+                neo4j_store.get_chunks_since(since),
             )
+            allowlist = set(conv_ids) & set(since_ids)
+            chunk_allowlist = set(conv_cids) & set(since_cids)
+        elif session_id is not None:
+            ents, chunks_in_conv = await asyncio.gather(
+                neo4j_store.get_entities_in_conversation(session_id),
+                neo4j_store.get_chunks_in_conversation(session_id),
+            )
+            allowlist = set(ents)
+            chunk_allowlist = set(chunks_in_conv)
         else:
             assert since is not None
-            allowlist = set(await neo4j_store.get_entities_since(since))
-            chunk_allowlist = set(await neo4j_store.get_chunks_since(since))
+            ents, chunks_since = await asyncio.gather(
+                neo4j_store.get_entities_since(since),
+                neo4j_store.get_chunks_since(since),
+            )
+            allowlist = set(ents)
+            chunk_allowlist = set(chunks_since)
 
         retrieved_chunks = [
             c for c in retrieved_chunks if c.chunk_neo4j_id in chunk_allowlist
