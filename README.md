@@ -69,8 +69,8 @@ graph TD
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
 | Agent access | MCP tools, LangChain retriever, local CLI |
 | Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval script |
-| In progress | Reinforcement-aware ranking and recency decay tuning |
-| Deferred | Visual ingestion and OCR/multimodal extraction |
+| Ranking improvements | In progress: reinforcement-aware ranking and recency decay tuning |
+| Visual ingestion | Deferred: OCR and multimodal extraction |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design rationale, data
 model details, benchmark notes, and known limitations.
@@ -88,28 +88,38 @@ model details, benchmark notes, and known limitations.
 git clone https://github.com/ben-kahl/landscape.git
 cd landscape
 
-cp .env.example .env
-docker compose --profile cpu up -d
+./scripts/detect-stack.sh
+docker compose up -d
 
 uv sync --extra dev
 uv run pytest                                  # sanity check
 uv run python scripts/demo_mcp_session.py      # supersession demo transcript
 ```
 
-If you run Ollama through Docker, pull the default model once:
+`scripts/detect-stack.sh` creates `.env`, sets `COMPOSE_PROFILES`, and chooses
+the appropriate Ollama mode for the host: NVIDIA GPU, AMD GPU, CPU, or host
+Ollama on macOS.
+
+If the script selects Docker-managed Ollama, pull the default model once:
 
 ```bash
-docker compose exec ollama-cpu ollama pull llama3.1:8b
+docker compose exec ollama-cpu ollama pull llama3.1:8b        # CPU profile
+docker compose exec ollama-nvidia ollama pull llama3.1:8b     # NVIDIA profile
+docker compose exec ollama-amd ollama pull llama3.1:8b        # AMD profile
 ```
 
-For GPU-backed Ollama, use `--profile gpu-nvidia` or `--profile gpu-amd`
-instead of `--profile cpu`. To use a host Ollama instance, set
-`OLLAMA_URL=http://host.docker.internal:11434` in `.env` and start only the
-database services:
+On macOS, run Ollama on the host and let Docker reach it through
+`host.docker.internal`:
 
 ```bash
-docker compose up -d neo4j qdrant
+brew install ollama
+ollama serve
+ollama pull llama3.1:8b
+docker compose up -d
 ```
+
+You can still bypass detection and set `COMPOSE_PROFILES` manually in `.env`.
+Supported profiles are `cpu`, `gpu-nvidia`, `gpu-amd`, and `host`.
 
 ## CLI
 
