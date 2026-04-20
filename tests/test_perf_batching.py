@@ -340,3 +340,46 @@ async def test_ingest_dedupes_identical_entity_mentions_before_resolving():
     assert resolve_mock.call_count == 1, (
         f"expected one resolve call for deduped (Alice/alice), got {resolve_mock.call_count}"
     )
+
+
+@pytest.mark.asyncio
+async def test_ingest_dedupes_whitespace_variants_of_same_entity():
+    """Leading/trailing whitespace in extracted names should not create
+    duplicate resolve calls for the same underlying entity."""
+    from landscape import pipeline
+
+    e1 = MagicMock()
+    e1.name = "Alice "  # trailing space
+    e1.type = "Person"
+    e1.confidence = 0.9
+    e2 = MagicMock()
+    e2.name = " Alice"  # leading space
+    e2.type = "Person"
+    e2.confidence = 0.9
+    extraction = MagicMock(entities=[e1, e2], relations=[])
+
+    resolve_mock = AsyncMock(return_value=(None, True, None))
+
+    with patch.object(pipeline, "chunk_text", return_value=[]), \
+         patch.object(pipeline.neo4j_store, "merge_document",
+                      AsyncMock(return_value=("doc1", True))), \
+         patch.object(pipeline.encoder, "embed_documents",
+                      return_value=[[0.0] * 4]), \
+         patch.object(pipeline.encoder, "encode", return_value=[0.0] * 4), \
+         patch.object(pipeline.resolver, "resolve_entity", resolve_mock), \
+         patch.object(pipeline.neo4j_store, "merge_entity",
+                      AsyncMock(return_value="ent1")), \
+         patch.object(pipeline.neo4j_store, "link_entity_to_doc", AsyncMock()), \
+         patch.object(pipeline.qdrant_store, "upsert_entity", AsyncMock()), \
+         patch.object(pipeline.llm, "extract", return_value=extraction):
+        await pipeline.ingest(text="some doc", title="t")
+
+    assert resolve_mock.call_count == 1, (
+        f"expected one resolve call for whitespace-variant names, got {resolve_mock.call_count}"
+    )
+    # The canonical stored name should be trimmed (no leading/trailing whitespace).
+    resolve_args = resolve_mock.call_args
+    stored_name = resolve_args.kwargs["name"]
+    assert stored_name == stored_name.strip(), (
+        f"stored name still has whitespace: {stored_name!r}"
+    )

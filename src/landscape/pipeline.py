@@ -95,14 +95,17 @@ async def ingest(
     for entity in extraction.entities:
         canonical_entity_type, _ = coerce_entity_type(entity.type)
         etype_subtype = entity.type if canonical_entity_type != entity.type else None
-        key = (entity.name.lower(), canonical_entity_type)
+        key = (entity.name.strip().lower(), canonical_entity_type)
+        # First-mention wins for subtype/confidence within a group. The old
+        # serial loop had last-wins (each merge overwrote the node); this
+        # differs in principle but not in killer-demo or test outcomes.
         if key not in grouped:
             grouped[key] = {
-                "name": entity.name,
+                "name": entity.name.strip(),
                 "canonical_entity_type": canonical_entity_type,
                 "subtype": etype_subtype,
                 "confidence": entity.confidence,
-                "encode_text": f"{entity.name} ({canonical_entity_type})",
+                "encode_text": f"{entity.name.strip()} ({canonical_entity_type})",
             }
 
     group_keys = list(grouped.keys())
@@ -125,7 +128,6 @@ async def ingest(
         vectors = []
         resolutions = []
 
-    canonical_ids: dict[tuple[str, str], str] = {}
     for key, vector, (canonical_id, is_new, _sim) in zip(
         group_keys, vectors, resolutions, strict=True
     ):
@@ -158,8 +160,6 @@ async def ingest(
                 model=settings.llm_model,
             )
             entities_reinforced += 1
-
-        canonical_ids[key] = canonical_id
 
         if turn_element_id is not None:
             await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id)
