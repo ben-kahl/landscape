@@ -182,3 +182,48 @@ async def test_reinforcement_bounded_after_many_queries(http_client, neo4j_drive
         f"{max_reinf}, expected close to cap={cap}. Feedback loop may be "
         f"inactive."
     )
+
+
+@pytest.mark.asyncio
+async def test_write_bumps_entity_access_count(neo4j_driver):
+    """Each merge_entity call increments access_count and updates
+    last_accessed. A cold-start entity created via merge_entity becomes
+    access_count=1 immediately; repeated upserts climb from there."""
+    from landscape.storage import neo4j_store
+
+    # Clean slate for this specific entity
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity {name: $n, type: $t}) DETACH DELETE e",
+            n="Reinforce Entity Probe",
+            t="Concept",
+        )
+
+    for _ in range(3):
+        await neo4j_store.merge_entity(
+            name="Reinforce Entity Probe",
+            entity_type="Concept",
+            source_doc="phase-3.5-test",
+            confidence=0.9,
+            model="test",
+            created_by="ingest",
+        )
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            "MATCH (e:Entity {name: $n}) RETURN e.access_count AS c, "
+            "e.last_accessed AS la",
+            n="Reinforce Entity Probe",
+        )
+        row = await result.single()
+
+    assert row is not None
+    assert row["c"] == 3
+    assert row["la"] is not None
+
+    # Cleanup
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity {name: $n}) DETACH DELETE e",
+            n="Reinforce Entity Probe",
+        )

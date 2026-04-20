@@ -355,12 +355,14 @@ async def merge_entity(
                           e.timestamp = $now,
                           e.canonical = true,
                           e.aliases = [],
-                          e.access_count = 0,
-                          e.last_accessed = null,
+                          e.access_count = 1,
+                          e.last_accessed = $now,
                           e.created_by = $created_by,
                           e.session_id = $session_id,
                           e.turn_id = $turn_id,
                           e.subtype = $subtype
+            ON MATCH SET e.access_count = coalesce(e.access_count, 0) + 1,
+                         e.last_accessed = $now
             RETURN elementId(e) AS eid
             """,
             name=name,
