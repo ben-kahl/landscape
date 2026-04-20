@@ -77,6 +77,15 @@ graph TD
 - [x] Temporal conflict resolution with SUPERSEDES chains and audit trail
 - [x] Side-by-side demo: same questions with Landscape vs ChromaDB-only
 - [x] README with architecture diagram, benchmark results, and setup instructions
+- [x] Vocab expansion: 18 canonical rel types with subtype annotations; 11 entity types
+- [x] LongMemEval single-session-user benchmark (hit@10 = 0.80 at max_sessions=4)
+- [x] Chunk surfacing: retrieval returns chunk text alongside entity hits
+- [x] Local CLI for ingest, query, and graph inspection
+- [x] Perf: batched encoding + parallelized Qdrant/Neo4j calls across retrieve + ingest
+
+### Phase 3.5 — Reinforcement-aware scoring (in progress)
+- [ ] Recency decay on confidence (task #24)
+- [ ] Reinforcement-aware ranking tuning (task #23)
 
 ### Phase 4 — Visual ingestion / CV extension (deferred)
 - [ ] Multimodal LLM for image entity extraction (local LLaVA or Claude Vision API)
@@ -162,7 +171,7 @@ Results are printed as a Markdown table. The killer-demo corpus lives in `tests/
 
 See `CLAUDE.md` for the full competitive analysis (MemPalace, GraphRAG, Zep Graphiti), tech-stack rationale, and known limitations. Two limitations worth calling out here:
 
-**Rel-type synonym drift.** Small local LLMs are non-deterministic about relationship type phrasing (`WORKS_FOR` vs `EMPLOYED_BY`). Landscape uses a closed vocabulary of 10 canonical types and a `normalize_relation_type()` normalizer, but truly novel types pass through unchanged and will not trigger supersession. Demos that rely on temporal conflict resolution should use hand-constructed corpora.
+**Rel-type synonym drift.** Small local LLMs are non-deterministic about relationship type phrasing (`WORKS_FOR` vs `EMPLOYED_BY`). Landscape uses a closed vocabulary of 18 canonical types (with subtype annotations for richer semantics) and a `normalize_relation_type()` normalizer, but truly novel types pass through unchanged and will not trigger supersession. Demos that rely on temporal conflict resolution should use hand-constructed corpora.
 
 **MCP tool-call reliability.** LLM agents invoking `add_relation` may invent relationship types outside the canonical vocabulary. These are stored as-is and do not trigger supersession rules. Monitor the `status` tool output for unexpected rel types in a live session.
 
