@@ -134,3 +134,36 @@ def test_log1p_specific_value_at_one_million():
     """Directly verify that log1p(1M) is ~14, not 1M. If someone ever
     replaces log1p with raw n, this test catches it before it ships."""
     assert 13.0 < math.log1p(1_000_000) < 15.0
+
+
+def test_multiplicative_reinforcement_amplifies():
+    """Two candidates with identical base signals but one reinforced:
+    reinforced candidate scores strictly higher under multiplicative gating."""
+    now = datetime.now(UTC)
+    reinforced = reinforcement_score(5, now, now, WEIGHTS)
+    cold = score_candidate(0.5, 1, 0.5, 0.0, WEIGHTS)
+    warm = score_candidate(0.5, 1, 0.5, reinforced, WEIGHTS)
+    assert warm > cold
+    # Amplification factor == 1 + gamma * reinforcement
+    assert abs(warm - cold * (1.0 + WEIGHTS.gamma * reinforced)) < 1e-9
+
+
+def test_cold_path_baseline_equals_base():
+    """Zero reinforcement must leave the base score unchanged."""
+    base = (
+        WEIGHTS.alpha * 0.5
+        + WEIGHTS.beta * (1.0 / (1.0 + 1))
+        + WEIGHTS.delta * 0.5
+    )
+    s = score_candidate(0.5, 1, 0.5, 0.0, WEIGHTS)
+    assert abs(s - base) < 1e-9
+
+
+def test_zero_base_stays_zero():
+    """Reinforcement can only amplify relevance, not fabricate it."""
+    now = datetime.now(UTC)
+    r = reinforcement_score(10_000_000, now, now, WEIGHTS)
+    # proximity is 1/(1+distance), so we can't zero it; test the two clampable signals.
+    s = score_candidate(0.0, 1_000_000, 0.0, r, WEIGHTS)
+    # beta * 1/(1+1e6) ≈ 8e-7; amplified by (1 + 0.2*2) = 1.4 → still ~1.1e-6
+    assert s < 2e-6

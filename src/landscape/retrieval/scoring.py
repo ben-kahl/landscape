@@ -50,26 +50,25 @@ def score_candidate(
     reinforcement: float,
     weights: ScoringWeights,
 ) -> float:
-    """Combine the four signals into a final score.
+    """Combine the four signals into a final score under multiplicative gating.
 
-    Max possible: alpha + beta + gamma*cap + delta."""
+    Base relevance is additive over vec_sim, proximity, and edge_confidence.
+    Reinforcement acts as a bounded multiplier: score = base * (1 + γ·reinforcement).
+    Max possible: (α + β + δ) · (1 + γ·cap)."""
     proximity = 1.0 / (1.0 + max(0, graph_distance))
-    return (
+    base = (
         weights.alpha * max(0.0, min(1.0, vector_sim))
         + weights.beta * proximity
-        + weights.gamma * reinforcement
         + weights.delta * max(0.0, min(1.0, edge_confidence))
     )
+    return base * (1.0 + weights.gamma * reinforcement)
 
 
 def max_possible_score(weights: ScoringWeights) -> float:
-    """The theoretical ceiling. Used as an invariant in rumination tests."""
-    return (
-        weights.alpha
-        + weights.beta
-        + weights.gamma * weights.reinforcement_cap
-        + weights.delta
-    )
+    """The theoretical ceiling under multiplicative gating. Used as an invariant
+    in rumination tests."""
+    base = weights.alpha + weights.beta + weights.delta
+    return base * (1.0 + weights.gamma * weights.reinforcement_cap)
 
 
 def parse_neo4j_datetime(value: object) -> datetime | None:
