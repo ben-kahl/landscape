@@ -170,3 +170,22 @@ def test_zero_base_stays_zero():
     s = score_candidate(0.0, 1_000_000, 0.0, r, WEIGHTS)
     # beta * 1/(1+1e6) ≈ 8e-7; amplified by (1 + 0.2*2) = 1.4 → still ~1.1e-6
     assert s < 2e-6
+
+
+def test_rumination_bound_preserved_under_gating():
+    """Pathologically hot + recent input stays bounded. This is the same
+    rumination guard as test_reinforcement_is_bounded, but exercised through
+    score_candidate to catch any future regression that removes the
+    reinforcement cap from the multiplicative path."""
+    now = datetime.now(UTC)
+    r = reinforcement_score(10_000_000, now, now, WEIGHTS)
+    s = score_candidate(
+        vector_sim=1.0,
+        graph_distance=0,
+        edge_confidence=1.0,
+        reinforcement=r,
+        weights=WEIGHTS,
+    )
+    ceiling = max_possible_score(WEIGHTS)
+    assert s <= ceiling + 1e-9
+    assert r <= WEIGHTS.reinforcement_cap
