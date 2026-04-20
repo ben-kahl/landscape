@@ -164,3 +164,96 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
     assert old_obj not in target_names, (
         f"Superseded target {old_obj} should be filtered out, got: {target_names}"
     )
+
+
+@pytest.mark.asyncio
+async def test_retrieval_includes_path_edge_quantities(monkeypatch):
+    from landscape.retrieval import query
+
+    monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+
+    class Hit:
+        def __init__(self):
+            self.score = 0.9
+            self.payload = {"neo4j_node_id": "eric-id"}
+
+    async def fake_search_entities_any_type(vector, limit=10):
+        return [Hit()]
+
+    async def fake_search_chunks(vector, limit=10):
+        return []
+
+    async def fake_get_entities_from_chunks(chunk_ids):
+        return []
+
+    async def fake_hydrate_entities(ids):
+        return [
+            {
+                "eid": "eric-id",
+                "name": "Eric",
+                "type": "PERSON",
+                "access_count": 0,
+                "last_accessed": None,
+            }
+        ]
+
+    async def fake_bfs_expand(seed_ids, max_hops):
+        return [
+            {
+                "seed_id": "eric-id",
+                "target_id": "netflix-id",
+                "target_name": "Netflix",
+                "target_type": "TECHNOLOGY",
+                "target_access_count": 0,
+                "target_last_accessed": None,
+                "distance": 1,
+                "edge_ids": ["rel-1"],
+                "edge_types": ["DISCUSSED"],
+                "edge_subtypes": ["watched"],
+                "edge_quantities": [
+                    {
+                        "quantity_value": 10,
+                        "quantity_unit": "hour",
+                        "quantity_kind": "duration",
+                        "time_scope": "last_month",
+                    }
+                ],
+                "edge_confidences": [0.9],
+                "edge_access_counts": [0],
+                "edge_last_accessed": [None],
+            }
+        ]
+
+    async def fake_touch_entities(ids, now):
+        return None
+
+    async def fake_touch_relations(ids, now):
+        return None
+
+    monkeypatch.setattr(
+        query.qdrant_store,
+        "search_entities_any_type",
+        fake_search_entities_any_type,
+    )
+    monkeypatch.setattr(query.qdrant_store, "search_chunks", fake_search_chunks)
+    monkeypatch.setattr(
+        query.neo4j_store,
+        "get_entities_from_chunks",
+        fake_get_entities_from_chunks,
+    )
+    monkeypatch.setattr(query, "_hydrate_entities", fake_hydrate_entities)
+    monkeypatch.setattr(query.neo4j_store, "bfs_expand", fake_bfs_expand)
+    monkeypatch.setattr(query.neo4j_store, "touch_entities", fake_touch_entities)
+    monkeypatch.setattr(query.neo4j_store, "touch_relations", fake_touch_relations)
+
+    result = await query.retrieve("How many hours on Netflix?", reinforce=False)
+
+    netflix = next(r for r in result.results if r.name == "Netflix")
+    assert netflix.path_edge_quantities == [
+        {
+            "quantity_value": 10,
+            "quantity_unit": "hour",
+            "quantity_kind": "duration",
+            "time_scope": "last_month",
+        }
+    ]
