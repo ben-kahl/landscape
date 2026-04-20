@@ -208,3 +208,62 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
     assert abs(times["ents"] - times["rels"]) < 0.03, (
         f"reinforce writes not parallel: ents={times['ents']:.3f}, rels={times['rels']:.3f}"
     )
+
+
+@pytest.mark.asyncio
+async def test_ingest_batch_encodes_chunks_once():
+    """A 10-chunk document should trigger exactly one embed_documents call,
+    not 10 per-chunk encode() calls."""
+    from landscape import pipeline
+
+    fake_chunks = [MagicMock(text=f"chunk {i}", index=i) for i in range(10)]
+    with patch.object(pipeline, "chunk_text", return_value=fake_chunks), \
+         patch.object(pipeline.neo4j_store, "merge_document",
+                      AsyncMock(return_value=("doc1", True))), \
+         patch.object(pipeline.neo4j_store, "create_chunk",
+                      AsyncMock(side_effect=[f"ch{i}" for i in range(10)])), \
+         patch.object(pipeline.encoder, "embed_documents",
+                      return_value=[[0.0] * 4 for _ in range(10)]) as batch_encode, \
+         patch.object(pipeline.encoder, "encode", return_value=[0.0] * 4) as per_call, \
+         patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()) as upsert, \
+         patch.object(pipeline.llm, "extract",
+                      return_value=MagicMock(entities=[], relations=[])):
+        await pipeline.ingest(text="x" * 500, title="doc")
+
+    assert batch_encode.call_count == 1
+    assert len(batch_encode.call_args.args[0]) == 10
+    # The per-chunk encode path should NOT be used for chunks anymore.
+    chunk_encode_texts = {c.text for c in fake_chunks}
+    per_call_texts = {c.args[0] for c in per_call.call_args_list if c.args}
+    assert not chunk_encode_texts & per_call_texts, (
+        "chunks are still going through per-call encoder.encode"
+    )
+    assert upsert.call_count == 10
+
+
+@pytest.mark.asyncio
+async def test_ingest_upserts_chunks_in_parallel():
+    from landscape import pipeline
+
+    start = asyncio.get_event_loop().time()
+    finish_times: list[float] = []
+
+    async def slow_upsert(*a, **kw):
+        await asyncio.sleep(0.05)
+        finish_times.append(asyncio.get_event_loop().time() - start)
+
+    fake_chunks = [MagicMock(text=f"chunk {i}", index=i) for i in range(5)]
+    with patch.object(pipeline, "chunk_text", return_value=fake_chunks), \
+         patch.object(pipeline.neo4j_store, "merge_document",
+                      AsyncMock(return_value=("doc1", True))), \
+         patch.object(pipeline.neo4j_store, "create_chunk",
+                      AsyncMock(side_effect=[f"ch{i}" for i in range(5)])), \
+         patch.object(pipeline.encoder, "embed_documents",
+                      return_value=[[0.0] * 4 for _ in range(5)]), \
+         patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock(side_effect=slow_upsert)), \
+         patch.object(pipeline.llm, "extract",
+                      return_value=MagicMock(entities=[], relations=[])):
+        await pipeline.ingest(text="x" * 500, title="doc")
+
+    # Serial: 5 * 0.05 = 0.25s. Parallel: all within 0.06s of each other.
+    assert max(finish_times) - min(finish_times) < 0.03

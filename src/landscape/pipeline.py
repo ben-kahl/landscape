@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -53,22 +54,31 @@ async def ingest(
         turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
         await neo4j_store.link_document_to_turn(doc_id, turn_element_id)
 
-    # Step 2: chunk + embed chunks
+    # Step 2: chunk + embed chunks (batched)
     chunks = chunk_text(text)
     chunks_created = 0
-    for chunk in chunks:
-        chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
-        chunk_neo4j_id = await neo4j_store.create_chunk(doc_id, chunk.index, chunk.text, chunk_hash)
-        chunk_vector = encoder.encode(chunk.text)
-        await qdrant_store.upsert_chunk(
-            chunk_neo4j_id=chunk_neo4j_id,
-            doc_id=doc_id,
-            source_doc=title,
-            position=chunk.index,
-            text=chunk.text,
-            vector=chunk_vector,
+    if chunks:
+        chunk_neo4j_ids: list[str] = []
+        for chunk in chunks:
+            chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
+            chunk_neo4j_ids.append(
+                await neo4j_store.create_chunk(doc_id, chunk.index, chunk.text, chunk_hash)
+            )
+        chunk_vectors = encoder.embed_documents([c.text for c in chunks])
+        await asyncio.gather(
+            *(
+                qdrant_store.upsert_chunk(
+                    chunk_neo4j_id=cid,
+                    doc_id=doc_id,
+                    source_doc=title,
+                    position=chunk.index,
+                    text=chunk.text,
+                    vector=vec,
+                )
+                for chunk, cid, vec in zip(chunks, chunk_neo4j_ids, chunk_vectors, strict=True)
+            )
         )
-        chunks_created += 1
+        chunks_created = len(chunks)
 
     # Step 3: extract entities + relations from full text
     extraction = llm.extract(text)
