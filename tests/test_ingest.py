@@ -1,8 +1,50 @@
 import pytest
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
+from landscape.extraction.schema import Extraction
+
 TEST_DOC = "Alice leads Project Atlas at Acme Corp. Project Atlas uses PostgreSQL for storage."
 TEST_TITLE = "test-doc-integration"
+
+
+def test_extraction_schema_accepts_quantified_relation_fields():
+    extraction = Extraction.model_validate(
+        {
+            "entities": [
+                {
+                    "name": "Eric",
+                    "type": "PERSON",
+                    "confidence": 0.95,
+                    "aliases": [],
+                },
+                {
+                    "name": "Netflix",
+                    "type": "TECHNOLOGY",
+                    "confidence": 0.9,
+                    "aliases": [],
+                },
+            ],
+            "relations": [
+                {
+                    "subject": "Eric",
+                    "object": "Netflix",
+                    "relation_type": "DISCUSSED",
+                    "subtype": "watched",
+                    "confidence": 0.9,
+                    "quantity_value": 8,
+                    "quantity_unit": "hours",
+                    "quantity_kind": "duration",
+                    "time_scope": "today",
+                }
+            ],
+        }
+    )
+
+    relation = extraction.relations[0]
+    assert relation.quantity_value == 8
+    assert relation.quantity_unit == "hours"
+    assert relation.quantity_kind == "duration"
+    assert relation.time_scope == "today"
 
 
 @pytest.mark.asyncio
