@@ -63,9 +63,12 @@ async def retrieve(
 
     query_vector = encoder.embed_query(query_text)
 
-    # 1. Entity seeds by vector similarity (no type filter — we don't know
-    #    the target type in advance).
-    entity_hits = await qdrant_store.search_entities_any_type(query_vector, limit=5)
+    # Seed searches: independent Qdrant queries against two collections.
+    entity_hits, chunk_hits = await asyncio.gather(
+        qdrant_store.search_entities_any_type(query_vector, limit=5),
+        qdrant_store.search_chunks(query_vector, limit=5),
+    )
+
     seed_sims: dict[str, float] = {}
     for hit in entity_hits:
         payload = hit.payload or {}
@@ -74,10 +77,6 @@ async def retrieve(
             continue
         seed_sims[neo4j_id] = max(seed_sims.get(neo4j_id, 0.0), float(hit.score))
 
-    # 2. Chunk seeds → walk back to canonical entities via EXTRACTED_FROM.
-    #    Propagate the chunk's similarity score so entities reached only via
-    #    chunk seeding still enter expansion with real similarity signal.
-    chunk_hits = await qdrant_store.search_chunks(query_vector, limit=5)
     chunk_ids: list[str] = []
     chunk_score_by_id: dict[str, float] = {}
     retrieved_chunks: list[RetrievedChunk] = []

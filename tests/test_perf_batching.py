@@ -140,3 +140,34 @@ async def test_retrieve_runs_both_filter_queries_in_parallel():
     assert max(timestamps) - min(timestamps) < 0.03, (
         f"filter calls not parallelized — spread: {max(timestamps) - min(timestamps):.3f}s"
     )
+
+
+@pytest.mark.asyncio
+async def test_retrieve_runs_seed_searches_in_parallel():
+    """search_entities_any_type and search_chunks query two different Qdrant
+    collections and are independent — must be gathered."""
+    from landscape.retrieval import query as query_mod
+
+    start = asyncio.get_event_loop().time()
+    times: dict[str, float] = {}
+
+    async def slow_entities(*a, **kw):
+        await asyncio.sleep(0.05)
+        times["entities"] = asyncio.get_event_loop().time() - start
+        return []
+
+    async def slow_chunks(*a, **kw):
+        await asyncio.sleep(0.05)
+        times["chunks"] = asyncio.get_event_loop().time() - start
+        return []
+
+    with patch.object(query_mod.qdrant_store, "search_entities_any_type", AsyncMock(side_effect=slow_entities)), \
+         patch.object(query_mod.qdrant_store, "search_chunks", AsyncMock(side_effect=slow_chunks)), \
+         patch.object(query_mod.encoder, "embed_query", return_value=[0.0] * 4), \
+         patch.object(query_mod.neo4j_store, "get_entities_from_chunks", AsyncMock(return_value=[])):
+        await query_mod.retrieve("q", reinforce=False)
+
+    assert abs(times["entities"] - times["chunks"]) < 0.03, (
+        f"seed searches not parallel: entities={times['entities']:.3f}, "
+        f"chunks={times['chunks']:.3f}"
+    )
