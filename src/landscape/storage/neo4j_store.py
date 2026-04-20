@@ -838,12 +838,12 @@ async def bfs_expand(
         [r IN rels | elementId(r)] AS edge_ids,
         [r IN rels | r.type] AS edge_types,
         [r IN rels | r.subtype] AS edge_subtypes,
-        [r IN rels | {
+        [r IN rels | {{
             quantity_value: r.quantity_value,
             quantity_unit: r.quantity_unit,
             quantity_kind: r.quantity_kind,
             time_scope: r.time_scope
-        }] AS edge_quantities,
+        }}] AS edge_quantities,
         [r IN rels | coalesce(r.confidence, 0.0)] AS edge_confidences,
         [r IN rels | coalesce(r.access_count, 0)] AS edge_access_counts,
         [r IN rels | r.last_accessed] AS edge_last_accessed
