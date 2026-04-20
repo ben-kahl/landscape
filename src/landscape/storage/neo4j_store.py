@@ -668,9 +668,9 @@ async def upsert_relation(
         if conflict:
             # Mark old edge as superseded (old edge keeps its original provenance)
             await session.run(
-                f"""
-                MATCH (s:Entity {{name: $subject}})
-                      -[old:RELATES_TO {{type: $rel_type}}]->(other:Entity)
+                """
+                MATCH (s:Entity {name: $subject})
+                      -[old:RELATES_TO {type: $rel_type}]->(other:Entity)
                 WHERE old.valid_until IS NULL
                   AND elementId(old) = $old_rid
                 SET old.valid_until = $now, old.superseded_by_doc = $source_doc
