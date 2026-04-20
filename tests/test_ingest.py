@@ -47,6 +47,19 @@ def test_extraction_schema_accepts_quantified_relation_fields():
     assert relation.time_scope == "today"
 
 
+def test_extraction_prompt_mentions_quantity_fields():
+    from landscape.extraction import llm
+
+    prompt = llm._SYSTEM_PROMPT
+
+    assert "quantity_value" in prompt
+    assert "quantity_unit" in prompt
+    assert "quantity_kind" in prompt
+    assert "time_scope" in prompt
+    assert "10 hours" in prompt
+    assert "three bikes" in prompt
+
+
 @pytest.mark.asyncio
 async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdrant_client):
     # Clear any prior state for this test title
