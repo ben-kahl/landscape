@@ -17,7 +17,7 @@ from landscape.retrieval.scoring import (
 WEIGHTS = ScoringWeights(
     alpha=1.0,
     beta=0.8,
-    gamma=0.4,
+    gamma=0.2,
     delta=0.3,
     decay_lambda=math.log(2) / (7 * 86400),  # true 7-day half-life
     reinforcement_cap=2.0,
@@ -87,7 +87,8 @@ def test_reinforcement_is_bounded():
 
 
 def test_score_bounded_by_max():
-    """Total score cannot exceed alpha + beta + gamma*cap + delta."""
+    """Total score cannot exceed (alpha + beta + delta) * (1 + gamma*cap) —
+    the multiplicative-gating ceiling."""
     now = datetime.now(UTC)
     ceiling = max_possible_score(WEIGHTS)
     # Pathologically good input
@@ -105,9 +106,11 @@ def test_score_bounded_by_max():
 
 
 def test_score_components_balanced():
-    """Reinforcement alone should not dominate vector+graph signals with
-    the default weights. γ·cap must be less than α+β."""
-    assert WEIGHTS.gamma * WEIGHTS.reinforcement_cap < WEIGHTS.alpha + WEIGHTS.beta
+    """Under multiplicative gating, reinforcement amplifies by at most
+    (1 + γ·cap). This cap must stay ≤ 1.5 so a reinforced irrelevant
+    candidate cannot outrank a fresh highly-relevant one by a wide margin."""
+    multiplier_ceiling = 1.0 + WEIGHTS.gamma * WEIGHTS.reinforcement_cap
+    assert 1.0 < multiplier_ceiling <= 1.5
 
 
 def test_vector_sim_clamped():
