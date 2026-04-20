@@ -190,6 +190,10 @@ class ExtractedRelation(BaseModel):
     relation_type: str
     confidence: float
     subtype: str | None = None
+    quantity_value: float | str | None = None
+    quantity_unit: str | None = None
+    quantity_kind: str | None = None
+    time_scope: str | None = None
 
 
 _SNAKE_RE = re.compile(r"[^a-z0-9]+")
