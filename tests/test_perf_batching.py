@@ -267,3 +267,76 @@ async def test_ingest_upserts_chunks_in_parallel():
 
     # Serial: 5 * 0.05 = 0.25s. Parallel: all within 0.06s of each other.
     assert max(finish_times) - min(finish_times) < 0.03
+
+
+@pytest.mark.asyncio
+async def test_ingest_batch_encodes_entities_once():
+    from landscape import pipeline
+
+    # Build entity mocks with distinct names so none dedupe.
+    fake_entities = [MagicMock() for _ in range(5)]
+    for i, e in enumerate(fake_entities):
+        e.name = f"E{i}"
+        e.type = "Person"
+        e.confidence = 0.9
+
+    extraction = MagicMock(entities=fake_entities, relations=[])
+
+    with patch.object(pipeline, "chunk_text", return_value=[]), \
+         patch.object(pipeline.neo4j_store, "merge_document",
+                      AsyncMock(return_value=("doc1", True))), \
+         patch.object(pipeline.encoder, "embed_documents",
+                      return_value=[[0.0] * 4 for _ in range(5)]) as batch_encode, \
+         patch.object(pipeline.encoder, "encode", return_value=[0.0] * 4), \
+         patch.object(pipeline.resolver, "resolve_entity",
+                      AsyncMock(return_value=(None, True, None))), \
+         patch.object(pipeline.neo4j_store, "merge_entity",
+                      AsyncMock(side_effect=[f"ent{i}" for i in range(5)])), \
+         patch.object(pipeline.qdrant_store, "upsert_entity", AsyncMock()), \
+         patch.object(pipeline.llm, "extract", return_value=extraction):
+        await pipeline.ingest(text="some doc", title="t")
+
+    # Entity encode should be batched into one call that encodes all 5 names.
+    entity_batch_calls = [c for c in batch_encode.call_args_list if len(c.args[0]) == 5]
+    assert entity_batch_calls, (
+        f"expected one batch of 5 entity texts, got batches: "
+        f"{[len(c.args[0]) for c in batch_encode.call_args_list]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ingest_dedupes_identical_entity_mentions_before_resolving():
+    """Two extracted entities with the same (name, type) in one doc should
+    resolve once, not twice — the serial loop used to rely on the first
+    resolution creating a canonical node that the second would match."""
+    from landscape import pipeline
+
+    e1 = MagicMock()
+    e1.name = "Alice"
+    e1.type = "Person"
+    e1.confidence = 0.9
+    e2 = MagicMock()
+    e2.name = "alice"  # case difference — must dedupe
+    e2.type = "Person"
+    e2.confidence = 0.9
+    extraction = MagicMock(entities=[e1, e2], relations=[])
+
+    resolve_mock = AsyncMock(return_value=(None, True, None))
+
+    with patch.object(pipeline, "chunk_text", return_value=[]), \
+         patch.object(pipeline.neo4j_store, "merge_document",
+                      AsyncMock(return_value=("doc1", True))), \
+         patch.object(pipeline.encoder, "embed_documents",
+                      return_value=[[0.0] * 4]), \
+         patch.object(pipeline.encoder, "encode", return_value=[0.0] * 4), \
+         patch.object(pipeline.resolver, "resolve_entity", resolve_mock), \
+         patch.object(pipeline.neo4j_store, "merge_entity",
+                      AsyncMock(return_value="ent1")), \
+         patch.object(pipeline.neo4j_store, "link_entity_to_doc", AsyncMock()), \
+         patch.object(pipeline.qdrant_store, "upsert_entity", AsyncMock()), \
+         patch.object(pipeline.llm, "extract", return_value=extraction):
+        await pipeline.ingest(text="some doc", title="t")
+
+    assert resolve_mock.call_count == 1, (
+        f"expected one resolve call for deduped (Alice/alice), got {resolve_mock.call_count}"
+    )
