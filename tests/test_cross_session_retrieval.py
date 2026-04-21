@@ -141,17 +141,29 @@ async def test_retrieve_filtered_by_session_id_returns_only_that_conversations_e
         session_id="conv-sf-b", turn_id="t1",
     )
 
-    result_a = await retrieve("SessionFilterAlice", hops=1, limit=10, reinforce=False, session_id="conv-sf-a")
-    result_b = await retrieve("SessionFilterBob", hops=1, limit=10, reinforce=False, session_id="conv-sf-b")
+    result_a = await retrieve(
+        "SessionFilterAlice",
+        hops=1,
+        limit=10,
+        reinforce=False,
+        session_id="conv-sf-a",
+    )
+    result_b = await retrieve(
+        "SessionFilterBob",
+        hops=1,
+        limit=10,
+        reinforce=False,
+        session_id="conv-sf-b",
+    )
 
     ids_a = {r.neo4j_id for r in result_a.results}
     ids_b = {r.neo4j_id for r in result_b.results}
 
     assert eid_a in ids_a, f"EntityA should be in conv-sf-a results, got: {ids_a}"
-    assert eid_b not in ids_a, f"EntityB must not bleed into conv-sf-a results"
+    assert eid_b not in ids_a, "EntityB must not bleed into conv-sf-a results"
 
     assert eid_b in ids_b, f"EntityB should be in conv-sf-b results, got: {ids_b}"
-    assert eid_a not in ids_b, f"EntityA must not bleed into conv-sf-b results"
+    assert eid_a not in ids_b, "EntityA must not bleed into conv-sf-b results"
 
 
 @pytest.mark.asyncio
@@ -198,7 +210,9 @@ async def test_retrieve_filtered_by_since_excludes_old_turn(
     result_ids = {r.neo4j_id for r in result.results}
 
     assert eid_new in result_ids, f"Recent entity should surface, got: {result_ids}"
-    assert eid_old not in result_ids, f"Old entity must be excluded by since filter, got: {result_ids}"
+    assert eid_old not in result_ids, (
+        f"Old entity must be excluded by since filter, got: {result_ids}"
+    )
 
 
 @pytest.mark.asyncio

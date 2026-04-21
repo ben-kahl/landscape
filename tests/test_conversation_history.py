@@ -1,6 +1,5 @@
 """Tests for get_conversation_detail storage primitive."""
 import asyncio
-from datetime import UTC, datetime
 
 import pytest
 
@@ -13,7 +12,13 @@ async def test_get_conversation_detail_orders_turns_by_timestamp(http_client, ne
 
     await neo4j_store.merge_turn("conv-ch1", "t1", turn_number=1, role="user", summary="first")
     await asyncio.sleep(0.01)
-    await neo4j_store.merge_turn("conv-ch1", "t2", turn_number=2, role="assistant", summary="second")
+    await neo4j_store.merge_turn(
+        "conv-ch1",
+        "t2",
+        turn_number=2,
+        role="assistant",
+        summary="second",
+    )
     await asyncio.sleep(0.01)
     await neo4j_store.merge_turn("conv-ch1", "t3", turn_number=3, role="user", summary="third")
 

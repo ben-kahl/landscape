@@ -74,6 +74,7 @@ def test_embed_chunks_dim():
 def test_in_memory_collection_ranking():
     """Insert 3 docs; the most specific match should rank first."""
     import chromadb
+
     from landscape.embeddings import encoder
 
     encoder.load_model()

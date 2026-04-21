@@ -7,7 +7,6 @@ encoder.load_model() via the FastAPI app lifespan.
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Path 1 & 2 tests — no encoder needed
 # ---------------------------------------------------------------------------

@@ -311,7 +311,8 @@ async def add_relation(
 
     Canonical relation types (synonyms are normalized; semantically-confused
     types are coerced via embedding similarity):
-      WORKS_FOR    - employment / org affiliation. Use for "joined", "moved to a job at", "is a Y at X".
+      WORKS_FOR    - employment / org affiliation. Use for "joined",
+                     "moved to a job at", "is a Y at X".
       LEADS        - manages or runs. Use for "heads", "directs", "manages".
       MEMBER_OF    - non-employment group membership. Use for "is on the X team", "part of X group".
       REPORTS_TO   - direct manager relationship.

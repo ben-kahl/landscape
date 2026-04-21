@@ -301,9 +301,9 @@ async def test_reasserted_fact_outranks_cold_fact(
     http_client, neo4j_driver, monkeypatch
 ):
     """A repeatedly reasserted fact should rank above an equivalent cold fact."""
+    from landscape.config import settings
     from landscape.embeddings import encoder
     from landscape.storage import neo4j_store, qdrant_store
-    from landscape.config import settings
 
     names = ["Reinforce Subject", "Warm Stack", "Cold Stack"]
     subject_vector = [1.0] + [0.0] * (settings.embedding_dims - 1)
@@ -385,7 +385,8 @@ async def test_reasserted_fact_outranks_cold_fact(
     async with neo4j_driver.session() as session:
         await session.run(
             """
-            MATCH (:Entity {name: 'Reinforce Subject'})-[r:RELATES_TO {type: 'RELATED_TO'}]->(:Entity)
+            MATCH (:Entity {name: 'Reinforce Subject'})
+                  -[r:RELATES_TO {type: 'RELATED_TO'}]->(:Entity)
             WHERE r.source_doc = 'phase-3.5-test'
               AND endNode(r).name IN ['Warm Stack', 'Cold Stack']
             SET r.last_accessed = datetime($ts)

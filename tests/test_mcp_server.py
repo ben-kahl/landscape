@@ -247,7 +247,13 @@ async def test_status_returns_summary(http_client):
     assert not result.isError, f"Tool returned error: {result.content}"
     data = _parse(result)
 
-    for key in ("entity_count", "document_count", "relation_count", "top_entities", "recent_agent_writes"):
+    for key in (
+        "entity_count",
+        "document_count",
+        "relation_count",
+        "top_entities",
+        "recent_agent_writes",
+    ):
         assert key in data, f"Missing key '{key}' in status response"
     assert isinstance(data["top_entities"], list)
     assert isinstance(data["recent_agent_writes"], list)
