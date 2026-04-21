@@ -201,8 +201,23 @@ profile-specific recommendations.
 
 ## Future Work
 
-- Reinforcement-aware ranking and confidence decay
-- Stronger entity resolution across type variants and aliases
-- Direction-aware relationship normalization
-- Larger benchmark coverage for numeric facts and temporal memory
-- Visual ingestion through OCR and local multimodal models
+Landscape is past the "build the basic stack" stage. The remaining work before
+phase 4 is primarily about quality hardening, evaluation clarity, and
+operational polish.
+
+- Direction-aware relationship normalization so inverse forms such as
+  `APPROVED_BY` can map correctly instead of only by string synonym.
+- Stronger entity resolution across type variants and aliases, especially for
+  agent-authored write-back that does not match ingestion-time labels exactly.
+- Semantic relation clustering / supersession hardening so novel relation labels
+  can participate in canonical reasoning and temporal updates.
+- Automatic agent-conversation ingestion so useful conversational memory does
+  not depend on explicit `add_entity` / `add_relation` calls for every fact.
+- Benchmark hardening and reproducibility beyond the current killer-demo and
+  LongMemEval smoke harness.
+- CI or a formal verification workflow so the current integration surface has a
+  stable regression gate.
+- Expanded ingestion modes as the next major feature area: richer document
+  inputs, drive-platform integrations such as Google Drive, automatic
+  conversation capture, and visual/multimodal ingestion through OCR and local
+  multimodal models.
