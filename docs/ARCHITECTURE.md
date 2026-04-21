@@ -231,8 +231,8 @@ operational polish.
   not depend on explicit `add_entity` / `add_relation` calls for every fact.
 - Benchmark hardening and reproducibility beyond the current killer-demo and
   LongMemEval smoke harness.
-- CI or a formal verification workflow so the current integration surface has a
-  stable regression gate.
+- The canonical verification workflow is documented in `README.md` and should
+  stay aligned with the current CI-safe regression gate as commands evolve.
 - Expanded ingestion modes as the next major feature area: richer document
   inputs, drive-platform integrations such as Google Drive, automatic
   conversation capture, and visual/multimodal ingestion through OCR and local

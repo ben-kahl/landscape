@@ -116,7 +116,7 @@ cd landscape
 docker compose up -d
 
 uv sync --extra dev
-uv run pytest                                  # sanity check
+uv run pytest -m "unit or smoke"               # CI-safe sanity check
 uv run python scripts/demo_mcp_session.py      # supersession demo transcript
 ```
 
@@ -219,12 +219,10 @@ Three limitations worth calling out here before phase 4:
 ## Pre-phase-4 checklist
 
 - Align `AGENTS.md`, `README.md`, and `docs/ARCHITECTURE.md` to the implemented system.
-- State explicit phase 3.5 exit criteria instead of relying on the original unchecked phase plan.
 - Keep MCP/API/CLI documentation accurate as interfaces evolve.
 - Add automatic agent-conversation ingestion so useful memory can be captured without requiring explicit fact write-back for every conversational detail.
 - Harden the benchmark story so it is clear what is proven by killer-demo and what is still smoke-only in LongMemEval.
 - Track reasoning-quality gaps explicitly: relation-direction normalization, semantic rel-type clustering, and stronger cross-type entity resolution.
-- Add CI or document the canonical verification workflow if automated CI is still absent.
 - Keep phase 4 scoped to new ingestion modes and integrations rather than mixing it with unrelated cleanup.
 
 ## License
