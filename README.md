@@ -67,10 +67,10 @@ graph TD
 | Hybrid retrieval | Vector search, graph expansion, merge/rank, recency and distance scoring |
 | Temporal memory | Supersession-aware retrieval for functional relationship conflicts |
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
-| Agent access | MCP tools, LangChain retriever, local CLI |
-| Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval script |
-| Ranking improvements | In progress: reinforcement-aware ranking and recency decay tuning |
-| Visual ingestion | Deferred: OCR and multimodal extraction |
+| Agent access | MCP server, conversation history, LangChain retriever, FastAPI, local CLI |
+| Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval smoke harness |
+| Phase 3.5 hardening | In progress: ranking tuning, benchmark hardening, relation normalization, resolver improvements |
+| Phase 4 | Next major feature area: expanded ingestion paths for documents, integrations, conversations, and multimodal memory |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design rationale, data
 model details, benchmark notes, and known limitations.
@@ -159,7 +159,7 @@ Add to `~/.claude/mcp.json`:
 }
 ```
 
-The six MCP tools:
+The seven MCP tools:
 
 | Tool | Description |
 |---|---|
@@ -169,6 +169,7 @@ The six MCP tools:
 | `add_relation` | Assert a typed edge between two entities; supersedes functional conflicts |
 | `graph_query` | Run a read-only Cypher query against the knowledge graph |
 | `status` | Return a ~200-token summary: entity count, top entities, recent agent writes |
+| `conversation_history` | Return chronological turns and entities mentioned in a session |
 
 ## Reproduce the benchmarks
 
@@ -184,13 +185,24 @@ Results are printed as a Markdown table. The killer-demo corpus lives in
 ## Design rationale and known limitations
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design rationale.
-Three limitations worth calling out here:
+Three limitations worth calling out here before phase 4:
 
 **Rel-type synonym drift.** Small local LLMs are non-deterministic about relationship type phrasing (`WORKS_FOR` vs `EMPLOYED_BY`). Landscape uses a closed vocabulary of 18 canonical types (with subtype annotations for richer semantics) and a `normalize_relation_type()` normalizer, but truly novel types pass through unchanged and will not trigger supersession. Demos that rely on temporal conflict resolution should use hand-constructed corpora.
 
 **MCP tool-call reliability.** LLM agents invoking `add_relation` may invent relationship types outside the canonical vocabulary. These are stored as-is and do not trigger supersession rules. Monitor the `status` tool output for unexpected rel types in a live session.
 
 **Entity resolver type-match strictness.** The resolver requires entity type agreement before merging; an agent that writes `("Sarah", "PERSON")` when the ingestion pipeline stored `("Sarah", "Employee")` will create a duplicate node rather than resolving to the existing one.
+
+## Pre-phase-4 checklist
+
+- Align `AGENTS.md`, `README.md`, and `docs/ARCHITECTURE.md` to the implemented system.
+- State explicit phase 3.5 exit criteria instead of relying on the original unchecked phase plan.
+- Keep MCP/API/CLI documentation accurate as interfaces evolve.
+- Add automatic agent-conversation ingestion so useful memory can be captured without requiring explicit fact write-back for every conversational detail.
+- Harden the benchmark story so it is clear what is proven by killer-demo and what is still smoke-only in LongMemEval.
+- Track reasoning-quality gaps explicitly: relation-direction normalization, semantic rel-type clustering, and stronger cross-type entity resolution.
+- Add CI or document the canonical verification workflow if automated CI is still absent.
+- Keep phase 4 scoped to new ingestion modes and integrations rather than mixing it with unrelated cleanup.
 
 ## License
 
