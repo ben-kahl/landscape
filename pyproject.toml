@@ -55,4 +55,8 @@ testpaths = ["tests"]
 markers = [
     "extraction: slow tests that exercise real LLM extraction quality",
     "retrieval: slow tests that exercise hybrid retrieval over the killer-demo corpus",
+    "unit: fast tests with no external services",
+    "smoke: lightweight repo-safe surface tests suitable for CI",
+    "integration: tests that require local services or stack-backed behavior",
+    "external: tests that require optional dependencies, models, or heavyweight environments",
 ]
