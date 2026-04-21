@@ -17,7 +17,7 @@ from landscape.retrieval.scoring import (
 WEIGHTS = ScoringWeights(
     alpha=1.0,
     beta=0.8,
-    gamma=0.4,
+    gamma=0.2,
     delta=0.3,
     decay_lambda=math.log(2) / (7 * 86400),  # true 7-day half-life
     reinforcement_cap=2.0,
@@ -87,7 +87,8 @@ def test_reinforcement_is_bounded():
 
 
 def test_score_bounded_by_max():
-    """Total score cannot exceed alpha + beta + gamma*cap + delta."""
+    """Total score cannot exceed (alpha + beta + delta) * (1 + gamma*cap) —
+    the multiplicative-gating ceiling."""
     now = datetime.now(UTC)
     ceiling = max_possible_score(WEIGHTS)
     # Pathologically good input
@@ -105,9 +106,11 @@ def test_score_bounded_by_max():
 
 
 def test_score_components_balanced():
-    """Reinforcement alone should not dominate vector+graph signals with
-    the default weights. γ·cap must be less than α+β."""
-    assert WEIGHTS.gamma * WEIGHTS.reinforcement_cap < WEIGHTS.alpha + WEIGHTS.beta
+    """Under multiplicative gating, reinforcement amplifies by at most
+    (1 + γ·cap). This cap must stay ≤ 1.5 so a reinforced irrelevant
+    candidate cannot outrank a fresh highly-relevant one by a wide margin."""
+    multiplier_ceiling = 1.0 + WEIGHTS.gamma * WEIGHTS.reinforcement_cap
+    assert 1.0 < multiplier_ceiling <= 1.5
 
 
 def test_vector_sim_clamped():
@@ -134,3 +137,55 @@ def test_log1p_specific_value_at_one_million():
     """Directly verify that log1p(1M) is ~14, not 1M. If someone ever
     replaces log1p with raw n, this test catches it before it ships."""
     assert 13.0 < math.log1p(1_000_000) < 15.0
+
+
+def test_multiplicative_reinforcement_amplifies():
+    """Two candidates with identical base signals but one reinforced:
+    reinforced candidate scores strictly higher under multiplicative gating."""
+    now = datetime.now(UTC)
+    reinforced = reinforcement_score(5, now, now, WEIGHTS)
+    cold = score_candidate(0.5, 1, 0.5, 0.0, WEIGHTS)
+    warm = score_candidate(0.5, 1, 0.5, reinforced, WEIGHTS)
+    assert warm > cold
+    # Amplification factor == 1 + gamma * reinforcement
+    assert abs(warm - cold * (1.0 + WEIGHTS.gamma * reinforced)) < 1e-9
+
+
+def test_cold_path_baseline_equals_base():
+    """Zero reinforcement must leave the base score unchanged."""
+    base = (
+        WEIGHTS.alpha * 0.5
+        + WEIGHTS.beta * (1.0 / (1.0 + 1))
+        + WEIGHTS.delta * 0.5
+    )
+    s = score_candidate(0.5, 1, 0.5, 0.0, WEIGHTS)
+    assert abs(s - base) < 1e-9
+
+
+def test_zero_base_stays_zero():
+    """Reinforcement can only amplify relevance, not fabricate it."""
+    now = datetime.now(UTC)
+    r = reinforcement_score(10_000_000, now, now, WEIGHTS)
+    # proximity is 1/(1+distance), so we can't zero it; test the two clampable signals.
+    s = score_candidate(0.0, 1_000_000, 0.0, r, WEIGHTS)
+    # beta * 1/(1+1e6) ≈ 8e-7; amplified by (1 + 0.2*2) = 1.4 → still ~1.1e-6
+    assert s < 2e-6
+
+
+def test_rumination_bound_preserved_under_gating():
+    """Pathologically hot + recent input stays bounded. This is the same
+    rumination guard as test_reinforcement_is_bounded, but exercised through
+    score_candidate to catch any future regression that removes the
+    reinforcement cap from the multiplicative path."""
+    now = datetime.now(UTC)
+    r = reinforcement_score(10_000_000, now, now, WEIGHTS)
+    s = score_candidate(
+        vector_sim=1.0,
+        graph_distance=0,
+        edge_confidence=1.0,
+        reinforcement=r,
+        weights=WEIGHTS,
+    )
+    ceiling = max_possible_score(WEIGHTS)
+    assert s <= ceiling + 1e-9
+    assert r <= WEIGHTS.reinforcement_cap

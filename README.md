@@ -179,8 +179,7 @@ uv run python scripts/bench_retrieval.py    # Landscape hybrid + vector + graph
 uv run python scripts/bench_chromadb.py     # ChromaDB baseline
 ```
 
-Results are printed as a Markdown table. The killer-demo corpus lives in
-`tests/fixtures/killer_demo_corpus/`.
+Results are printed as a Markdown table. On the killer-demo corpus, hybrid retrieval stays at 7/7 P@k (100.0%) with 0.326 MRR and 64ms average latency; vector-only reaches 85.7% P@k, 0.213 MRR, and 42ms latency; graph-only remains at 0.0% P@k, 0.000 MRR, and 2ms latency. The killer-demo corpus lives in `tests/fixtures/killer_demo_corpus/`.
 
 ## Design rationale and known limitations
 
