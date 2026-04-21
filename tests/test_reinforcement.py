@@ -182,3 +182,240 @@ async def test_reinforcement_bounded_after_many_queries(http_client, neo4j_drive
         f"{max_reinf}, expected close to cap={cap}. Feedback loop may be "
         f"inactive."
     )
+
+
+@pytest.mark.asyncio
+async def test_write_bumps_entity_access_count(neo4j_driver):
+    """Each merge_entity call increments access_count and updates
+    last_accessed. A cold-start entity created via merge_entity becomes
+    access_count=1 immediately; repeated upserts climb from there."""
+    from landscape.storage import neo4j_store
+
+    # Clean slate for this specific entity
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity {name: $n, type: $t}) DETACH DELETE e",
+            n="Reinforce Entity Probe",
+            t="Concept",
+        )
+
+    for _ in range(3):
+        await neo4j_store.merge_entity(
+            name="Reinforce Entity Probe",
+            entity_type="Concept",
+            source_doc="phase-3.5-test",
+            confidence=0.9,
+            model="test",
+            created_by="ingest",
+        )
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            "MATCH (e:Entity {name: $n}) RETURN e.access_count AS c, "
+            "e.last_accessed AS la",
+            n="Reinforce Entity Probe",
+        )
+        row = await result.single()
+
+    assert row is not None
+    assert row["c"] == 3
+    assert row["la"] is not None
+
+    # Cleanup
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity {name: $n}) DETACH DELETE e",
+            n="Reinforce Entity Probe",
+        )
+
+
+@pytest.mark.asyncio
+async def test_write_bumps_relation_access_count(neo4j_driver):
+    """Each upsert_relation call should increment access_count and update
+    last_accessed on the live edge."""
+    from landscape.storage import neo4j_store
+
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (:Entity {name: $s})-[r:RELATES_TO {type: $t}]->(:Entity {name: $o}) "
+            "DELETE r",
+            s="Reinforce Relation Subj",
+            t="USES",
+            o="Reinforce Relation Obj",
+        )
+        await session.run(
+            "MATCH (e:Entity {name: $n}) DETACH DELETE e",
+            n="Reinforce Relation Subj",
+        )
+        await session.run(
+            "MATCH (e:Entity {name: $n}) DETACH DELETE e",
+            n="Reinforce Relation Obj",
+        )
+
+    await neo4j_store.merge_entity(
+        name="Reinforce Relation Subj",
+        entity_type="Concept",
+        source_doc="phase-3.5-test",
+        confidence=0.9,
+        model="test",
+        created_by="ingest",
+    )
+    await neo4j_store.merge_entity(
+        name="Reinforce Relation Obj",
+        entity_type="Concept",
+        source_doc="phase-3.5-test",
+        confidence=0.9,
+        model="test",
+        created_by="ingest",
+    )
+
+    for _ in range(3):
+        await neo4j_store.upsert_relation(
+            "Reinforce Relation Subj",
+            "Reinforce Relation Obj",
+            "USES",
+            0.9,
+            "phase-3.5-test",
+            created_by="ingest",
+        )
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            "MATCH (:Entity {name: $s})-[r:RELATES_TO {type: $t}]->(:Entity {name: $o}) "
+            "RETURN coalesce(r.access_count, 0) AS c, r.last_accessed AS la",
+            s="Reinforce Relation Subj",
+            t="USES",
+            o="Reinforce Relation Obj",
+        )
+        row = await result.single()
+
+    assert row is not None
+    assert row["c"] == 3
+    assert row["la"] is not None
+
+
+@pytest.mark.asyncio
+async def test_reasserted_fact_outranks_cold_fact(
+    http_client, neo4j_driver, monkeypatch
+):
+    """A repeatedly reasserted fact should rank above an equivalent cold fact."""
+    from landscape.embeddings import encoder
+    from landscape.storage import neo4j_store, qdrant_store
+    from landscape.config import settings
+
+    names = ["Reinforce Subject", "Warm Stack", "Cold Stack"]
+    subject_vector = [1.0] + [0.0] * (settings.embedding_dims - 1)
+
+    monkeypatch.setattr(encoder, "embed_query", lambda _text: subject_vector)
+
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=names,
+        )
+
+    subject_id = await neo4j_store.merge_entity(
+        name="Reinforce Subject",
+        entity_type="Concept",
+        source_doc="phase-3.5-test",
+        confidence=0.9,
+        model="test",
+        created_by="ingest",
+    )
+    await neo4j_store.merge_entity(
+        name="Warm Stack",
+        entity_type="Concept",
+        source_doc="phase-3.5-test",
+        confidence=0.9,
+        model="test",
+        created_by="ingest",
+    )
+    await neo4j_store.merge_entity(
+        name="Cold Stack",
+        entity_type="Concept",
+        source_doc="phase-3.5-test",
+        confidence=0.9,
+        model="test",
+        created_by="ingest",
+    )
+
+    fixed_ts = "2026-04-20T00:00:00+00:00"
+    await qdrant_store.upsert_entity(
+        neo4j_element_id=subject_id,
+        name="Reinforce Subject",
+        entity_type="Concept",
+        source_doc="phase-3.5-test",
+        timestamp=fixed_ts,
+        vector=subject_vector,
+    )
+
+    async with neo4j_driver.session() as session:
+        await session.run(
+            """
+            MATCH (e:Entity)
+            WHERE e.name IN ['Reinforce Subject', 'Warm Stack', 'Cold Stack']
+            SET e.access_count = 1,
+                e.last_accessed = datetime($ts)
+            """,
+            ts=fixed_ts,
+        )
+
+    await neo4j_store.upsert_relation(
+        "Reinforce Subject",
+        "Cold Stack",
+        "RELATED_TO",
+        0.9,
+        "phase-3.5-test",
+        created_by="ingest",
+    )
+    for _ in range(4):
+        await neo4j_store.upsert_relation(
+            "Reinforce Subject",
+            "Warm Stack",
+            "RELATED_TO",
+            0.9,
+            "phase-3.5-test",
+            created_by="ingest",
+        )
+
+    # Normalize recency so the ranking delta comes from access_count
+    # reinforcement, not a fresher last_accessed timestamp on the warm edge.
+    async with neo4j_driver.session() as session:
+        await session.run(
+            """
+            MATCH (:Entity {name: 'Reinforce Subject'})-[r:RELATES_TO {type: 'RELATED_TO'}]->(:Entity)
+            WHERE r.source_doc = 'phase-3.5-test'
+              AND endNode(r).name IN ['Warm Stack', 'Cold Stack']
+            SET r.last_accessed = datetime($ts)
+            """,
+            ts=fixed_ts,
+        )
+
+    response = await http_client.post(
+        "/query",
+        json={
+            "text": "Which fact is more established?",
+            "hops": 1,
+            "limit": 10,
+            "reinforce": False,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    names_in_order = [r["name"] for r in body["results"]]
+    warm = next(r for r in body["results"] if r["name"] == "Warm Stack")
+    cold = next(r for r in body["results"] if r["name"] == "Cold Stack")
+
+    assert warm["distance"] == cold["distance"] == 1
+    assert abs(warm["vector_sim"] - cold["vector_sim"]) < 1e-9
+    assert warm["reinforcement"] > cold["reinforcement"]
+    assert warm["score"] > cold["score"]
+    assert names_in_order.index("Warm Stack") < names_in_order.index("Cold Stack"), (
+        f"Expected warm to rank above cold; got order {names_in_order}"
+    )
+
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=names,
+        )

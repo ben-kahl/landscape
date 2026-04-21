@@ -62,7 +62,7 @@ class Settings(BaseSettings):
 
     scoring_alpha: float = 1.0  # vector similarity
     scoring_beta: float = 0.8  # graph proximity
-    scoring_gamma: float = 0.4  # reinforcement
+    scoring_gamma: float = 0.2  # reinforcement (multiplicative, was 0.4 additive)
     scoring_delta: float = 0.3  # edge confidence
     # decay_lambda chosen so exp(-lambda * 7 days) == 0.5 — a true 7-day half-life
     decay_lambda: float = math.log(2) / (7 * 86400)
