@@ -72,6 +72,30 @@ graph TD
 | Phase 3.5 hardening | In progress: ranking tuning, benchmark hardening, relation normalization, resolver improvements |
 | Phase 4 | Next major feature area: expanded ingestion paths for documents, integrations, conversations, and multimodal memory |
 
+## Phase 3.5 Exit Criteria
+
+Phase 3.5 is the transition point before phase 4. Do not start phase 4 scope until this gate is satisfied.
+
+### CI Required
+
+- `uv sync --extra dev`
+- `uv run ruff check src tests`
+- `uv run pytest -m "unit or smoke"`
+
+### Local Required
+
+- `docker compose up -d`
+- `uv run pytest -m "integration and not external"`
+- `uv run python scripts/demo_mcp_session.py`
+- `uv run python scripts/demo_langchain_agent.py`
+- `uv sync --extra dev --extra bench`
+- `uv run python scripts/bench_retrieval.py` and `uv run python scripts/bench_chromadb.py` run successfully.
+
+### Exit Condition
+
+- Phase 3.5 is complete only when every CI Required command passes in the configured CI environment and every Local Required check passes locally.
+- That completion point is the handoff into phase 4.
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design rationale, data
 model details, benchmark notes, and known limitations.
 
