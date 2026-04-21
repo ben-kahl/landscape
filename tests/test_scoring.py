@@ -7,12 +7,16 @@ If any test here fails, retrieval is at risk of rumination collapse.
 import math
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from landscape.retrieval.scoring import (
     ScoringWeights,
     max_possible_score,
     reinforcement_score,
     score_candidate,
 )
+
+pytestmark = pytest.mark.unit
 
 WEIGHTS = ScoringWeights(
     alpha=1.0,

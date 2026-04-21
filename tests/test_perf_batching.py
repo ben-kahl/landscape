@@ -6,6 +6,8 @@ import pytest
 
 from landscape.config import EMBEDDING_MODEL_DIMS, Settings
 
+pytestmark = pytest.mark.unit
+
 
 def test_embedding_model_dims_map_contains_known_models():
     assert EMBEDDING_MODEL_DIMS["nomic-ai/nomic-embed-text-v1.5"] == 768

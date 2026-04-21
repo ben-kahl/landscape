@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = [pytest.mark.integration, pytest.mark.external]
+
 
 @pytest.mark.asyncio
 async def test_string_synonym_short_circuits(http_client):

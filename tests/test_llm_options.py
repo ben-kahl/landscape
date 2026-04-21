@@ -6,7 +6,7 @@ import pytest
 from landscape.config import LLMProfile
 from landscape.extraction import llm
 
-pytestmark = pytest.mark.retrieval
+pytestmark = pytest.mark.unit
 
 
 class RecordingClient:

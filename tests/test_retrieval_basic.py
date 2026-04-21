@@ -21,6 +21,7 @@ async def _clear(neo4j_driver, title: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_query_returns_seeded_entity(http_client, neo4j_driver):
     """A query for an entity name should return that entity as a top result."""
     await _clear(neo4j_driver, BASIC_TITLE)
@@ -39,6 +40,7 @@ async def test_query_returns_seeded_entity(http_client, neo4j_driver):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_query_finds_multihop_target(http_client, neo4j_driver):
     """2-hop expansion: ask about Atlas, the answer path includes Sarah."""
     await _clear(neo4j_driver, BASIC_TITLE)
@@ -59,6 +61,7 @@ async def test_query_finds_multihop_target(http_client, neo4j_driver):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_query_reinforces_touched_entities(http_client, neo4j_driver):
     """After a query, the touched entities themselves should have access_count > 0."""
     title = "retrieval-reinforce-test"
@@ -95,6 +98,7 @@ async def test_query_reinforces_touched_entities(http_client, neo4j_driver):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_temporal_filter_excludes_superseded(neo4j_driver):
     """Directly construct a superseded/valid edge pair in Neo4j and verify
     that bfs_expand — the temporal filter at the heart of graph retrieval —
@@ -167,6 +171,7 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_retrieval_includes_path_edge_quantities(monkeypatch):
     from landscape.retrieval import query
 

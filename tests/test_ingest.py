@@ -6,7 +6,7 @@ from landscape.extraction.schema import Extraction
 TEST_DOC = "Alice leads Project Atlas at Acme Corp. Project Atlas uses PostgreSQL for storage."
 TEST_TITLE = "test-doc-integration"
 
-
+@pytest.mark.unit
 def test_extraction_schema_accepts_quantified_relation_fields():
     extraction = Extraction.model_validate(
         {
@@ -46,7 +46,7 @@ def test_extraction_schema_accepts_quantified_relation_fields():
     assert relation.quantity_kind == "duration"
     assert relation.time_scope == "today"
 
-
+@pytest.mark.unit
 def test_extraction_prompt_mentions_quantity_fields():
     from landscape.extraction import llm
 
@@ -59,8 +59,8 @@ def test_extraction_prompt_mentions_quantity_fields():
     assert "10 hours" in prompt
     assert "three bikes" in prompt
 
-
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdrant_client):
     # Clear any prior state for this test title
     async with neo4j_driver.session() as session:
@@ -147,6 +147,7 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_ingest_idempotent(http_client):
     # First ingest
     r1 = await http_client.post("/ingest", json={"text": TEST_DOC, "title": TEST_TITLE})
@@ -166,6 +167,7 @@ async def test_ingest_idempotent(http_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     from landscape import pipeline
     from landscape.extraction.schema import ExtractedEntity, ExtractedRelation

@@ -1,6 +1,8 @@
 """Supersession and temporal chain integration tests."""
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 async def _clear_doc(neo4j_driver, title: str) -> None:
     async with neo4j_driver.session() as session:

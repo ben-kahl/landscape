@@ -6,6 +6,8 @@ before each test, so tests are fully independent.
 """
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 async def test_add_entity_creates_when_no_match(http_client, neo4j_driver):

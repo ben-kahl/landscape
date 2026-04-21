@@ -13,6 +13,8 @@ import pytest
 
 from landscape.config import settings
 
+pytestmark = pytest.mark.integration
+
 REINF_DOC = (
     "Aurora Labs is a robotics startup headquartered in Portland. "
     "Aurora Labs uses PostgreSQL as its telemetry datastore. "

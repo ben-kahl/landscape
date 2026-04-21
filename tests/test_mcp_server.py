@@ -17,6 +17,8 @@ from contextlib import asynccontextmanager
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
+pytestmark = pytest.mark.integration
+
 
 # ---------------------------------------------------------------------------
 # Fixture: connected MCP client for the landscape server

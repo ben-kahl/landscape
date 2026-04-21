@@ -37,11 +37,17 @@ async def _isolated_test(request):
     client singletons. ASGITransport doesn't trigger FastAPI lifespan
     events, so those singletons would otherwise leak across event loops.
 
-    **Opt-out:** tests marked @pytest.mark.retrieval skip the pre-test
-    wipe. The killer-demo corpus fixture is expensive (~40s of LLM
-    extraction over 7 docs) and amortizes across the 4 retrieval tests
-    via its own module-level `_INGESTED` flag. It wipes once on first
-    use and shares state across the marker's tests."""
+    **Opt-out:** tests marked ``unit`` or ``smoke`` skip stack-backed
+    isolation entirely so GitHub-safe tests can run without Neo4j/Qdrant.
+    Tests marked @pytest.mark.retrieval skip the pre-test wipe. The
+    killer-demo corpus fixture is expensive (~40s of LLM extraction over
+    7 docs) and amortizes across the 4 retrieval tests via its own
+    module-level `_INGESTED` flag. It wipes once on first use and shares
+    state across the marker's tests."""
+    if request.node.get_closest_marker("unit") or request.node.get_closest_marker("smoke"):
+        yield
+        return
+
     from landscape.storage import neo4j_store, qdrant_store
 
     if not request.node.get_closest_marker("retrieval"):

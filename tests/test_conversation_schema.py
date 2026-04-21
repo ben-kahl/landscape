@@ -1,6 +1,8 @@
 """Tests for :Conversation / :Turn node types and their linking edges."""
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 async def test_merge_conversation_creates(http_client, neo4j_driver):

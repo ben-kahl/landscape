@@ -12,7 +12,7 @@ import pytest
 # Path 1 & 2 tests — no encoder needed
 # ---------------------------------------------------------------------------
 
-
+@pytest.mark.unit
 def test_canonical_passthrough():
     """Exact canonical type returns (canonical, 1.0)."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type
@@ -21,7 +21,7 @@ def test_canonical_passthrough():
     assert result == "Person"
     assert score == 1.0
 
-
+@pytest.mark.unit
 def test_case_insensitive_canonical():
     """Uppercase canonical input still returns canonical with score 1.0."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type
@@ -30,7 +30,7 @@ def test_case_insensitive_canonical():
     assert result == "Person"
     assert score == 1.0
 
-
+@pytest.mark.unit
 def test_case_insensitive_canonical_all_types():
     """All 8 canonical types pass through regardless of case."""
     from landscape.extraction.entity_type_coercion import ENTITY_TYPE_VOCAB, coerce_entity_type
@@ -40,7 +40,7 @@ def test_case_insensitive_canonical_all_types():
         assert result == canonical, f"Expected {canonical!r}, got {result!r}"
         assert score == 1.0
 
-
+@pytest.mark.unit
 def test_synonym_match_company():
     """'Company' maps to Organization via synonym map."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type
@@ -49,7 +49,7 @@ def test_synonym_match_company():
     assert result == "Organization"
     assert score == 1.0
 
-
+@pytest.mark.unit
 def test_synonym_match_individual():
     """'Individual' maps to Person via synonym map."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type
@@ -58,7 +58,7 @@ def test_synonym_match_individual():
     assert result == "Person"
     assert score == 1.0
 
-
+@pytest.mark.unit
 def test_synonym_match_framework():
     """'Framework' maps to Technology via synonym map."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type
@@ -67,7 +67,7 @@ def test_synonym_match_framework():
     assert result == "Technology"
     assert score == 1.0
 
-
+@pytest.mark.unit
 def test_subtype_not_set_when_canonical_matches():
     """When input is already canonical, the subtype logic skips (canonical == input)."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type
@@ -84,6 +84,8 @@ def test_subtype_not_set_when_canonical_matches():
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.external
 async def test_embedding_coercion_specific_to_broad(http_client):
     """'SoftwareEngineer' should match Person via synonym map (covered by path 2).
     Verify it routes correctly through the coercion pipeline."""
@@ -97,6 +99,8 @@ async def test_embedding_coercion_specific_to_broad(http_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.external
 async def test_embedding_coercion_tech(http_client):
     """'DatabaseEngine' should embed close enough to Technology (>= 0.55)."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type
@@ -109,6 +113,8 @@ async def test_embedding_coercion_tech(http_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.external
 async def test_embedding_coercion_location(http_client):
     """'GeographicArea' should embed close enough to Location (>= 0.55)."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type
@@ -121,6 +127,8 @@ async def test_embedding_coercion_location(http_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.external
 async def test_low_similarity_passes_through(http_client):
     """Nonsense type with no close canonical match returns (raw, 0.0)."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type
@@ -131,6 +139,8 @@ async def test_low_similarity_passes_through(http_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.external
 async def test_empty_string_returns_fallback(http_client):
     """Empty string input returns a sensible fallback without raising."""
     from landscape.extraction.entity_type_coercion import coerce_entity_type

@@ -18,7 +18,7 @@ RETRIEVER_DOC = (
     "The Helios platform team uses PostgreSQL for telemetry storage."
 )
 
-
+@pytest.mark.unit
 def test_entity_document_renders_quantity_qualifiers():
     from landscape.retrieval.langchain_retriever import _entity_to_document
     from landscape.retrieval.query import RetrievedEntity
@@ -52,8 +52,8 @@ def test_entity_document_renders_quantity_qualifiers():
     assert "scope=last_month" in doc.page_content
     assert doc.metadata["path_edge_quantities"][0]["quantity_value"] == 10
 
-
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_langchain_retriever_returns_chunk_documents(monkeypatch):
     from landscape.retrieval import langchain_retriever
     from landscape.retrieval.query import RetrievalResult, RetrievedChunk
@@ -90,6 +90,7 @@ async def test_langchain_retriever_returns_chunk_documents(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_langchain_retriever_returns_documents(http_client):
     """ainvoke() should return a non-empty list of Documents with
     Landscape-specific metadata populated."""
@@ -142,6 +143,7 @@ async def test_langchain_retriever_returns_documents(http_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_langchain_retriever_sync_path_raises(http_client):
     """The sync _get_relevant_documents path must refuse to run — Landscape
     is async-only and a sync wrapper would either block the loop or spawn

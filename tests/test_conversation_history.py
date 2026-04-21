@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 async def test_get_conversation_detail_orders_turns_by_timestamp(http_client, neo4j_driver):

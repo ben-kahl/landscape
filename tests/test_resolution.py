@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 async def _clear_entity(neo4j_driver, name: str) -> None:
     async with neo4j_driver.session() as session:

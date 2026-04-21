@@ -21,6 +21,8 @@ import pathlib
 import pytest
 import pytest_asyncio
 
+pytestmark = [pytest.mark.integration, pytest.mark.external]
+
 CORPUS_DIR = pathlib.Path(__file__).parent / "fixtures" / "personal_memory_corpus"
 TITLE_PREFIX = "personal-memory:"
 

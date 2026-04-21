@@ -10,6 +10,8 @@ Verifies that:
 """
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 # ---------------------------------------------------------------------------
 # Test 1: no session/turn — backwards compat

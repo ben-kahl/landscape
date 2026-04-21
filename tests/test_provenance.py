@@ -1,6 +1,8 @@
 """Provenance field tests for merge_entity and upsert_relation."""
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 async def test_merge_entity_default_provenance(http_client, neo4j_driver):
