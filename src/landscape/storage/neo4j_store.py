@@ -578,12 +578,15 @@ async def upsert_relation(
                 WHERE elementId(r) = $rid
                 SET r.source_docs = $source_docs,
                     r.confidence = $conf,
+                    r.access_count = coalesce(r.access_count, 0) + 1,
+                    r.last_accessed = $now,
                     r.subtype = $subtype
                 """,
                 rid=exact["rid"],
                 source_docs=new_docs,
                 conf=new_conf,
                 subtype=new_subtype,
+                now=now,
             )
             return ("reinforced", exact["rid"])
 
@@ -674,8 +677,8 @@ async def upsert_relation(
                     valid_from: $now,
                     valid_until: null,
                     supersedes_edge_id: $old_rid,
-                    access_count: 0,
-                    last_accessed: null,
+                    access_count: 1,
+                    last_accessed: $now,
                     created_by: $created_by,
                     session_id: $session_id,
                     turn_id: $turn_id
@@ -712,8 +715,8 @@ async def upsert_relation(
                 source_docs: $source_docs,
                 valid_from: $now,
                 valid_until: null,
-                access_count: 0,
-                last_accessed: null,
+                access_count: 1,
+                last_accessed: $now,
                 created_by: $created_by,
                 session_id: $session_id,
                 turn_id: $turn_id
