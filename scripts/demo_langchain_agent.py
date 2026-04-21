@@ -116,9 +116,25 @@ async def _search_memory(query: str) -> str:
     docs = await retriever.ainvoke(query)
     if not docs:
         return "No results found in memory."
-    lines = ["Found the following in memory:"]
-    for doc in docs:
-        lines.append(f"  - {doc.page_content}")
+    graph_docs = [doc for doc in docs if doc.metadata.get("kind") == "entity"]
+    chunk_docs = [doc for doc in docs if doc.metadata.get("kind") == "chunk"]
+    other_docs = [
+        doc
+        for doc in docs
+        if doc.metadata.get("kind") not in {"entity", "chunk"}
+    ]
+
+    lines = [
+        "Current-state graph evidence (authoritative):",
+    ]
+    for doc in graph_docs or other_docs:
+        lines.append(f"  - [GRAPH] {doc.page_content}")
+
+    if chunk_docs:
+        lines.append("Historical chunk context (secondary):")
+        for doc in chunk_docs:
+            lines.append(f"  - [CHUNK] {doc.page_content}")
+
     return "\n".join(lines)
 
 
