@@ -28,6 +28,8 @@ class QueryResultItem(BaseModel):
     edge_confidence: float
     score: float
     path_edge_types: list[str]
+    path_edge_subtypes: list[str | None] = Field(default_factory=list)
+    path_edge_quantities: list[dict[str, object | None]] = Field(default_factory=list)
 
 
 class QueryChunkItem(BaseModel):
@@ -76,6 +78,8 @@ async def query_endpoint(req: QueryRequest) -> QueryResponse:
                 edge_confidence=r.edge_confidence,
                 score=r.score,
                 path_edge_types=r.path_edge_types,
+                path_edge_subtypes=r.path_edge_subtypes,
+                path_edge_quantities=r.path_edge_quantities,
             )
             for r in result.results
         ],

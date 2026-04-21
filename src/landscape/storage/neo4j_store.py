@@ -510,6 +510,10 @@ async def upsert_relation(
     session_id: str | None = None,
     turn_id: str | None = None,
     subtype: str | None = None,
+    quantity_value: float | str | None = None,
+    quantity_unit: str | None = None,
+    quantity_kind: str | None = None,
+    time_scope: str | None = None,
 ) -> tuple[str, str | None]:
     """
     Returns (outcome, relation_id) where outcome is "created" | "reinforced" | "superseded".
@@ -553,7 +557,11 @@ async def upsert_relation(
             RETURN elementId(r) AS rid,
                    r.source_docs AS source_docs,
                    r.confidence AS conf,
-                   r.subtype AS subtype
+                   r.subtype AS subtype,
+                   r.quantity_value AS quantity_value,
+                   r.quantity_unit AS quantity_unit,
+                   r.quantity_kind AS quantity_kind,
+                   r.time_scope AS time_scope
             """,
             subject=subject_name,
             object=object_name,
@@ -572,6 +580,16 @@ async def upsert_relation(
             new_conf = max(exact["conf"] or confidence, confidence)
             # Subtype: newer non-null value wins; null input preserves existing.
             new_subtype = subtype if subtype is not None else exact["subtype"]
+            new_quantity_value = (
+                quantity_value if quantity_value is not None else exact["quantity_value"]
+            )
+            new_quantity_unit = (
+                quantity_unit if quantity_unit is not None else exact["quantity_unit"]
+            )
+            new_quantity_kind = (
+                quantity_kind if quantity_kind is not None else exact["quantity_kind"]
+            )
+            new_time_scope = time_scope if time_scope is not None else exact["time_scope"]
             await session.run(
                 """
                 MATCH ()-[r:RELATES_TO]->()
@@ -580,13 +598,21 @@ async def upsert_relation(
                     r.confidence = $conf,
                     r.access_count = coalesce(r.access_count, 0) + 1,
                     r.last_accessed = $now,
-                    r.subtype = $subtype
+                    r.subtype = $subtype,
+                    r.quantity_value = $quantity_value,
+                    r.quantity_unit = $quantity_unit,
+                    r.quantity_kind = $quantity_kind,
+                    r.time_scope = $time_scope
                 """,
                 rid=exact["rid"],
                 source_docs=new_docs,
                 conf=new_conf,
                 subtype=new_subtype,
                 now=now,
+                quantity_value=new_quantity_value,
+                quantity_unit=new_quantity_unit,
+                quantity_kind=new_quantity_kind,
+                time_scope=new_time_scope,
             )
             return ("reinforced", exact["rid"])
 
@@ -647,9 +673,9 @@ async def upsert_relation(
         if conflict:
             # Mark old edge as superseded (old edge keeps its original provenance)
             await session.run(
-                f"""
-                MATCH (s:Entity {{name: $subject}})
-                      -[old:RELATES_TO {{type: $rel_type}}]->(other:Entity)
+                """
+                MATCH (s:Entity {name: $subject})
+                      -[old:RELATES_TO {type: $rel_type}]->(other:Entity)
                 WHERE old.valid_until IS NULL
                   AND elementId(old) = $old_rid
                 SET old.valid_until = $now, old.superseded_by_doc = $source_doc
@@ -681,7 +707,11 @@ async def upsert_relation(
                     last_accessed: $now,
                     created_by: $created_by,
                     session_id: $session_id,
-                    turn_id: $turn_id
+                    turn_id: $turn_id,
+                    quantity_value: $quantity_value,
+                    quantity_unit: $quantity_unit,
+                    quantity_kind: $quantity_kind,
+                    time_scope: $time_scope
                 }]->(o)
                 RETURN elementId(r) AS rid
                 """,
@@ -696,6 +726,10 @@ async def upsert_relation(
                 created_by=created_by,
                 session_id=session_id,
                 turn_id=turn_id,
+                quantity_value=quantity_value,
+                quantity_unit=quantity_unit,
+                quantity_kind=quantity_kind,
+                time_scope=time_scope,
             )
             new_rec = await result2.single()
             return ("superseded", new_rec["rid"] if new_rec else None)
@@ -719,7 +753,11 @@ async def upsert_relation(
                 last_accessed: $now,
                 created_by: $created_by,
                 session_id: $session_id,
-                turn_id: $turn_id
+                turn_id: $turn_id,
+                quantity_value: $quantity_value,
+                quantity_unit: $quantity_unit,
+                quantity_kind: $quantity_kind,
+                time_scope: $time_scope
             }]->(o)
             RETURN elementId(r) AS rid
             """,
@@ -733,6 +771,10 @@ async def upsert_relation(
             created_by=created_by,
             session_id=session_id,
             turn_id=turn_id,
+            quantity_value=quantity_value,
+            quantity_unit=quantity_unit,
+            quantity_kind=quantity_kind,
+            time_scope=time_scope,
         )
         record = await result.single()
         return ("created", record["rid"] if record else None)
@@ -801,6 +843,12 @@ async def bfs_expand(
         [r IN rels | elementId(r)] AS edge_ids,
         [r IN rels | r.type] AS edge_types,
         [r IN rels | r.subtype] AS edge_subtypes,
+        [r IN rels | {{
+            quantity_value: r.quantity_value,
+            quantity_unit: r.quantity_unit,
+            quantity_kind: r.quantity_kind,
+            time_scope: r.time_scope
+        }}] AS edge_quantities,
         [r IN rels | coalesce(r.confidence, 0.0)] AS edge_confidences,
         [r IN rels | coalesce(r.access_count, 0)] AS edge_access_counts,
         [r IN rels | r.last_accessed] AS edge_last_accessed

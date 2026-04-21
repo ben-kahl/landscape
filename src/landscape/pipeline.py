@@ -188,6 +188,10 @@ async def ingest(
             session_id=session_id,
             turn_id=turn_id,
             subtype=canonical_subtype,
+            quantity_value=relation.quantity_value,
+            quantity_unit=relation.quantity_unit,
+            quantity_kind=relation.quantity_kind,
+            time_scope=relation.time_scope,
         )
         if outcome == "created":
             relations_created += 1
