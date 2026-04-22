@@ -52,7 +52,7 @@ def test_should_auto_ingest_turn_rejects_blank_text():
 async def test_ingest_conversation_turn_creates_document_and_links_turn(
     http_client, neo4j_driver
 ):
-    from landscape.conversation_ingestion import ConversationTurn
+    from landscape.conversation_ingestion import ConversationTurn, build_conversation_title
 
     turn = ConversationTurn(
         session_id="conv-4",
@@ -61,7 +61,8 @@ async def test_ingest_conversation_turn_creates_document_and_links_turn(
         text="Alice joined Beacon Labs.",
     )
 
-    result = await ingest_conversation_turn(turn, title="conv-4:t1")
+    expected_title = build_conversation_title(turn)
+    result = await ingest_conversation_turn(turn)
 
     assert isinstance(result, ConversationIngestResult)
     assert result.already_existed is False
@@ -69,9 +70,11 @@ async def test_ingest_conversation_turn_creates_document_and_links_turn(
     async with neo4j_driver.session() as session:
         doc_link_rec = await (
             await session.run(
-                "MATCH (d:Document {title: 'conv-4:t1'})-[:INGESTED_IN]->"
+                "MATCH (d:Document {title: $title})-[:INGESTED_IN]->"
                 "(t:Turn {id: 'conv-4:t1'})"
                 " RETURN count(*) AS cnt"
+                ,
+                {"title": expected_title},
             )
         ).single()
         assert doc_link_rec["cnt"] == 1, "Conversation turn ingest did not link Document to Turn"
