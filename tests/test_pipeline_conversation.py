@@ -14,6 +14,39 @@ pytestmark = pytest.mark.integration
 
 
 # ---------------------------------------------------------------------------
+# Conversation ingestion primitives
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+def test_build_conversation_title_is_stable():
+    from landscape.conversation_ingestion import ConversationTurn, build_conversation_title
+
+    turn = ConversationTurn(
+        session_id="sess-1",
+        turn_id="t-7",
+        role=" User ",
+        text="Alice moved to Beacon.",
+    )
+
+    assert build_conversation_title(turn) == "conversation:sess-1:t-7:user"
+
+
+@pytest.mark.smoke
+def test_should_auto_ingest_turn_rejects_blank_text():
+    from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
+
+    turn = ConversationTurn(
+        session_id="sess-1",
+        turn_id="t-7",
+        role="user",
+        text="   ",
+    )
+
+    assert should_auto_ingest_turn(turn, seen_fingerprints=set()) is False
+
+
+# ---------------------------------------------------------------------------
 # Test 1: no session/turn — backwards compat
 # ---------------------------------------------------------------------------
 
