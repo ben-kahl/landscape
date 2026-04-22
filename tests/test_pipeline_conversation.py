@@ -10,6 +10,8 @@ Verifies that:
 """
 import pytest
 
+from landscape.conversation_ingestion import ConversationIngestResult, ingest_conversation_turn
+
 pytestmark = pytest.mark.integration
 
 
@@ -44,6 +46,35 @@ def test_should_auto_ingest_turn_rejects_blank_text():
     )
 
     assert should_auto_ingest_turn(turn, seen_fingerprints=set()) is False
+
+
+@pytest.mark.asyncio
+async def test_ingest_conversation_turn_creates_document_and_links_turn(
+    http_client, neo4j_driver
+):
+    from landscape.conversation_ingestion import ConversationTurn
+
+    turn = ConversationTurn(
+        session_id="conv-4",
+        turn_id="t1",
+        role="user",
+        text="Alice joined Beacon Labs.",
+    )
+
+    result = await ingest_conversation_turn(turn, title="conv-4:t1")
+
+    assert isinstance(result, ConversationIngestResult)
+    assert result.already_existed is False
+
+    async with neo4j_driver.session() as session:
+        doc_link_rec = await (
+            await session.run(
+                "MATCH (d:Document {title: 'conv-4:t1'})-[:INGESTED_IN]->"
+                "(t:Turn {id: 'conv-4:t1'})"
+                " RETURN count(*) AS cnt"
+            )
+        ).single()
+        assert doc_link_rec["cnt"] == 1, "Conversation turn ingest did not link Document to Turn"
 
 
 # ---------------------------------------------------------------------------
