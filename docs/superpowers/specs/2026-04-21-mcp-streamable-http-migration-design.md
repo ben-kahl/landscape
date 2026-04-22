@@ -1,206 +1,284 @@
-# MCP Streamable HTTP Migration Design
+# Embedded MCP Streamable HTTP Migration Design
 
 ## Goal
 
-Replace Landscape's proof-of-concept stdio MCP server with a streamable HTTP MCP server as the only supported transport, so all clients and subagents can connect to one long-lived shared server instance instead of spawning one subprocess per client.
+Replace Landscape's proof-of-concept stdio MCP server with a streamable HTTP MCP server mounted inside the existing FastAPI application, making the FastAPI app the single long-lived shared runtime for both API and MCP access.
 
-## Why This Slice Comes First
+## Why This Direction
 
-Automatic conversation ingestion is easier to implement on a shared long-lived MCP server than on the current stdio process-per-client model. The transport migration is therefore the correct first slice:
+The project already has a long-lived FastAPI app in `src/landscape/main.py` with a real lifespan hook that initializes embeddings and Qdrant collections and closes storage clients on shutdown. Embedding MCP into that app is the better long-term architecture because it consolidates process lifecycle, avoids duplicate startup work, and creates one shared server surface for future background tasks such as automatic conversation ingestion.
 
-- it removes the per-subagent server spawning problem
-- it creates a single process boundary for future background ingestion work
-- it avoids layering new lifecycle behavior on top of a transport we already intend to replace
-
-Auto conversation ingestion is explicitly deferred until after this migration is complete.
+The user explicitly prefers taking the larger cut now instead of carrying forward a separate MCP process model that would likely be revisited later.
 
 ## Current State
 
-Landscape currently exposes MCP through `src/landscape/mcp_server.py` using `FastMCP("landscape")` and a blocking `mcp.run(transport="stdio")` entrypoint. In practice this means:
+Landscape currently has two separate server concepts:
 
-- every client process launches its own `landscape-mcp` subprocess
-- Codex subagents each get a separate Landscape MCP server process
-- there is no shared in-memory state across clients
-- any future background work would be tied to short-lived client-owned processes
+- the FastAPI application in `src/landscape/main.py`
+- the MCP server in `src/landscape/mcp_server.py`
 
-This was acceptable for a proof of concept but is the wrong transport for a shared memory backend.
+The MCP server currently uses:
+
+- `FastMCP("landscape")`
+- tool registration and startup in one file
+- `mcp.run(transport="stdio")`
+
+That creates a client-owned subprocess model:
+
+- every MCP client process spawns its own Landscape MCP subprocess
+- Codex subagents each get their own server instance
+- in-memory state is not shared across clients
+- future background work would be process-local and fragmented
+
+That transport model is no longer aligned with the role of Landscape as a shared memory backend.
 
 ## Constraints
 
-- The migration should use the transport support already provided by the installed MCP library instead of building a custom server layer.
-- The existing tool surface and semantics should remain stable: `search`, `remember`, `add_entity`, `add_relation`, `graph_query`, `status`, and `conversation_history`.
-- The cutover should be strict: streamable HTTP becomes the supported transport and stdio support is removed from Landscape-facing docs and entrypoints.
-- The implementation should not require embedding MCP into the existing FastAPI app. That is a larger architecture choice than this migration needs.
-
-## Transport Choice
-
-The installed `FastMCP` version already supports:
-
-- `stdio`
-- `sse`
-- `streamable-http`
-
-Landscape should adopt `streamable-http` as the only supported MCP transport.
-
-### Why not SSE
-
-SSE would still require a network server, but it is operationally worse for this use case:
-
-- separate handshake/message endpoints
-- weaker fit for bidirectional session-style traffic
-- no reason to choose it when the library already supports streamable HTTP directly
-
-### Why not keep stdio as a fallback
-
-Keeping stdio around would reduce immediate friction, but it would also preserve two deployment modes, two docs paths, and two behavior models right when the project is trying to harden its interfaces before phase 4. The user explicitly prefers taking the painful cut now to avoid accumulating transport debt.
+- Streamable HTTP becomes the only supported MCP transport.
+- The existing MCP tool surface must remain stable: `search`, `remember`, `add_entity`, `add_relation`, `graph_query`, `status`, and `conversation_history`.
+- The FastAPI app should remain the single hosted ASGI application after the migration.
+- The migration should reuse the installed MCP library's built-in streamable HTTP ASGI app rather than reimplementing MCP protocol handling manually.
+- Automatic conversation ingestion is out of scope for this slice and will be revisited after transport migration.
 
 ## Recommended Architecture
 
-### 1. Separate MCP app construction from server startup
+### 1. Split MCP app construction from runtime startup
 
-Landscape should have one place that constructs and registers the `FastMCP` app and its tools. Startup logic should be a thin layer above that.
+Landscape should move away from a single file that both defines tools and starts the server. Instead it should have:
 
-This means splitting today's single-file pattern into:
+- an MCP app module responsible only for constructing `FastMCP("landscape")` and registering tools
+- the FastAPI application module responsible for mounting that MCP ASGI app
 
-- an MCP app module that owns `FastMCP("landscape")` and all tool registration
-- a small server entrypoint that runs that app using streamable HTTP
+This keeps tool definitions transport-agnostic and makes the resulting structure easier to test.
 
-That keeps transport concerns out of tool definitions and makes the app easier to test.
+### 2. Mount streamable HTTP MCP inside FastAPI
 
-### 2. Expose one long-lived HTTP MCP server
+The FastAPI app in `src/landscape/main.py` should mount the MCP streamable HTTP ASGI app under a dedicated path such as:
 
-The canonical runtime becomes a long-lived process started explicitly by the developer or via Docker/Compose in a later follow-up. For this migration, the minimum viable shape is:
+- `/mcp`
 
-`uv run landscape-mcp --host 127.0.0.1 --port 8001`
+The mounted MCP app should come from:
 
-Internally, this should call:
+- `mcp.streamable_http_app()`
 
-`mcp.run(transport="streamable-http")`
+This yields a single long-lived server process with one shared lifecycle while still preserving a clean protocol boundary between API routes and MCP routes.
 
-using the MCP library's built-in HTTP app and uvicorn handling.
+### 3. Keep MCP and API logic separate even though they share one host app
 
-### 3. Keep MCP separate from the FastAPI app
+Embedding MCP into FastAPI does not mean mixing the API handlers and MCP tool handlers together. The boundary should be:
 
-The Landscape API server and the MCP server should remain separate processes in this slice.
+- FastAPI routes stay in the API modules
+- MCP tools stay in MCP-specific modules
+- `main.py` is responsible only for wiring them into one ASGI application
 
-Reasons:
+That preserves conceptual separation while getting the operational benefits of one process.
 
-- lower migration risk
-- clearer operational debugging
-- fewer cross-lifecycle surprises
-- avoids coupling MCP transport rollout to the existing FastAPI app
+## Why Embedding Is Better Here
 
-If we later want one unified application surface, that can be a separate design and migration.
+### Pros
+
+- One runtime owns initialization and shutdown.
+  The existing FastAPI lifespan already loads the encoder and prepares Qdrant collections. MCP can reuse that instead of carrying its own lazy initialization gate.
+
+- One shared process serves all clients.
+  Codex subagents and other MCP consumers connect to the same server endpoint rather than spawning separate subprocesses.
+
+- Better foundation for background work.
+  A long-lived shared FastAPI runtime is a better place to host future non-blocking background ingestion tasks than short-lived per-client stdio servers.
+
+- Cleaner operations.
+  One server means one health story, one set of logs, one deployment surface, and fewer ways for API and MCP runtimes to drift.
+
+- Easier future middleware and observability.
+  If the project later adds auth, rate limiting, metrics, tracing, or request identifiers, the host app is already the central integration point.
+
+### Cons
+
+- Larger migration surface right now.
+  This slice changes both transport and server topology at once.
+
+- Tighter coupling between API and MCP availability.
+  If the shared app fails to boot, both surfaces are affected.
+
+- Care is required around mounting and lifespan assumptions.
+  The mounted MCP ASGI app must not accidentally bypass or duplicate host-app initialization behavior.
+
+These are acceptable tradeoffs given the user's stated preference for the long-term architecture.
+
+## Initialization and Lifespan
+
+The current FastAPI lifespan in `src/landscape/main.py` already does the important initialization:
+
+- `encoder.load_model()`
+- `qdrant_store.init_collection()`
+- `qdrant_store.init_chunks_collection()`
+- shutdown cleanup for Neo4j and Qdrant clients
+
+After embedding MCP, that lifespan should become the single initialization path for both HTTP API requests and MCP tool calls.
+
+This implies a corresponding cleanup in MCP code:
+
+- remove the MCP-local lazy initialization gate once the mounted design is in place
+- rely on FastAPI host startup instead of per-tool `await _ensure_init()`
+
+That reduces duplicated lifecycle logic and removes the mismatch between a long-lived host app and a formerly standalone MCP process.
+
+## Routing Model
+
+The hosted application should expose:
+
+- existing FastAPI API routes such as `/ingest`, `/query`, and `/healthz`
+- mounted MCP streamable HTTP under `/mcp`
+
+The intended result is a single server command for local development, for example:
+
+`uv run uvicorn landscape.main:app --host 127.0.0.1 --port 8000`
+
+with MCP clients pointing at:
+
+`http://127.0.0.1:8000/mcp`
+
+Using the existing app server command avoids inventing a separate MCP runtime command when the desired architecture is a single hosted app.
 
 ## Configuration Model
 
-The new MCP server entrypoint should support explicit host and port configuration so clients can point at a stable endpoint. The minimum configuration surface is:
+The transport-facing configuration becomes the host FastAPI server address plus mounted MCP path.
 
-- `--host`
-- `--port`
+Canonical local assumptions:
 
-It is acceptable to use sensible defaults for local development, but docs must show explicit configuration so client setup is unambiguous.
+- host app served by uvicorn
+- MCP mounted at `/mcp`
 
-Landscape's existing environment variables for Neo4j, Qdrant, and Ollama remain unchanged.
+Existing storage environment variables stay unchanged:
+
+- `NEO4J_URI`
+- `NEO4J_USER`
+- `NEO4J_PASSWORD`
+- `QDRANT_URL`
+- `OLLAMA_URL`
+
+No new MCP-specific service discovery layer is needed in this slice beyond the mounted path.
 
 ## Client Configuration
 
-Repository docs should switch from subprocess-launch MCP configuration to HTTP MCP configuration.
+Repository docs should switch from subprocess-launch MCP configuration to remote HTTP MCP configuration.
 
-That means replacing instructions like:
+That means removing instructions that tell clients to spawn:
 
-- `command = "uv"`
-- `args = ["run", "landscape-mcp"]`
+- `uv run landscape-mcp`
 
-with client configuration that targets the shared HTTP endpoint instead.
+and replacing them with configuration that points at the shared mounted endpoint:
 
-The exact client snippets should match what Codex and any documented MCP clients currently expect for remote/server URL configuration, but the project-level design requirement is simple: clients connect to a shared URL rather than spawning a local subprocess.
+- `http://<host>:<port>/mcp`
+
+The precise config snippets should match the clients documented in this repo, but the architecture requirement is simple: clients connect to the shared FastAPI-hosted MCP URL rather than launching a subprocess.
+
+## Code Structure
+
+The intended file responsibilities are:
+
+- `src/landscape/mcp_app.py`
+  Builds the `FastMCP` instance and registers all tools.
+
+- `src/landscape/main.py`
+  Owns FastAPI lifespan, API route inclusion, and MCP app mounting.
+
+- `src/landscape/mcp_server.py`
+  Removed entirely or reduced to a compatibility shim only if absolutely needed during the migration.
+
+The preferred end state is to remove `mcp_server.py` as the public runtime entrypoint so the code no longer suggests that MCP is a separate server process.
 
 ## Backward Compatibility
 
-This migration intentionally does not preserve backward compatibility for stdio MCP clients. The compatibility strategy is documentation-based:
+This migration intentionally breaks stdio MCP startup compatibility.
 
-- update README and demo docs to the new HTTP connection model
-- remove stdio-only framing from the MCP architecture description
-- keep the tool API stable so only transport configuration changes for clients
+The compatibility policy is:
 
-That is a clean cutover instead of a prolonged mixed-mode period.
+- MCP tool behavior remains stable
+- transport and runtime topology change
+- documentation is updated to the new shared HTTP endpoint model
+
+This is a hard cutover, not a mixed-mode transition.
 
 ## Testing Strategy
 
-The migration needs three categories of verification.
+The migration needs four types of verification.
 
-### Unit / app-construction coverage
+### 1. App-construction coverage
 
-- the MCP app can be imported without starting the server
-- the streamable HTTP ASGI app can be constructed successfully
-- the expected tools remain registered
+- the FastMCP app can be imported without starting a server
+- the mounted streamable HTTP ASGI app can be created successfully
+- the expected MCP tools remain registered
 
-### MCP behavior regression coverage
+### 2. Host-app integration coverage
 
-- existing MCP tool tests continue to pass against the shared app object
-- no tool response shapes change as part of the transport migration
+- `landscape.main:app` includes the existing API routes
+- the MCP ASGI app is mounted at the intended path
+- FastAPI lifespan remains the initialization path for shared resources
 
-### Documentation / operator verification
+### 3. MCP behavior regression coverage
 
-- the repo documents how to start the HTTP MCP server
-- demo and setup docs no longer instruct users to spawn stdio MCP subprocesses
+- existing MCP tool tests continue to pass against the embedded app object
+- tool response shapes do not change
 
-An end-to-end remote MCP client smoke test would be useful later, but it is not required for the first migration if the app-construction and existing tool regression tests stay green.
+### 4. Documentation/operator coverage
 
-## Implementation Boundaries
+- README and demo docs show the single-server startup path
+- MCP setup docs no longer instruct users to spawn subprocesses
 
-### In scope
+An end-to-end remote MCP smoke test would be useful later, but it is not required for the first migration if mounted-app construction and existing MCP behavior tests remain green.
 
-- refactor MCP code so app construction is transport-agnostic
-- switch server startup to streamable HTTP
-- remove stdio as the supported transport in Landscape docs and entrypoints
-- update demos and setup guidance to point clients at the shared MCP server URL
-- add tests that cover app construction and preserve tool behavior
+## In Scope
 
-### Out of scope
+- refactor MCP code so tool registration is separate from runtime startup
+- embed streamable HTTP MCP into the FastAPI app
+- remove stdio as a supported Landscape transport
+- update docs and demos to point clients at the mounted MCP endpoint
+- update tests to reflect the embedded architecture while preserving tool behavior
+
+## Out of Scope
 
 - automatic conversation ingestion
-- SSE transport support
-- embedding the MCP server inside the existing FastAPI app
-- Docker Compose automation for the MCP server
-- authentication or multi-user access control for the MCP endpoint
+- SSE support
+- auth and multi-user controls for the MCP endpoint
+- Docker Compose automation for server startup
+- broader FastAPI refactors unrelated to MCP embedding
 
 ## Risks and Mitigations
 
-### Risk: client config churn
+### Risk: mounting semantics are awkward with `FastMCP`
 
-Users currently configured for subprocess MCP will need to update their config.
-
-Mitigation:
-
-- provide exact replacement config in docs
-- keep the tool surface unchanged
-
-### Risk: startup/config mistakes during cutover
-
-Moving from subprocess launch to a separately started server introduces one more runtime step.
+The MCP library's generated ASGI app may have assumptions about path handling or lifespan that need careful mounting.
 
 Mitigation:
 
-- keep startup command simple
-- document host and port explicitly
-- add a lightweight status/verification path in docs
+- keep the mounted path simple
+- add integration coverage that verifies app construction and mounted routing
+- avoid extra middleware complexity in this slice
 
-### Risk: future need for unified server hosting
+### Risk: duplicated initialization paths
 
-It is possible Landscape eventually wants the MCP server mounted inside FastAPI or Compose-managed as part of the stack.
+The current MCP server has its own lazy init gate while FastAPI already has a lifespan hook.
 
 Mitigation:
 
-- keep the MCP app creation isolated from startup logic now
-- treat deployment unification as a separate later migration
+- make FastAPI lifespan the only initialization path after embedding
+- remove or bypass MCP-local initialization code
+
+### Risk: client setup churn
+
+Users configured for subprocess MCP will need to update their client configuration.
+
+Mitigation:
+
+- provide exact replacement setup in docs
+- keep tool names and semantics unchanged
 
 ## Success Criteria
 
 This migration is complete when:
 
-- Landscape exposes MCP only through a streamable HTTP server entrypoint
-- repository docs point clients at a shared HTTP MCP endpoint instead of subprocess launch
-- existing MCP tool tests still pass without response-shape regressions
-- the code structure cleanly separates MCP app construction from transport startup
+- Landscape serves MCP through the FastAPI-hosted streamable HTTP endpoint only
+- stdio MCP startup is removed from Landscape docs and runtime entrypoints
+- `landscape.main:app` becomes the single hosted application surface
+- existing MCP tool behavior remains unchanged from the client's perspective apart from transport configuration
