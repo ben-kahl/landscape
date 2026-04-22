@@ -14,6 +14,7 @@ specification.  Six tools are exposed:
 * ``add_relation`` — agent-authored relation write-back
 * ``graph_query``  — read-only Cypher pass-through
 * ``status``       — compact graph summary (~200-token wake-up payload)
+* ``conversation_history`` — chronological turns and entities mentioned in a session
 
 All errors are returned as MCP tool-error responses so agents can react to
 them rather than receiving an unhandled exception.
