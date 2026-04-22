@@ -29,7 +29,6 @@ from landscape.extraction.rel_type_coercion import coerce_rel_type
 from landscape.extraction.schema import normalize_subtype
 from landscape.storage import neo4j_store, qdrant_store
 
-
 # ---------------------------------------------------------------------------
 # Return-type dataclasses
 # ---------------------------------------------------------------------------
@@ -57,9 +56,13 @@ class StatusSummary:
     relation_count: int
     conversation_count: int = 0
     turn_count: int = 0
-    top_entities: list[dict] = field(default_factory=list)         # [{name, type, reinforcement}]
-    recent_agent_writes: list[dict] = field(default_factory=list)  # [{subject, rel_type, object, session_id, turn_id, when}]
-    recent_conversations: list[dict] = field(default_factory=list) # [{id, title, turn_count, last_active_at}]
+    top_entities: list[dict] = field(default_factory=list)  # [{name, type, reinforcement}]
+    recent_agent_writes: list[dict] = field(
+        default_factory=list
+    )  # [{subject, rel_type, object, session_id, turn_id, when}]
+    recent_conversations: list[dict] = field(
+        default_factory=list
+    )  # [{id, title, turn_count, last_active_at}]
 
 
 # ---------------------------------------------------------------------------

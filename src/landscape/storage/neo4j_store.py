@@ -192,14 +192,17 @@ async def link_document_to_turn(
 
 
 async def get_entities_in_conversation(session_id: str) -> list[str]:
-    """Return elementIds of Entity nodes with MENTIONED_IN → Turn → Conversation(id=session_id).
-    Inclusive semantics: any entity mentioned in any turn of that conversation, regardless of
-    where else it appears. Empty list if session_id unknown."""
+    """Return entities mentioned in the conversation identified by ``session_id``.
+
+    Inclusive semantics: any entity mentioned in any turn of that conversation,
+    regardless of where else it appears. Empty list if session_id is unknown.
+    """
     driver = get_driver()
     async with driver.session() as session:
         result = await session.run(
             """
-            MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)<-[:MENTIONED_IN]-(e:Entity)
+            MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)
+                  <-[:MENTIONED_IN]-(e:Entity)
             RETURN DISTINCT elementId(e) AS eid
             """,
             session_id=session_id,
@@ -208,8 +211,10 @@ async def get_entities_in_conversation(session_id: str) -> list[str]:
 
 
 async def get_entities_since(since: datetime) -> list[str]:
-    """Return elementIds of Entity nodes mentioned in turns with t.timestamp >= since (ISO string compare).
-    Dedup across turns."""
+    """Return entities mentioned in turns whose timestamp is >= ``since``.
+
+    Uses ISO string comparison and deduplicates across turns.
+    """
     since_iso = since.isoformat()
     driver = get_driver()
     async with driver.session() as session:
@@ -258,9 +263,15 @@ async def get_chunks_since(since: datetime) -> list[str]:
 
 
 async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict:
-    """Return {"conversation": {id, title, agent_id, started_at, last_active_at} | None,
-             "turns": [{id, turn_id, turn_number, role, summary, timestamp, entities_mentioned: [{eid, name, type}]}]}
-    Turns ordered by t.timestamp ASC, capped to turn_limit. If session_id unknown: conversation=None, turns=[]."""
+    """Return conversation metadata plus the oldest ``turn_limit`` turns.
+
+    Shape:
+    ``{"conversation": {...} | None, "turns": [{..., "entities_mentioned":
+    [{"eid", "name", "type"}]}]}``
+
+    Turns are ordered by ``t.timestamp`` ascending. If ``session_id`` is
+    unknown, returns ``{"conversation": None, "turns": []}``.
+    """
     driver = get_driver()
     async with driver.session() as session:
         conv_result = await session.run(
@@ -299,7 +310,15 @@ async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict
                    properties(t).role AS role,
                    properties(t).summary AS summary,
                    t.timestamp AS timestamp,
-                   collect(CASE WHEN e IS NOT NULL THEN {eid: elementId(e), name: e.name, type: e.type} END) AS entities_mentioned
+                   collect(
+                       CASE WHEN e IS NOT NULL
+                            THEN {
+                                eid: elementId(e),
+                                name: e.name,
+                                type: e.type
+                            }
+                       END
+                   ) AS entities_mentioned
             ORDER BY timestamp ASC
             """,
             session_id=session_id,
@@ -308,15 +327,17 @@ async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict
         turns = []
         async for record in turns_result:
             entities = [em for em in record["entities_mentioned"] if em is not None]
-            turns.append({
-                "id": record["id"],
-                "turn_id": record["turn_id"],
-                "turn_number": record["turn_number"],
-                "role": record["role"],
-                "summary": record["summary"],
-                "timestamp": record["timestamp"],
-                "entities_mentioned": entities,
-            })
+            turns.append(
+                {
+                    "id": record["id"],
+                    "turn_id": record["turn_id"],
+                    "turn_number": record["turn_number"],
+                    "role": record["role"],
+                    "summary": record["summary"],
+                    "timestamp": record["timestamp"],
+                    "entities_mentioned": entities,
+                }
+            )
 
     return {"conversation": conversation, "turns": turns}
 

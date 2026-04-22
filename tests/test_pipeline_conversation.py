@@ -10,6 +10,8 @@ Verifies that:
 """
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 # ---------------------------------------------------------------------------
 # Test 1: no session/turn — backwards compat
@@ -101,7 +103,8 @@ async def test_ingest_with_session_creates_conversation_graph(http_client, neo4j
         # Document must be linked to the Turn via :INGESTED_IN
         doc_link_rec = await (
             await session.run(
-                "MATCH (d:Document {title: 'session-doc-2'})-[:INGESTED_IN]->(t:Turn {id: 'conv-1:t1'})"
+                "MATCH (d:Document {title: 'session-doc-2'})-[:INGESTED_IN]->"
+                "(t:Turn {id: 'conv-1:t1'})"
                 " RETURN count(*) AS cnt"
             )
         ).single()
@@ -164,7 +167,8 @@ async def test_remember_tool_threads_session_turn(http_client, neo4j_driver):
         # Document must be linked to the Turn
         link_rec = await (
             await session.run(
-                "MATCH (d:Document {title: 'mcp-remember-doc'})-[:INGESTED_IN]->(t:Turn {id: 'conv-2:t1'})"
+                "MATCH (d:Document {title: 'mcp-remember-doc'})-[:INGESTED_IN]->"
+                "(t:Turn {id: 'conv-2:t1'})"
                 " RETURN count(*) AS cnt"
             )
         ).single()

@@ -1,4 +1,4 @@
-"""Tests for src/landscape/mcp_server.py.
+"""Tests for the embedded Landscape MCP app.
 
 Uses ``mcp.shared.memory.create_connected_server_and_client_session`` for
 in-process testing — no subprocess spawning required.  The MCP SDK wires the
@@ -16,6 +16,84 @@ from contextlib import asynccontextmanager
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
+from starlette.routing import Mount
+
+pytestmark = pytest.mark.integration
+
+
+# ---------------------------------------------------------------------------
+# MCP app construction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+@pytest.mark.asyncio
+async def test_mcp_app_registers_expected_tools():
+    from landscape.mcp_app import mcp
+
+    tools = {tool.name for tool in await mcp.list_tools()}
+    assert {
+        "search",
+        "remember",
+        "add_entity",
+        "add_relation",
+        "graph_query",
+        "status",
+        "conversation_history",
+    } <= tools
+
+
+@pytest.mark.smoke
+def test_fastapi_app_mounts_mcp_under_mcp_path():
+    from landscape.main import app
+
+    mounted_paths = {route.path for route in app.routes if hasattr(route, "path")}
+    assert "/mcp" in mounted_paths
+
+
+@pytest.mark.smoke
+def test_fastapi_app_mounts_mcp_as_asgi_app():
+    from landscape.main import app
+
+    mcp_mount = next(
+        (route for route in app.routes if getattr(route, "path", None) == "/mcp"),
+        None,
+    )
+    assert isinstance(mcp_mount, Mount)
+    assert mcp_mount.app is not None
+
+
+@pytest.mark.smoke
+def test_mcp_streamable_http_app_constructs():
+    from landscape.mcp_app import mcp
+
+    asgi_app = mcp.streamable_http_app()
+    assert asgi_app is not None
+
+
+@pytest.mark.smoke
+def test_mcp_app_has_no_private_ensure_init():
+    import landscape.mcp_app as mcp_app
+
+    assert not hasattr(mcp_app, "_ensure_init")
+
+
+@pytest.mark.asyncio
+async def test_search_works_under_fastapi_lifespan_without_mcp_init():
+    from landscape.main import app
+
+    async with app.router.lifespan_context(app):
+        async with _mcp_client() as client:
+            result = await client.call_tool(
+                "search",
+                {"query": "nobody", "limit": 1, "chunk_limit": 0},
+            )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+    assert "results" in data
+    assert "touched_entity_count" in data
+    assert "chunks" in data
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +104,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 @asynccontextmanager
 async def _mcp_client():
     """Context manager that yields an initialised in-process MCP ClientSession."""
-    from landscape.mcp_server import mcp
+    from landscape.mcp_app import mcp
 
     async with create_connected_server_and_client_session(mcp) as client:
         yield client
@@ -155,7 +233,7 @@ async def test_add_relation_creates_or_supersedes(http_client):
     assert not result.isError, f"Tool returned error: {result.content}"
     data = _parse(result)
 
-    assert data["outcome"] in ("created", "reinforced", "superseded")
+    assert data["outcome"] == "created"
     assert data["subject_id"]
     assert data["object_id"]
     assert "relation_id" in data
@@ -245,7 +323,13 @@ async def test_status_returns_summary(http_client):
     assert not result.isError, f"Tool returned error: {result.content}"
     data = _parse(result)
 
-    for key in ("entity_count", "document_count", "relation_count", "top_entities", "recent_agent_writes"):
+    for key in (
+        "entity_count",
+        "document_count",
+        "relation_count",
+        "top_entities",
+        "recent_agent_writes",
+    ):
         assert key in data, f"Missing key '{key}' in status response"
     assert isinstance(data["top_entities"], list)
     assert isinstance(data["recent_agent_writes"], list)

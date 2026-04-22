@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import logging
 import math
-from functools import lru_cache
 
 from landscape.extraction.schema import RELATION_VOCAB, normalize_relation_type
 

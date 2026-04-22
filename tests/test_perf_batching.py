@@ -1,10 +1,12 @@
-"""Tests for the batching + parallelization perf work (spec: specs/perf_batching_and_parallelization.md)."""
+"""Tests for batching and parallelization perf behavior."""
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from landscape.config import EMBEDDING_MODEL_DIMS, Settings
+
+pytestmark = pytest.mark.unit
 
 
 def test_embedding_model_dims_map_contains_known_models():
@@ -59,6 +61,7 @@ async def test_retrieve_runs_both_filter_queries_in_parallel():
     from unittest.mock import MagicMock
 
     from qdrant_client.models import ScoredPoint
+
     from landscape.retrieval import query as query_mod
 
     call_log: list[tuple[str, float]] = []
@@ -161,10 +164,23 @@ async def test_retrieve_runs_seed_searches_in_parallel():
         times["chunks"] = asyncio.get_event_loop().time() - start
         return []
 
-    with patch.object(query_mod.qdrant_store, "search_entities_any_type", AsyncMock(side_effect=slow_entities)), \
-         patch.object(query_mod.qdrant_store, "search_chunks", AsyncMock(side_effect=slow_chunks)), \
-         patch.object(query_mod.encoder, "embed_query", return_value=[0.0] * 4), \
-         patch.object(query_mod.neo4j_store, "get_entities_from_chunks", AsyncMock(return_value=[])):
+    with patch.object(
+        query_mod.qdrant_store,
+        "search_entities_any_type",
+        AsyncMock(side_effect=slow_entities),
+    ), patch.object(
+        query_mod.qdrant_store,
+        "search_chunks",
+        AsyncMock(side_effect=slow_chunks),
+    ), patch.object(
+        query_mod.encoder,
+        "embed_query",
+        return_value=[0.0] * 4,
+    ), patch.object(
+        query_mod.neo4j_store,
+        "get_entities_from_chunks",
+        AsyncMock(return_value=[]),
+    ):
         await query_mod.retrieve("q", reinforce=False)
 
     assert abs(times["entities"] - times["chunks"]) < 0.03, (
@@ -193,16 +209,49 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
     fake_hit.payload = {"neo4j_node_id": "e1"}
     fake_hit.score = 0.9
 
-    with patch.object(query_mod.qdrant_store, "search_entities_any_type", AsyncMock(return_value=[fake_hit])), \
-         patch.object(query_mod.qdrant_store, "search_chunks", AsyncMock(return_value=[])), \
-         patch.object(query_mod.encoder, "embed_query", return_value=[0.0] * 4), \
-         patch.object(query_mod.neo4j_store, "get_entities_from_chunks", AsyncMock(return_value=[])), \
-         patch.object(query_mod.neo4j_store, "bfs_expand", AsyncMock(return_value=[])), \
-         patch.object(query_mod, "_hydrate_entities", AsyncMock(return_value=[
-             {"eid": "e1", "name": "E1", "type": "T", "access_count": 0, "last_accessed": None}
-         ])), \
-         patch.object(query_mod.neo4j_store, "touch_entities", AsyncMock(side_effect=slow_ents)), \
-         patch.object(query_mod.neo4j_store, "touch_relations", AsyncMock(side_effect=slow_rels)):
+    with patch.object(
+        query_mod.qdrant_store,
+        "search_entities_any_type",
+        AsyncMock(return_value=[fake_hit]),
+    ), patch.object(
+        query_mod.qdrant_store,
+        "search_chunks",
+        AsyncMock(return_value=[]),
+    ), patch.object(
+        query_mod.encoder,
+        "embed_query",
+        return_value=[0.0] * 4,
+    ), patch.object(
+        query_mod.neo4j_store,
+        "get_entities_from_chunks",
+        AsyncMock(return_value=[]),
+    ), patch.object(
+        query_mod.neo4j_store,
+        "bfs_expand",
+        AsyncMock(return_value=[]),
+    ), patch.object(
+        query_mod,
+        "_hydrate_entities",
+        AsyncMock(
+            return_value=[
+                {
+                    "eid": "e1",
+                    "name": "E1",
+                    "type": "T",
+                    "access_count": 0,
+                    "last_accessed": None,
+                }
+            ]
+        ),
+    ), patch.object(
+        query_mod.neo4j_store,
+        "touch_entities",
+        AsyncMock(side_effect=slow_ents),
+    ), patch.object(
+        query_mod.neo4j_store,
+        "touch_relations",
+        AsyncMock(side_effect=slow_rels),
+    ):
         await query_mod.retrieve("q", reinforce=True)
 
     assert abs(times["ents"] - times["rels"]) < 0.03, (

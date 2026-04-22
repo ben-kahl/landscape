@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = [pytest.mark.integration, pytest.mark.external]
+
 
 @pytest.mark.asyncio
 async def test_string_synonym_short_circuits(http_client):
@@ -115,10 +117,20 @@ async def test_unknown_low_similarity_passes_through(http_client):
     result_type, confidence = coerce_rel_type("XXXXXXXXXX_NONEXISTENT_TYPE")
     # Accept RELATED_TO (catch-all) or the raw pass-through, but not a
     # specific directional canonical (WORKS_FOR, LEADS, etc.)
-    directional_canonicals = {"WORKS_FOR", "LEADS", "MEMBER_OF", "REPORTS_TO",
-                               "APPROVED", "USES", "BELONGS_TO", "LOCATED_IN", "CREATED"}
+    directional_canonicals = {
+        "WORKS_FOR",
+        "LEADS",
+        "MEMBER_OF",
+        "REPORTS_TO",
+        "APPROVED",
+        "USES",
+        "BELONGS_TO",
+        "LOCATED_IN",
+        "CREATED",
+    }
     assert result_type not in directional_canonicals, (
-        f"Nonsense token should not coerce to specific canonical, got {result_type!r} ({confidence:.3f})"
+        "Nonsense token should not coerce to specific canonical, "
+        f"got {result_type!r} ({confidence:.3f})"
     )
 
 

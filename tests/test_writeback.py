@@ -6,6 +6,8 @@ before each test, so tests are fully independent.
 """
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 async def test_add_entity_creates_when_no_match(http_client, neo4j_driver):
@@ -42,9 +44,10 @@ async def test_add_entity_creates_when_no_match(http_client, neo4j_driver):
 @pytest.mark.asyncio
 async def test_add_entity_resolves_to_existing(http_client, neo4j_driver):
     """Pre-create 'Acme Corporation'; add_entity('Acme Corp') should resolve to it."""
-    from landscape.storage import neo4j_store, qdrant_store
-    from landscape.embeddings import encoder
     from datetime import UTC, datetime
+
+    from landscape.embeddings import encoder
+    from landscape.storage import neo4j_store, qdrant_store
     from landscape.writeback import add_entity
 
     # Pre-create the canonical entity exactly as the pipeline does
@@ -111,7 +114,8 @@ async def test_add_relation_creates_endpoints_if_missing(http_client, neo4j_driv
         ).single()
         edge_rec = await (
             await session.run(
-                "MATCH (s:Entity {name: 'Diana Prince'})-[r:RELATES_TO]->(o:Entity {name: 'Themyscira Corp'}) "
+                "MATCH (s:Entity {name: 'Diana Prince'})-[r:RELATES_TO]->"
+                "(o:Entity {name: 'Themyscira Corp'}) "
                 "WHERE r.valid_until IS NULL "
                 "RETURN r.created_by AS cb, r.session_id AS sid"
             )
@@ -144,7 +148,8 @@ async def test_add_relation_normalizes_rel_type(http_client, neo4j_driver):
     async with neo4j_driver.session() as session:
         edge_rec = await (
             await session.run(
-                "MATCH (:Entity {name: 'Clark Kent'})-[r:RELATES_TO]->(:Entity {name: 'Daily Planet'}) "
+                "MATCH (:Entity {name: 'Clark Kent'})-[r:RELATES_TO]->"
+                "(:Entity {name: 'Daily Planet'}) "
                 "WHERE r.valid_until IS NULL "
                 "RETURN r.type AS rel_type"
             )
@@ -339,7 +344,9 @@ async def test_add_entity_with_session_turn_creates_conversation_graph(http_clie
                 "MATCH (d:Document {title: 'agent:s1:t1'}) RETURN count(d) AS cnt"
             )
         ).single()
-        assert doc_rec["cnt"] == 0, "Synthetic :Document was created despite session+turn being provided"
+        assert doc_rec["cnt"] == 0, (
+            "Synthetic :Document was created despite session+turn being provided"
+        )
 
 
 @pytest.mark.asyncio
@@ -448,7 +455,8 @@ async def test_add_relation_with_session_turn_links_entities_to_turn(http_client
         # RELATES_TO edge must carry provenance properties
         edge_rec = await (
             await session.run(
-                "MATCH (:Entity {name: 'Dave'})-[r:RELATES_TO {type: 'WORKS_FOR'}]->(:Entity {name: 'Initech'}) "
+                "MATCH (:Entity {name: 'Dave'})-[r:RELATES_TO {type: 'WORKS_FOR'}]->"
+                "(:Entity {name: 'Initech'}) "
                 "WHERE r.valid_until IS NULL "
                 "RETURN r.session_id AS sid, r.turn_id AS tid, r.created_by AS cb"
             )
@@ -464,12 +472,40 @@ async def test_status_summary_shape(http_client, neo4j_driver):
     """After a few writes, status_summary returns correctly shaped StatusSummary."""
     from landscape.writeback import add_entity, add_relation, status_summary
 
-    await add_entity("Bruce Wayne", "Person", source="agent:test:6", session_id="s6", turn_id="t1")
-    await add_entity("Wayne Enterprises", "Organization", source="agent:test:6", session_id="s6", turn_id="t1")
-    await add_relation("Bruce Wayne", "Person", "Wayne Enterprises", "Organization", "WORKS_FOR",
-                       source="agent:test:6", session_id="s6", turn_id="t2")
-    await add_relation("Bruce Wayne", "Person", "Gotham City", "Location", "LOCATED_IN",
-                       source="agent:test:6", session_id="s6", turn_id="t3")
+    await add_entity(
+        "Bruce Wayne",
+        "Person",
+        source="agent:test:6",
+        session_id="s6",
+        turn_id="t1",
+    )
+    await add_entity(
+        "Wayne Enterprises",
+        "Organization",
+        source="agent:test:6",
+        session_id="s6",
+        turn_id="t1",
+    )
+    await add_relation(
+        "Bruce Wayne",
+        "Person",
+        "Wayne Enterprises",
+        "Organization",
+        "WORKS_FOR",
+        source="agent:test:6",
+        session_id="s6",
+        turn_id="t2",
+    )
+    await add_relation(
+        "Bruce Wayne",
+        "Person",
+        "Gotham City",
+        "Location",
+        "LOCATED_IN",
+        source="agent:test:6",
+        session_id="s6",
+        turn_id="t3",
+    )
 
     summary = await status_summary()
 

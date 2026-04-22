@@ -1,6 +1,8 @@
 """Regression tests for LLM extraction quality. Marked 'extraction' for selective skipping."""
 import pytest
 
+pytestmark = [pytest.mark.integration, pytest.mark.external]
+
 ACCEPTED_APPROVED_SYNONYMS = {"APPROVED", "APPROVED_BY", "AUTHORIZED", "SANCTIONED", "SIGNED_OFF"}
 ACCEPTED_LEADS_SYNONYMS = {"LEADS", "LED_BY", "MANAGES", "MANAGED_BY", "OWNS", "HEADED_BY"}
 ACCEPTED_WORKS_FOR_SYNONYMS = {

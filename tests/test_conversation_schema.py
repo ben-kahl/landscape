@@ -1,6 +1,8 @@
 """Tests for :Conversation / :Turn node types and their linking edges."""
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 async def test_merge_conversation_creates(http_client, neo4j_driver):
@@ -24,6 +26,7 @@ async def test_merge_conversation_creates(http_client, neo4j_driver):
 @pytest.mark.asyncio
 async def test_merge_conversation_is_idempotent(http_client, neo4j_driver):
     import asyncio
+
     from landscape.storage import neo4j_store
 
     eid1, created1 = await neo4j_store.merge_conversation("conv-tc2")
@@ -220,7 +223,7 @@ async def test_merge_entity_with_doc_creates_extracted_from(http_client, neo4j_d
     from landscape.storage import neo4j_store
 
     doc_id, _ = await neo4j_store.merge_document("hash-ef-tc12", "ef-doc-tc12", "text")
-    eid = await neo4j_store.merge_entity(
+    await neo4j_store.merge_entity(
         "DocEntity12", "PERSON", "ef-doc-tc12", 0.9, doc_element_id=doc_id, model="test"
     )
 

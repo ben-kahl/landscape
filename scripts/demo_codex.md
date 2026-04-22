@@ -42,7 +42,7 @@ Step 3/3  Ingesting 7 docs under session 'seed:killer-demo'...
   [1/7] 01_org_chart.md  entities=8 relations=10 superseded=0
   ...
 Done. entities=~40 live_relations=~60
-Ready. Point an MCP client at `uv run landscape-mcp` to query.
+Ready. Start the FastAPI app and point an MCP client at `http://127.0.0.1:8000/mcp`.
 ```
 
 ### 2. Register Landscape as an MCP server in Codex
@@ -51,21 +51,16 @@ Add this to `~/.codex/config.toml` (create the file if it doesn't exist):
 
 ```toml
 [mcp_servers.landscape]
-command = "uv"
-args = ["run", "landscape-mcp"]
-cwd = "/ABSOLUTE/PATH/TO/landscape"
-
-[mcp_servers.landscape.env]
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "landscape-dev"
-QDRANT_URL = "http://localhost:6333"
-OLLAMA_URL = "http://localhost:11434"
+url = "http://127.0.0.1:8000/mcp"
 ```
 
-Replace `/ABSOLUTE/PATH/TO/landscape` with the repo root on your machine (e.g. `/home/you/Documents/landscape`).
+Then start the shared server from the repo root:
 
-**Note on Codex config format:** the schema has evolved. If Codex complains, check `codex mcp --help` for the current flag names. The inputs it needs are: `command=uv`, `args=["run", "landscape-mcp"]`, `cwd` set to the repo root, plus the env vars above.
+```bash
+uv run uvicorn landscape.main:app --host 127.0.0.1 --port 8000
+```
+
+**Note on Codex config format:** the schema has evolved. If Codex complains, check `codex mcp --help` for the current flag names. The essential input is the remote MCP server URL: `http://127.0.0.1:8000/mcp`.
 
 ### 3. Verify MCP connectivity
 

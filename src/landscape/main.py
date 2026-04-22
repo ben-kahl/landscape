@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from landscape.api.ingest import router as ingest_router
 from landscape.api.query import router as query_router
 from landscape.embeddings import encoder
+from landscape.mcp_app import mcp
 from landscape.storage import neo4j_store, qdrant_store
 
 
@@ -22,6 +23,7 @@ app = FastAPI(title="Landscape", lifespan=lifespan)
 
 app.include_router(ingest_router)
 app.include_router(query_router)
+app.mount("/mcp", mcp.streamable_http_app())
 
 
 @app.get("/healthz")

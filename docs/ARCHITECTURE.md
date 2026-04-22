@@ -160,6 +160,22 @@ LongMemEval scripts are included for broader memory-style evaluation, but their
 results are more sensitive to local LLM extraction quality, model choice, and
 hardware speed.
 
+## Phase 3.5 Exit Criteria
+
+The normative criteria live in [README.md](../README.md#phase-35-exit-criteria). This section keeps the same terminology but does not duplicate the policy text.
+
+### CI Required
+
+- See [README.md](../README.md#ci-required) for the command-level CI Required criteria.
+
+### Local Required
+
+- See [README.md](../README.md#local-required) for the command-level Local Required criteria.
+
+### Exit Condition
+
+- See [README.md](../README.md#exit-condition) for the phase 3.5 exit condition and phase 4 handoff point.
+
 ## Known Limitations
 
 ### Relation-Type Synonym Drift
@@ -215,8 +231,8 @@ operational polish.
   not depend on explicit `add_entity` / `add_relation` calls for every fact.
 - Benchmark hardening and reproducibility beyond the current killer-demo and
   LongMemEval smoke harness.
-- CI or a formal verification workflow so the current integration surface has a
-  stable regression gate.
+- The canonical verification workflow is documented in `README.md` and should
+  stay aligned with the current CI-safe regression gate as commands evolve.
 - Expanded ingestion modes as the next major feature area: richer document
   inputs, drive-platform integrations such as Google Drive, automatic
   conversation capture, and visual/multimodal ingestion through OCR and local

@@ -6,6 +6,8 @@ import pytest
 
 from landscape.retrieval.query import retrieve
 
+pytestmark = pytest.mark.integration
+
 BASIC_DOC = (
     "Diego Ortega is a senior engineer on the Vision Team. "
     "The Vision Team is based in Austin, Texas. "

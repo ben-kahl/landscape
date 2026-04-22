@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 from langchain_core.documents import Document
 
+pytestmark = pytest.mark.smoke
+
 
 @pytest.mark.asyncio
 async def test_search_memory_separates_graph_facts_from_chunk_context(monkeypatch):

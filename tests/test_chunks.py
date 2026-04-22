@@ -2,6 +2,8 @@
 import pytest
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
+pytestmark = pytest.mark.integration
+
 SHORT_DOC = "Alice leads Project Atlas. The project uses PostgreSQL."
 LONG_DOC = " ".join(
     [

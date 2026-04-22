@@ -5,6 +5,8 @@ import pytest
 
 from landscape import cli
 
+pytestmark = pytest.mark.smoke
+
 
 @dataclass
 class FakeIngestResult:
