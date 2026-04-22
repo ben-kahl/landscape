@@ -6,6 +6,7 @@ belongs elsewhere so the same app can be mounted inside FastAPI.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import asdict
@@ -16,6 +17,42 @@ from mcp.server.fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("landscape")
+
+
+async def _auto_ingest_turn(
+    text: str,
+    session_id: str,
+    turn_id: str,
+    role: str = "user",
+):
+    from landscape.conversation_ingestion import ConversationTurn, ingest_conversation_turn
+
+    turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
+    return await ingest_conversation_turn(turn)
+
+
+def _log_auto_ingestion_failure(task: asyncio.Task) -> None:
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("Landscape auto-ingestion task failed unexpectedly")
+        return
+
+    if exc is not None:
+        logger.exception("Landscape auto-ingestion task failed", exc_info=exc)
+
+
+def _schedule_auto_ingestion(
+    text: str,
+    session_id: str,
+    turn_id: str,
+    role: str = "user",
+) -> asyncio.Task:
+    task = asyncio.create_task(_auto_ingest_turn(text, session_id, turn_id, role=role))
+    task.add_done_callback(_log_auto_ingestion_failure)
+    return task
 
 
 @mcp.tool()

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
@@ -186,6 +187,34 @@ async def test_remember_creates_entities(http_client):
     assert data["entities_created"] > 0, "Expected at least one entity to be created"
     assert "already_existed" in data
     assert data["already_existed"] is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_schedule_auto_ingestion_creates_background_task(monkeypatch):
+    """_schedule_auto_ingestion() should create, not await, the auto-ingest task."""
+    from landscape import mcp_app
+
+    class DummyTask:
+        def __init__(self, coro):
+            self.coro = coro
+            self.callbacks = []
+
+        def add_done_callback(self, callback):
+            self.callbacks.append(callback)
+
+    scheduled_coroutines = []
+
+    def fake_create_task(coro):
+        scheduled_coroutines.append(coro)
+        coro.close()
+        return DummyTask(coro)
+
+    monkeypatch.setattr(mcp_app, "asyncio", SimpleNamespace(create_task=fake_create_task), raising=False)
+    mcp_app._schedule_auto_ingestion("Alice Chen joined the Platform Team in January.", "test-session", "t1")
+
+    assert len(scheduled_coroutines) == 1, "Expected a background task to be scheduled"
+    assert scheduled_coroutines[0].cr_code.co_name == "_auto_ingest_turn"
 
 
 @pytest.mark.asyncio
