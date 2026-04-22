@@ -91,13 +91,10 @@ async def qdrant_client():
 
 @pytest_asyncio.fixture
 async def http_client():
-    from landscape.embeddings import encoder
     from landscape.main import app
-    from landscape.storage import qdrant_store
 
-    encoder.load_model()
-    await qdrant_store.init_collection()
-    await qdrant_store.init_chunks_collection()
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        yield client
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            yield client

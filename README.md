@@ -42,7 +42,7 @@ uv run python scripts/bench_chromadb.py     # ChromaDB baseline
 ```mermaid
 graph TD
     Client["MCP client\n(Claude Code / Cursor / custom)"]
-    MCP["landscape-mcp\n(stdio JSON-RPC)"]
+    MCP["FastAPI /mcp\n(streamable HTTP)"]
     API["FastAPI\n/ingest  /query"]
     Pipeline["Ingestion pipeline\n→ LLM extraction\n→ entity resolver"]
     Neo4j["Neo4j\ngraph traversal"]
@@ -168,20 +168,32 @@ The CLI defaults to host-reachable service URLs for local use: Neo4j on
 `http://localhost:11434`. Explicit environment variables still override those
 defaults.
 
-## Use Landscape as MCP memory in Claude Code
+## Run the API and embedded MCP server
 
-Add to `~/.claude/mcp.json`:
+Start the shared FastAPI + MCP app:
 
-```json
-{
-  "mcpServers": {
-    "landscape": {
-      "command": "uv",
-      "args": ["run", "--project", "/abs/path/to/landscape", "landscape-mcp"]
-    }
-  }
-}
+```bash
+uv run uvicorn landscape.main:app --host 127.0.0.1 --port 8000
 ```
+
+The MCP endpoint is mounted at `http://127.0.0.1:8000/mcp`.
+
+## Use Landscape as MCP memory
+
+Configure your MCP client to connect to the shared HTTP endpoint instead of
+launching a standalone MCP subprocess.
+
+For clients that accept a URL-based MCP server definition, point them at:
+
+```text
+http://127.0.0.1:8000/mcp
+```
+
+If your MCP client uses a different config shape, the essential inputs are:
+
+- server URL: `http://127.0.0.1:8000/mcp`
+- the FastAPI app must already be running
+- the existing `NEO4J_*`, `QDRANT_URL`, and `OLLAMA_URL` env vars still apply to the server process
 
 The seven MCP tools:
 

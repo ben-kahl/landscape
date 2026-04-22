@@ -33,7 +33,6 @@ bench = [
 
 [project.scripts]
 landscape = "landscape.cli:main"
-landscape-mcp = "landscape.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]

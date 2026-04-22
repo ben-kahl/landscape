@@ -1,11 +1,8 @@
-"""Compatibility shim for the legacy stdio MCP entry point."""
-
-from __future__ import annotations
-
-from landscape.mcp_app import mcp
+"""Compatibility shim for the retired standalone MCP runtime."""
 
 
 def main() -> None:
     raise RuntimeError(
-        "landscape.mcp_server is deprecated. Run the FastAPI app and connect to /mcp instead."
+        "Standalone MCP server entrypoint has been removed. "
+        "Run the FastAPI app and connect to /mcp instead."
     )
