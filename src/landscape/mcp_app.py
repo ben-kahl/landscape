@@ -124,6 +124,13 @@ async def remember(text: str, title: str, session_id: str, turn_id: str) -> str:
 
 
 @mcp.tool()
+async def capture_turn(session_id: str, turn_id: str, role: str, text: str) -> str:
+    """Capture an explicit conversation turn boundary for background ingestion."""
+    _schedule_auto_ingestion(text, session_id, turn_id, role=role)
+    return json.dumps({"accepted": True, "scheduled": True})
+
+
+@mcp.tool()
 async def add_entity(
     name: str,
     entity_type: str,

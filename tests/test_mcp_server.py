@@ -36,6 +36,7 @@ async def test_mcp_app_registers_expected_tools():
     assert {
         "search",
         "remember",
+        "capture_turn",
         "add_entity",
         "add_relation",
         "graph_query",
@@ -95,6 +96,56 @@ async def test_search_works_under_fastapi_lifespan_without_mcp_init():
     assert "results" in data
     assert "touched_entity_count" in data
     assert "chunks" in data
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_capture_turn_schedules_auto_ingestion_via_mcp_boundary(monkeypatch):
+    """capture_turn should schedule ingestion and return without awaiting it."""
+    import landscape.mcp_app as mcp_app
+
+    calls = []
+
+    class _NoAwait:
+        def __await__(self):
+            raise AssertionError("capture_turn must not await the scheduled task")
+
+    def fake_schedule_auto_ingestion(text: str, session_id: str, turn_id: str, role: str = "user"):
+        calls.append(
+            {
+                "text": text,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "role": role,
+            }
+        )
+        return _NoAwait()
+
+    monkeypatch.setattr(mcp_app, "_schedule_auto_ingestion", fake_schedule_auto_ingestion)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "capture_turn",
+            {
+                "session_id": "test-session",
+                "turn_id": "turn-1",
+                "role": "user",
+                "text": "Remember this note for later.",
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+
+    assert data == {"accepted": True, "scheduled": True}
+    assert calls == [
+        {
+            "text": "Remember this note for later.",
+            "session_id": "test-session",
+            "turn_id": "turn-1",
+            "role": "user",
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
