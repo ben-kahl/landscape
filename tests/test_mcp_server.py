@@ -34,6 +34,23 @@ async def _mcp_client():
         yield client
 
 
+@pytest.mark.asyncio
+async def test_mcp_app_registers_expected_tools():
+    """landscape.mcp_app should register the expected MCP tools."""
+    from landscape.mcp_app import mcp
+
+    tools = await mcp.list_tools()
+    assert [tool.name for tool in tools] == [
+        "search",
+        "remember",
+        "add_entity",
+        "add_relation",
+        "graph_query",
+        "status",
+        "conversation_history",
+    ]
+
+
 def _parse(result) -> dict:
     """Extract the first text content item and JSON-decode it."""
     assert result.content, "MCP tool returned no content"
