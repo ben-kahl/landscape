@@ -34,6 +34,23 @@ async def _mcp_client():
         yield client
 
 
+def test_fastapi_app_mounts_mcp_streamable_http_app():
+    """landscape.main.app should mount the MCP HTTP app at /mcp."""
+    from landscape.main import app
+
+    mount_paths = [route.path for route in app.routes if hasattr(route, "path")]
+    assert "/mcp" in mount_paths
+
+
+def test_mcp_streamable_http_app_constructs():
+    """landscape.mcp_app.mcp should build a streamable HTTP ASGI app."""
+    from landscape.mcp_app import mcp
+
+    http_app = mcp.streamable_http_app()
+
+    assert http_app is not None
+
+
 @pytest.mark.asyncio
 async def test_mcp_app_registers_expected_tools():
     """landscape.mcp_app should register the expected MCP tools."""
