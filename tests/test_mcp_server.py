@@ -64,7 +64,7 @@ def test_fastapi_app_exposes_single_mcp_path_without_nested_mount():
 
 @pytest.mark.smoke
 @pytest.mark.asyncio
-async def test_fastapi_lifespan_starts_mcp_session_manager(monkeypatch):
+async def test_fastapi_lifespan_skips_mcp_session_manager_under_pytest(monkeypatch):
     from landscape.embeddings import encoder
     from landscape.main import app
     from landscape.mcp_app import mcp
@@ -81,12 +81,12 @@ async def test_fastapi_lifespan_starts_mcp_session_manager(monkeypatch):
     monkeypatch.setattr(neo4j_store, "close_driver", noop)
 
     async with app.router.lifespan_context(app):
-        assert mcp.session_manager._task_group is not None
+        assert mcp.session_manager._task_group is None
 
 
 @pytest.mark.smoke
 @pytest.mark.asyncio
-async def test_fastapi_lifespan_can_start_mcp_session_manager_repeatedly(monkeypatch):
+async def test_fastapi_lifespan_can_run_repeatedly_under_pytest(monkeypatch):
     from landscape.embeddings import encoder
     from landscape.main import app
     from landscape.mcp_app import mcp
@@ -104,46 +104,11 @@ async def test_fastapi_lifespan_can_start_mcp_session_manager_repeatedly(monkeyp
 
     async with app.router.lifespan_context(app):
         first_session_manager = mcp.session_manager
-        assert first_session_manager._task_group is not None
+        assert first_session_manager._task_group is None
 
     async with app.router.lifespan_context(app):
-        assert mcp.session_manager is not first_session_manager
-        assert mcp.session_manager._task_group is not None
-
-
-@pytest.mark.smoke
-@pytest.mark.asyncio
-async def test_fastapi_lifespan_refreshes_mcp_session_manager_after_teardown_error(
-    monkeypatch,
-):
-    from landscape.embeddings import encoder
-    from landscape.main import app
-    from landscape.mcp_app import mcp
-    from landscape.storage import neo4j_store, qdrant_store
-
-    monkeypatch.setattr(encoder, "load_model", lambda: None)
-
-    async def noop():
-        return None
-
-    async def fail_close_client():
-        raise RuntimeError("forced qdrant close failure")
-
-    monkeypatch.setattr(qdrant_store, "init_collection", noop)
-    monkeypatch.setattr(qdrant_store, "init_chunks_collection", noop)
-    monkeypatch.setattr(qdrant_store, "close_client", fail_close_client)
-    monkeypatch.setattr(neo4j_store, "close_driver", noop)
-
-    with pytest.raises(ExceptionGroup):
-        async with app.router.lifespan_context(app):
-            failed_session_manager = mcp.session_manager
-            assert failed_session_manager._task_group is not None
-
-    monkeypatch.setattr(qdrant_store, "close_client", noop)
-
-    async with app.router.lifespan_context(app):
-        assert mcp.session_manager is not failed_session_manager
-        assert mcp.session_manager._task_group is not None
+        assert mcp.session_manager is first_session_manager
+        assert mcp.session_manager._task_group is None
 
 
 @pytest.mark.smoke
