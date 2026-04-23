@@ -148,6 +148,38 @@ async def test_capture_turn_schedules_auto_ingestion_via_mcp_boundary(monkeypatc
     ]
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_capture_turn_rejects_ineligible_turns_at_mcp_boundary(monkeypatch):
+    """capture_turn should reject blank turns before background scheduling."""
+    import landscape.mcp_app as mcp_app
+
+    scheduled = []
+
+    def fake_schedule_auto_ingestion(text: str, session_id: str, turn_id: str, role: str = "user"):
+        scheduled.append((text, session_id, turn_id, role))
+        raise AssertionError("ineligible turns must not be scheduled")
+
+    monkeypatch.setattr(mcp_app, "_schedule_auto_ingestion", fake_schedule_auto_ingestion)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "capture_turn",
+            {
+                "session_id": "test-session",
+                "turn_id": "turn-1",
+                "role": "user",
+                "text": "   ",
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+
+    assert data == {"accepted": False, "scheduled": False}
+    assert scheduled == []
+
+
 # ---------------------------------------------------------------------------
 # Fixture: connected MCP client for the landscape server
 # ---------------------------------------------------------------------------
@@ -262,10 +294,14 @@ async def test_schedule_auto_ingestion_creates_background_task(monkeypatch):
         return DummyTask(coro)
 
     monkeypatch.setattr(mcp_app, "asyncio", SimpleNamespace(create_task=fake_create_task), raising=False)
-    mcp_app._schedule_auto_ingestion("Alice Chen joined the Platform Team in January.", "test-session", "t1")
+    task = mcp_app._schedule_auto_ingestion(
+        "Alice Chen joined the Platform Team in January.", "test-session", "t1"
+    )
 
     assert len(scheduled_coroutines) == 1, "Expected a background task to be scheduled"
     assert scheduled_coroutines[0].cr_code.co_name == "_auto_ingest_turn"
+    assert len(task.callbacks) == 1
+    assert task.callbacks[0] is mcp_app._log_auto_ingestion_failure
 
 
 @pytest.mark.asyncio

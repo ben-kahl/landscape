@@ -126,6 +126,12 @@ async def remember(text: str, title: str, session_id: str, turn_id: str) -> str:
 @mcp.tool()
 async def capture_turn(session_id: str, turn_id: str, role: str, text: str) -> str:
     """Capture an explicit conversation turn boundary for background ingestion."""
+    from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
+
+    turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
+    if not should_auto_ingest_turn(turn, seen_fingerprints=set()):
+        return json.dumps({"accepted": False, "scheduled": False})
+
     _schedule_auto_ingestion(text, session_id, turn_id, role=role)
     return json.dumps({"accepted": True, "scheduled": True})
 
