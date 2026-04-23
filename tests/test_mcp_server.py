@@ -334,7 +334,9 @@ async def test_schedule_auto_ingestion_creates_background_task(monkeypatch):
         coro.close()
         return DummyTask(coro)
 
-    monkeypatch.setattr(mcp_app, "asyncio", SimpleNamespace(create_task=fake_create_task), raising=False)
+    monkeypatch.setattr(
+        mcp_app, "asyncio", SimpleNamespace(create_task=fake_create_task), raising=False
+    )
     task = mcp_app._schedule_auto_ingestion(
         "Alice Chen joined the Platform Team in January.", "test-session", "t1"
     )

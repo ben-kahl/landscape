@@ -90,7 +90,12 @@ async def test_ingest_conversation_turn_skips_duplicate_in_same_process(monkeypa
     from landscape.conversation_ingestion import ConversationTurn
     from landscape.pipeline import IngestResult
 
-    async def fake_ingest(text: str, title: str, session_id: str | None = None, turn_id: str | None = None):
+    async def fake_ingest(
+        text: str,
+        title: str,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+    ):
         return IngestResult(
             doc_id=f"doc:{title}",
             already_existed=False,
@@ -140,7 +145,12 @@ async def test_ingest_conversation_turn_marks_seen_only_after_success(monkeypatc
 
     attempts = 0
 
-    async def flaky_ingest(text: str, title: str, session_id: str | None = None, turn_id: str | None = None):
+    async def flaky_ingest(
+        text: str,
+        title: str,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+    ):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
