@@ -4,6 +4,21 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.unit
+def test_build_default_conversation_title_includes_agent_timestamp_and_hash():
+    from landscape.storage.neo4j_store import build_default_conversation_title
+
+    title = build_default_conversation_title(
+        "default",
+        agent_id="codex",
+        started_at="2026-04-23T04:42:00+00:00",
+    )
+
+    assert title.startswith("codex:20260423T044200Z:")
+    assert title != "default"
+    assert len(title.rsplit(":", maxsplit=1)[-1]) == 8
+
+
 @pytest.mark.asyncio
 async def test_merge_conversation_creates(http_client, neo4j_driver):
     from landscape.storage import neo4j_store
@@ -66,6 +81,26 @@ async def test_merge_turn_creates_parent_conversation(http_client, neo4j_driver)
     assert record is not None
     assert record["cid"] is not None
     assert record["tid"] is not None
+
+
+@pytest.mark.asyncio
+async def test_merge_turn_parent_conversation_gets_identifiable_default_title(
+    http_client, neo4j_driver
+):
+    from landscape.storage import neo4j_store
+
+    await neo4j_store.merge_turn("default", "t1")
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            "MATCH (c:Conversation {id: 'default'}) RETURN c.title AS title"
+        )
+        record = await result.single()
+
+    assert record is not None
+    assert record["title"].startswith("agent:")
+    assert record["title"] != "default"
+    assert len(record["title"].rsplit(":", maxsplit=1)[-1]) == 8
 
 
 @pytest.mark.asyncio

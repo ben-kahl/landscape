@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -52,6 +53,26 @@ def _validate_id_segment(name: str, value: str) -> None:
         raise ValueError(f"{name} must not contain ':' (got {value!r})")
 
 
+def build_default_conversation_title(
+    session_id: str,
+    *,
+    agent_id: str | None = None,
+    started_at: str | None = None,
+) -> str:
+    timestamp = started_at or datetime.now(UTC).isoformat()
+    compact_timestamp = (
+        timestamp.replace("-", "")
+        .replace(":", "")
+        .replace("+0000", "Z")
+        .replace("+00:00", "Z")
+    )
+    if "." in compact_timestamp:
+        compact_timestamp = compact_timestamp.split(".", maxsplit=1)[0] + "Z"
+    short_hash = hashlib.sha256(session_id.encode()).hexdigest()[:8]
+    label = (agent_id or "agent").strip() or "agent"
+    return f"{label}:{compact_timestamp}:{short_hash}"
+
+
 async def merge_conversation(
     session_id: str,
     title: str | None = None,
@@ -63,6 +84,11 @@ async def merge_conversation(
     _validate_id_segment("session_id", session_id)
     driver = get_driver()
     now = datetime.now(UTC).isoformat()
+    conversation_title = title or build_default_conversation_title(
+        session_id,
+        agent_id=agent_id,
+        started_at=now,
+    )
     async with driver.session() as session:
         result = await session.run(
             """
@@ -76,7 +102,7 @@ async def merge_conversation(
             """,
             session_id=session_id,
             now=now,
-            title=title,
+            title=conversation_title,
             agent_id=agent_id,
         )
         record = await result.single()
