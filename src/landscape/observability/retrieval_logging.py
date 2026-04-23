@@ -143,6 +143,7 @@ class RetrievalLogContext:
             "retrieval_completed",
             always=True,
             duration_ms=_elapsed_ms(self.started_at),
+            top_results=fields.pop("top_results", []),
             **fields,
         )
 

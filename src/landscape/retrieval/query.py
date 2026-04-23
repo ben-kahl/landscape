@@ -49,6 +49,18 @@ class RetrievalResult:
     chunks: list[RetrievedChunk] = field(default_factory=list)
 
 
+def _top_results_for_logging(results: list[RetrievedEntity], *, max_items: int = 5) -> list[dict]:
+    return [
+        {
+            "name": item.name,
+            "type": item.type,
+            "score": round(item.score, 6),
+            "distance": item.distance,
+        }
+        for item in results[:max_items]
+    ]
+
+
 async def retrieve(
     query_text: str,
     hops: int = 2,
@@ -159,6 +171,7 @@ async def retrieve(
                 touched_entity_count=0,
                 touched_edge_count=0,
                 chunk_count=len(result.chunks),
+                top_results=[],
             )
             return result
 
@@ -322,6 +335,7 @@ async def retrieve(
                     touched_entity_count=0,
                     touched_edge_count=0,
                     chunk_count=len(result.chunks),
+                    top_results=[],
                 )
                 return result
 
@@ -376,6 +390,7 @@ async def retrieve(
             touched_entity_count=len(result.touched_entity_ids),
             touched_edge_count=len(result.touched_edge_ids),
             chunk_count=len(result.chunks),
+            top_results=_top_results_for_logging(result.results),
         )
         return result
     except Exception as exc:

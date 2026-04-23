@@ -336,6 +336,14 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
         "retrieval_completed",
     ]
     assert events[-1]["result_count"] == 1
+    assert events[-1]["top_results"] == [
+        {
+            "name": "Project Atlas",
+            "type": "PROJECT",
+            "score": 1.7,
+            "distance": 0,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -527,3 +535,4 @@ def test_retrieval_log_sink_writes_jsonl_to_process_scoped_file(tmp_path):
     second = json.loads(lines[1])
     assert first["event"] == "retrieval_started"
     assert second["event"] == "retrieval_completed"
+    assert second["top_results"] == []
