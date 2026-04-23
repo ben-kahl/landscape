@@ -8,24 +8,44 @@ from landscape.embeddings import encoder
 from landscape.mcp_app import mcp
 from landscape.storage import neo4j_store, qdrant_store
 
+mcp_http_app = mcp.streamable_http_app()
+
+
+def _refresh_mcp_http_session_manager() -> None:
+    """Refresh the mounted MCP session manager after a completed lifespan.
+
+    The MCP SDK's streamable HTTP session manager is a one-run object. Uvicorn
+    only runs the app lifespan once, but tests enter the FastAPI lifespan many
+    times in-process.
+    """
+    mcp._session_manager = None
+    fresh_mcp_http_app = mcp.streamable_http_app()
+    mcp_http_app.routes[0].endpoint.session_manager = (
+        fresh_mcp_http_app.routes[0].endpoint.session_manager
+    )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    encoder.load_model()
-    await qdrant_store.init_collection()
-    await qdrant_store.init_chunks_collection()
-    yield
-    await neo4j_store.close_driver()
-    await qdrant_store.close_client()
+    async with mcp_http_app.router.lifespan_context(mcp_http_app):
+        encoder.load_model()
+        await qdrant_store.init_collection()
+        await qdrant_store.init_chunks_collection()
+        yield
+        await neo4j_store.close_driver()
+        await qdrant_store.close_client()
+    _refresh_mcp_http_session_manager()
 
 
 app = FastAPI(title="Landscape", lifespan=lifespan)
 
 app.include_router(ingest_router)
 app.include_router(query_router)
-app.mount("/mcp", mcp.streamable_http_app())
 
 
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
+
+
+app.mount("/", mcp_http_app)

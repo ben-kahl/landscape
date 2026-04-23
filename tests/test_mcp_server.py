@@ -47,23 +47,39 @@ async def test_mcp_app_registers_expected_tools():
 
 
 @pytest.mark.smoke
-def test_fastapi_app_mounts_mcp_under_mcp_path():
-    from landscape.main import app
+def test_fastapi_app_exposes_single_mcp_path_without_nested_mount():
+    from landscape.main import app, mcp_http_app
 
-    mounted_paths = {route.path for route in app.routes if hasattr(route, "path")}
-    assert "/mcp" in mounted_paths
+    app_mounts = {
+        route.path for route in app.routes if isinstance(route, Mount)
+    }
+    mcp_paths = {route.path for route in mcp_http_app.routes if hasattr(route, "path")}
+
+    assert "" in app_mounts
+    assert "/mcp" in mcp_paths
+    assert "/mcp" not in app_mounts
 
 
 @pytest.mark.smoke
-def test_fastapi_app_mounts_mcp_as_asgi_app():
+@pytest.mark.asyncio
+async def test_fastapi_lifespan_starts_mcp_session_manager(monkeypatch):
+    from landscape.embeddings import encoder
     from landscape.main import app
+    from landscape.mcp_app import mcp
+    from landscape.storage import neo4j_store, qdrant_store
 
-    mcp_mount = next(
-        (route for route in app.routes if getattr(route, "path", None) == "/mcp"),
-        None,
-    )
-    assert isinstance(mcp_mount, Mount)
-    assert mcp_mount.app is not None
+    monkeypatch.setattr(encoder, "load_model", lambda: None)
+
+    async def noop():
+        return None
+
+    monkeypatch.setattr(qdrant_store, "init_collection", noop)
+    monkeypatch.setattr(qdrant_store, "init_chunks_collection", noop)
+    monkeypatch.setattr(qdrant_store, "close_client", noop)
+    monkeypatch.setattr(neo4j_store, "close_driver", noop)
+
+    async with app.router.lifespan_context(app):
+        assert mcp.session_manager._task_group is not None
 
 
 @pytest.mark.smoke
