@@ -185,6 +185,89 @@ def test_seed_killer_demo_requires_confirm(capsys):
     assert "without --confirm" in output
 
 
+def test_seed_killer_demo_threads_debug_flag(monkeypatch, tmp_path, capsys):
+    from landscape.cli import seed as seed_cli
+
+    demo_dir = tmp_path / "demo"
+    demo_dir.mkdir()
+    (demo_dir / "01_alpha.md").write_text("Alice leads Alpha.", encoding="utf-8")
+    (demo_dir / "02_beta.md").write_text("Bob leads Beta.", encoding="utf-8")
+
+    class FakeSeedIngest:
+        def __init__(self):
+            self.calls = []
+
+        async def __call__(
+            self,
+            text,
+            title,
+            source_type="text",
+            session_id=None,
+            turn_id=None,
+            debug=False,
+        ):
+            self.calls.append(
+                {
+                    "text": text,
+                    "title": title,
+                    "source_type": source_type,
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "debug": debug,
+                }
+            )
+            return FakeIngestResult()
+
+    fake_ingest = FakeSeedIngest()
+    encoder = FakeEncoder()
+    qdrant_store = FakeQdrantStore()
+    neo4j_store = FakeNeo4jStore()
+
+    async def fake_wipe_state():
+        return None
+
+    monkeypatch.setattr(seed_cli, "wipe_state", fake_wipe_state)
+    monkeypatch.setattr(
+        seed_cli,
+        "_get_runtime",
+        lambda: (encoder, fake_ingest, neo4j_store, qdrant_store),
+    )
+    monkeypatch.setattr(
+        seed_cli.resources,
+        "files",
+        lambda package: demo_dir,
+    )
+
+    exit_code = cli.main(["seed", "killer-demo", "--confirm", "--debug"])
+
+    assert exit_code == 0
+    assert fake_ingest.calls == [
+        {
+            "text": "Alice leads Alpha.",
+            "title": "killer-demo:01_alpha",
+            "source_type": "text",
+            "session_id": "seed-killer-demo",
+            "turn_id": "t1",
+            "debug": True,
+        },
+        {
+            "text": "Bob leads Beta.",
+            "title": "killer-demo:02_beta",
+            "source_type": "text",
+            "session_id": "seed-killer-demo",
+            "turn_id": "t2",
+            "debug": True,
+        },
+    ]
+    assert encoder.loaded is True
+    assert qdrant_store.entity_collection_initialized is True
+    assert qdrant_store.chunk_collection_initialized is True
+    assert neo4j_store.closed is True
+    assert qdrant_store.closed is True
+    output = capsys.readouterr().out
+    assert "Step 3/3  Ingesting 2 docs..." in output
+
+
 @pytest.fixture
 def fake_runtime(monkeypatch):
     from landscape.cli import ingest as ingest_cli

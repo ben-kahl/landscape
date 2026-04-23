@@ -21,6 +21,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     seed_subparsers = parser.add_subparsers(dest="seed_name", required=True)
     killer = seed_subparsers.add_parser("killer-demo", help="Seed the killer-demo corpus")
     killer.add_argument("--confirm", action="store_true", help="Required because seed wipes first")
+    killer.add_argument("--debug", action="store_true")
     killer.set_defaults(func=handle_killer_demo)
 
 
@@ -57,6 +58,7 @@ async def handle_killer_demo(args: argparse.Namespace) -> int:
                 f"killer-demo:{path.stem}",
                 session_id=session_id,
                 turn_id=f"t{index}",
+                debug=args.debug,
             )
             print(
                 f"  [{index}/{len(docs)}] {path.name} "
