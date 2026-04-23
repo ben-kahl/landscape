@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from landscape.cli.runtime import close_runtime
+from landscape.observability import ensure_cli_logging
 
 
 def _get_runtime():
@@ -29,6 +30,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     ingest_parser.add_argument("--session-id", default=None)
     ingest_parser.add_argument("--turn-id", default=None)
+    ingest_parser.add_argument("--debug", action="store_true")
     ingest_parser.set_defaults(func=handle_ingest)
 
     dir_parser = subparsers.add_parser(
@@ -40,6 +42,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     dir_parser.add_argument("--glob", default="*.md", help="Glob pattern, default: *.md")
     dir_parser.add_argument("--source-type", default="text")
     dir_parser.add_argument("--session-id", default=None)
+    dir_parser.add_argument("--debug", action="store_true")
     dir_parser.add_argument("--stop-on-error", action="store_true")
     dir_parser.set_defaults(func=handle_ingest_dir)
 
@@ -89,9 +92,11 @@ async def _ingest_text(
     source_type: str,
     session_id: str | None = None,
     turn_id: str | None = None,
+    debug: bool = False,
 ):
     pipeline, encoder, neo4j_store, qdrant_store = _get_runtime()
     try:
+        ensure_cli_logging()
         encoder.load_model()
         await qdrant_store.init_collection()
         await qdrant_store.init_chunks_collection()
@@ -101,6 +106,7 @@ async def _ingest_text(
             source_type,
             session_id=session_id,
             turn_id=turn_id,
+            debug=debug,
         )
     finally:
         await close_runtime(neo4j_store, qdrant_store)
@@ -117,6 +123,7 @@ async def handle_ingest(args: argparse.Namespace) -> int:
         source_type=args.source_type,
         session_id=args.session_id,
         turn_id=args.turn_id,
+        debug=args.debug,
     )
     print(_format_summary(result))
     return 0
@@ -148,6 +155,7 @@ async def handle_ingest_dir(args: argparse.Namespace) -> int:
                 source_type=args.source_type,
                 session_id=args.session_id,
                 turn_id=turn_id,
+                debug=args.debug,
             )
             print(f"[{index}/{len(paths)}] {path.name}")
             print(_format_summary(result))

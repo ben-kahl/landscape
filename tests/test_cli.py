@@ -60,7 +60,15 @@ class FakePipeline:
         self.calls = []
         self.ingest_error = ingest_error
 
-    async def ingest(self, text, title, source_type="text", session_id=None, turn_id=None):
+    async def ingest(
+        self,
+        text,
+        title,
+        source_type="text",
+        session_id=None,
+        turn_id=None,
+        debug=False,
+    ):
         self.calls.append(
             {
                 "text": text,
@@ -68,6 +76,7 @@ class FakePipeline:
                 "source_type": source_type,
                 "session_id": session_id,
                 "turn_id": turn_id,
+                "debug": debug,
             }
         )
         if self.ingest_error is not None:
@@ -218,11 +227,31 @@ def test_ingest_unexpected_failure_closes_runtime(tmp_path, capsys, monkeypatch)
     assert exit_code == 1
     stderr = capsys.readouterr().err
     assert "ingest exploded" in stderr or "Error:" in stderr
-    assert encoder.loaded is True
-    assert qdrant_store.entity_collection_initialized is True
-    assert qdrant_store.chunk_collection_initialized is True
-    assert neo4j_store.closed is True
-    assert qdrant_store.closed is True
+
+
+def test_ingest_command_threads_debug_flag(tmp_path, fake_runtime, capsys):
+    path = tmp_path / "debug.md"
+    path.write_text("Alice leads Project Atlas.", encoding="utf-8")
+
+    exit_code = cli.main(["ingest", str(path), "--debug"])
+
+    assert exit_code == 0
+    assert fake_runtime["pipeline"].calls == [
+        {
+            "text": "Alice leads Project Atlas.",
+            "title": "debug",
+            "source_type": "text",
+            "session_id": None,
+            "turn_id": None,
+            "debug": True,
+        }
+    ]
+    assert "doc_id: doc-123" in capsys.readouterr().out
+    assert fake_runtime["encoder"].loaded is True
+    assert fake_runtime["qdrant_store"].entity_collection_initialized is True
+    assert fake_runtime["qdrant_store"].chunk_collection_initialized is True
+    assert fake_runtime["neo4j_store"].closed is True
+    assert fake_runtime["qdrant_store"].closed is True
 
 
 def test_ingest_cleanup_warning_does_not_override_success(tmp_path, capsys, monkeypatch):
@@ -264,6 +293,7 @@ def test_ingest_uses_file_stem_as_default_title(tmp_path, capsys, fake_runtime):
             "source_type": "text",
             "session_id": None,
             "turn_id": None,
+            "debug": False,
         }
     ]
     assert fake_runtime["encoder"].loaded is True
@@ -305,6 +335,7 @@ def test_ingest_accepts_explicit_metadata(tmp_path, fake_runtime):
             "source_type": "markdown",
             "session_id": "session-1",
             "turn_id": "turn-1",
+            "debug": False,
         }
     ]
 

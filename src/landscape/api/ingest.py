@@ -12,6 +12,7 @@ class IngestRequest(BaseModel):
     source_type: str = "text"
     session_id: str | None = None
     turn_id: str | None = None
+    debug: bool = False
 
 
 class IngestResponse(BaseModel):
@@ -33,6 +34,7 @@ async def ingest_document(req: IngestRequest) -> IngestResponse:
         req.source_type,
         session_id=req.session_id,
         turn_id=req.turn_id,
+        debug=req.debug,
     )
     return IngestResponse(
         doc_id=result.doc_id,

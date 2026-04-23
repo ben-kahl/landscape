@@ -5,6 +5,7 @@ from importlib import resources
 
 from landscape.cli.runtime import close_runtime
 from landscape.cli.wipe import wipe_state
+from landscape.observability import ensure_cli_logging
 
 
 def _get_runtime():
@@ -27,6 +28,8 @@ async def handle_killer_demo(args: argparse.Namespace) -> int:
     if not args.confirm:
         print("Refusing to seed killer-demo without --confirm because seeding wipes first")
         return 2
+
+    ensure_cli_logging()
 
     corpus_dir = resources.files("landscape.demo_corpora.killer_demo_corpus")
     session_id = "seed-killer-demo"
