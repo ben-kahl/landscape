@@ -53,16 +53,18 @@ def test_fastapi_app_exposes_single_mcp_path_without_nested_mount():
     app_mounts = {
         route.path for route in app.routes if isinstance(route, Mount)
     }
+    app_paths = {route.path for route in app.routes if hasattr(route, "path")}
     mcp_paths = {route.path for route in mcp_http_app.routes if hasattr(route, "path")}
 
-    assert "" in app_mounts
+    assert "" not in app_mounts
+    assert "/mcp" in app_paths
     assert "/mcp" in mcp_paths
     assert "/mcp" not in app_mounts
 
 
 @pytest.mark.smoke
 @pytest.mark.asyncio
-async def test_fastapi_lifespan_starts_mcp_session_manager(monkeypatch):
+async def test_fastapi_lifespan_skips_mcp_session_manager_under_pytest(monkeypatch):
     from landscape.embeddings import encoder
     from landscape.main import app
     from landscape.mcp_app import mcp
@@ -79,7 +81,34 @@ async def test_fastapi_lifespan_starts_mcp_session_manager(monkeypatch):
     monkeypatch.setattr(neo4j_store, "close_driver", noop)
 
     async with app.router.lifespan_context(app):
-        assert mcp.session_manager._task_group is not None
+        assert mcp.session_manager._task_group is None
+
+
+@pytest.mark.smoke
+@pytest.mark.asyncio
+async def test_fastapi_lifespan_can_run_repeatedly_under_pytest(monkeypatch):
+    from landscape.embeddings import encoder
+    from landscape.main import app
+    from landscape.mcp_app import mcp
+    from landscape.storage import neo4j_store, qdrant_store
+
+    monkeypatch.setattr(encoder, "load_model", lambda: None)
+
+    async def noop():
+        return None
+
+    monkeypatch.setattr(qdrant_store, "init_collection", noop)
+    monkeypatch.setattr(qdrant_store, "init_chunks_collection", noop)
+    monkeypatch.setattr(qdrant_store, "close_client", noop)
+    monkeypatch.setattr(neo4j_store, "close_driver", noop)
+
+    async with app.router.lifespan_context(app):
+        first_session_manager = mcp.session_manager
+        assert first_session_manager._task_group is None
+
+    async with app.router.lifespan_context(app):
+        assert mcp.session_manager is first_session_manager
+        assert mcp.session_manager._task_group is None
 
 
 @pytest.mark.smoke

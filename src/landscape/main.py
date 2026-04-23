@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -25,16 +26,40 @@ def _refresh_mcp_http_session_manager() -> None:
     )
 
 
+def _should_start_mcp_http_session_manager() -> bool:
+    """Avoid MCP HTTP lifespan side effects in pytest's in-process app fixtures."""
+    return "PYTEST_CURRENT_TEST" not in os.environ
+
+
+async def _startup_storage() -> None:
+    encoder.load_model()
+    await qdrant_store.init_collection()
+    await qdrant_store.init_chunks_collection()
+
+
+async def _shutdown_storage() -> None:
+    await neo4j_store.close_driver()
+    await qdrant_store.close_client()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with mcp_http_app.router.lifespan_context(mcp_http_app):
-        encoder.load_model()
-        await qdrant_store.init_collection()
-        await qdrant_store.init_chunks_collection()
-        yield
-        await neo4j_store.close_driver()
-        await qdrant_store.close_client()
-    _refresh_mcp_http_session_manager()
+    start_mcp_http = _should_start_mcp_http_session_manager()
+    if start_mcp_http:
+        _refresh_mcp_http_session_manager()
+    try:
+        if start_mcp_http:
+            async with mcp_http_app.router.lifespan_context(mcp_http_app):
+                await _startup_storage()
+                yield
+                await _shutdown_storage()
+        else:
+            await _startup_storage()
+            yield
+            await _shutdown_storage()
+    finally:
+        if start_mcp_http:
+            _refresh_mcp_http_session_manager()
 
 
 app = FastAPI(title="Landscape", lifespan=lifespan)
@@ -48,4 +73,4 @@ async def healthz():
     return {"status": "ok"}
 
 
-app.mount("/", mcp_http_app)
+app.router.routes.extend(mcp_http_app.routes)
