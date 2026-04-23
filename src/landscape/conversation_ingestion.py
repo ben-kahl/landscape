@@ -39,8 +39,24 @@ class ConversationIngestResult:
         return self._require_ingest_result().entities_created
 
     @property
+    def entities_reinforced(self) -> int:
+        return self._require_ingest_result().entities_reinforced
+
+    @property
     def relations_created(self) -> int:
         return self._require_ingest_result().relations_created
+
+    @property
+    def relations_reinforced(self) -> int:
+        return self._require_ingest_result().relations_reinforced
+
+    @property
+    def relations_superseded(self) -> int:
+        return self._require_ingest_result().relations_superseded
+
+    @property
+    def chunks_created(self) -> int:
+        return self._require_ingest_result().chunks_created
 
 
 def normalize_turn_text(text: str) -> str:

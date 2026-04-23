@@ -119,6 +119,13 @@ async def test_ingest_conversation_turn_skips_duplicate_in_same_process(monkeypa
     assert first.reason is None
     assert first.ingest_result is not None
     assert first.ingest_result.already_existed is False
+    assert first.already_existed is False
+    assert first.entities_created == 1
+    assert first.entities_reinforced == 0
+    assert first.relations_created == 0
+    assert first.relations_reinforced == 0
+    assert first.relations_superseded == 0
+    assert first.chunks_created == 1
 
     assert second.skipped is True
     assert second.reason == "duplicate"
