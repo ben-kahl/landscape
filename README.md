@@ -49,7 +49,7 @@ graph TD
     Qdrant["Qdrant\nvector search"]
     Ollama["Ollama\nLLM + embeddings (local)"]
 
-    Client -->|"search / remember / add_entity\nadd_relation / graph_query / status"| MCP
+    Client -->|"search / remember / capture_turn\nadd_entity / add_relation / graph_query / status"| MCP
     MCP --> API
     API --> Pipeline
     Pipeline --> Neo4j
@@ -195,17 +195,40 @@ If your MCP client uses a different config shape, the essential inputs are:
 - the FastAPI app must already be running
 - the existing `NEO4J_*`, `QDRANT_URL`, and `OLLAMA_URL` env vars still apply to the server process
 
-The seven MCP tools:
+The MCP tools:
 
 | Tool | Description |
 |---|---|
 | `search` | Hybrid retrieve: vector similarity + graph traversal up to N hops |
 | `remember` | Ingest free-text; extract entities and relations into the graph |
+| `capture_turn` | Capture an explicit conversation turn and schedule background ingestion |
 | `add_entity` | Directly assert a named entity with type and provenance |
 | `add_relation` | Assert a typed edge between two entities; supersedes functional conflicts |
 | `graph_query` | Run a read-only Cypher query against the knowledge graph |
 | `status` | Return a ~200-token summary: entity count, top entities, recent agent writes |
 | `conversation_history` | Return chronological turns and entities mentioned in a session |
+
+### Automatic MCP conversation ingestion
+
+Landscape can ingest eligible MCP conversation turns through `capture_turn`.
+Clients provide `session_id`, `turn_id`, `role`, and `text`; Landscape validates
+the turn, schedules ingestion in the background, and returns immediately. The
+foreground agent interaction is not blocked on extraction, embedding, Neo4j
+writes, or Qdrant writes.
+
+`capture_turn` is the MCP-first safety-net path for ordinary conversation
+memory. `remember` remains the explicit synchronous document-ingest tool, and
+`add_entity` / `add_relation` remain the precise structured write-back tools.
+
+### MCP transport note
+
+The recommended setup is the shared streamable HTTP endpoint mounted at
+`http://127.0.0.1:8000/mcp`. When clients connect to that endpoint, they share
+the same long-running FastAPI/MCP server process.
+
+Standalone stdio MCP launchers remain process-per-client: each client or
+subagent that starts `landscape-mcp` gets its own server subprocess. Use the
+HTTP endpoint when you want multiple agents to share one Landscape MCP instance.
 
 ## Reproduce the benchmarks
 

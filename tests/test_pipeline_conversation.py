@@ -10,7 +10,182 @@ Verifies that:
 """
 import pytest
 
+from landscape.conversation_ingestion import ConversationIngestResult, ingest_conversation_turn
+
 pytestmark = pytest.mark.integration
+
+
+# ---------------------------------------------------------------------------
+# Conversation ingestion primitives
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+def test_build_conversation_title_is_stable():
+    from landscape.conversation_ingestion import ConversationTurn, build_conversation_title
+
+    turn = ConversationTurn(
+        session_id="sess-1",
+        turn_id="t-7",
+        role=" User ",
+        text="Alice moved to Beacon.",
+    )
+
+    assert build_conversation_title(turn) == "conversation:sess-1:t-7:user"
+
+
+@pytest.mark.smoke
+def test_should_auto_ingest_turn_rejects_blank_text():
+    from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
+
+    turn = ConversationTurn(
+        session_id="sess-1",
+        turn_id="t-7",
+        role="user",
+        text="   ",
+    )
+
+    assert should_auto_ingest_turn(turn, seen_fingerprints=set()) is False
+
+
+@pytest.mark.asyncio
+async def test_ingest_conversation_turn_creates_document_and_links_turn(
+    http_client, neo4j_driver
+):
+    from landscape.conversation_ingestion import ConversationTurn, build_conversation_title
+
+    turn = ConversationTurn(
+        session_id="conv-4",
+        turn_id="t1",
+        role="user",
+        text="Alice joined Beacon Labs.",
+    )
+
+    expected_title = build_conversation_title(turn)
+    result = await ingest_conversation_turn(turn)
+
+    assert isinstance(result, ConversationIngestResult)
+    assert result.skipped is False
+    assert result.reason is None
+    assert result.title == expected_title
+    assert result.ingest_result is not None
+    assert result.ingest_result.already_existed is False
+
+    async with neo4j_driver.session() as session:
+        doc_link_rec = await (
+            await session.run(
+                "MATCH (d:Document {title: $title})-[:INGESTED_IN]->"
+                "(t:Turn {id: 'conv-4:t1'})"
+                " RETURN count(*) AS cnt"
+                ,
+                {"title": expected_title},
+            )
+        ).single()
+        assert doc_link_rec["cnt"] == 1, "Conversation turn ingest did not link Document to Turn"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_conversation_turn_skips_duplicate_in_same_process(monkeypatch):
+    from landscape.conversation_ingestion import ConversationTurn
+    from landscape.pipeline import IngestResult
+
+    async def fake_ingest(
+        text: str,
+        title: str,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+    ):
+        return IngestResult(
+            doc_id=f"doc:{title}",
+            already_existed=False,
+            entities_created=1,
+            entities_reinforced=0,
+            relations_created=0,
+            relations_reinforced=0,
+            relations_superseded=0,
+            chunks_created=1,
+        )
+
+    monkeypatch.setattr("landscape.conversation_ingestion.ingest", fake_ingest)
+
+    seen = set()
+    turn = ConversationTurn(
+        session_id="conv-5",
+        turn_id="t1",
+        role="user",
+        text="Alice joined Beacon Labs.",
+    )
+
+    first = await ingest_conversation_turn(turn, seen_fingerprints=seen)
+    second = await ingest_conversation_turn(turn, seen_fingerprints=seen)
+
+    assert first.skipped is False
+    assert first.reason is None
+    assert first.ingest_result is not None
+    assert first.ingest_result.already_existed is False
+    assert first.already_existed is False
+    assert first.entities_created == 1
+    assert first.entities_reinforced == 0
+    assert first.relations_created == 0
+    assert first.relations_reinforced == 0
+    assert first.relations_superseded == 0
+    assert first.chunks_created == 1
+
+    assert second.skipped is True
+    assert second.reason == "duplicate"
+    assert second.ingest_result is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_conversation_turn_marks_seen_only_after_success(monkeypatch):
+    from landscape.conversation_ingestion import ConversationTurn
+    from landscape.pipeline import IngestResult
+
+    attempts = 0
+
+    async def flaky_ingest(
+        text: str,
+        title: str,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+    ):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary ingestion failure")
+        return IngestResult(
+            doc_id=f"doc:{title}",
+            already_existed=False,
+            entities_created=1,
+            entities_reinforced=0,
+            relations_created=0,
+            relations_reinforced=0,
+            relations_superseded=0,
+            chunks_created=1,
+        )
+
+    monkeypatch.setattr("landscape.conversation_ingestion.ingest", flaky_ingest)
+
+    seen = set()
+    turn = ConversationTurn(
+        session_id="conv-6",
+        turn_id="t1",
+        role="user",
+        text="Alice joined Beacon Labs.",
+    )
+
+    with pytest.raises(RuntimeError, match="temporary ingestion failure"):
+        await ingest_conversation_turn(turn, seen_fingerprints=seen)
+
+    assert seen == set()
+
+    retry = await ingest_conversation_turn(turn, seen_fingerprints=seen)
+
+    assert retry.skipped is False
+    assert retry.ingest_result is not None
+    assert attempts == 2
 
 
 # ---------------------------------------------------------------------------

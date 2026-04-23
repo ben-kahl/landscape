@@ -12,7 +12,9 @@ DB isolation is provided by the autouse ``_isolated_test`` fixture in conftest
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
@@ -35,6 +37,7 @@ async def test_mcp_app_registers_expected_tools():
     assert {
         "search",
         "remember",
+        "capture_turn",
         "add_entity",
         "add_relation",
         "graph_query",
@@ -94,6 +97,128 @@ async def test_search_works_under_fastapi_lifespan_without_mcp_init():
     assert "results" in data
     assert "touched_entity_count" in data
     assert "chunks" in data
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_capture_turn_schedules_auto_ingestion_via_mcp_boundary(monkeypatch):
+    """capture_turn should schedule ingestion and return without awaiting it."""
+    import landscape.mcp_app as mcp_app
+
+    calls = []
+
+    class _NoAwait:
+        def __await__(self):
+            raise AssertionError("capture_turn must not await the scheduled task")
+
+    def fake_schedule_auto_ingestion(text: str, session_id: str, turn_id: str, role: str = "user"):
+        calls.append(
+            {
+                "text": text,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "role": role,
+            }
+        )
+        return _NoAwait()
+
+    monkeypatch.setattr(mcp_app, "_schedule_auto_ingestion", fake_schedule_auto_ingestion)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "capture_turn",
+            {
+                "session_id": "test-session",
+                "turn_id": "turn-1",
+                "role": "user",
+                "text": "Remember this note for later.",
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+
+    assert data == {"accepted": True, "scheduled": True}
+    assert calls == [
+        {
+            "text": "Remember this note for later.",
+            "session_id": "test-session",
+            "turn_id": "turn-1",
+            "role": "user",
+        }
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_capture_turn_rejects_ineligible_turns_at_mcp_boundary(monkeypatch):
+    """capture_turn should reject blank turns before background scheduling."""
+    import landscape.mcp_app as mcp_app
+
+    scheduled = []
+
+    def fake_schedule_auto_ingestion(text: str, session_id: str, turn_id: str, role: str = "user"):
+        scheduled.append((text, session_id, turn_id, role))
+        raise AssertionError("ineligible turns must not be scheduled")
+
+    monkeypatch.setattr(mcp_app, "_schedule_auto_ingestion", fake_schedule_auto_ingestion)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "capture_turn",
+            {
+                "session_id": "test-session",
+                "turn_id": "turn-1",
+                "role": "user",
+                "text": "   ",
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+
+    assert data == {"accepted": False, "scheduled": False}
+    assert scheduled == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_capture_turn_logs_background_failure_without_raising(monkeypatch, caplog):
+    """capture_turn should return success even if the background task fails."""
+    import landscape.mcp_app as mcp_app
+
+    caplog.set_level(logging.ERROR, logger=mcp_app.logger.name)
+
+    class _FailedTask:
+        def exception(self):
+            return RuntimeError("background boom")
+
+    class _ScheduledTask:
+        def add_done_callback(self, callback):
+            callback(_FailedTask())
+
+    def fake_create_task(coro):
+        coro.close()
+        return _ScheduledTask()
+
+    monkeypatch.setattr(mcp_app.asyncio, "create_task", fake_create_task)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "capture_turn",
+            {
+                "session_id": "test-session",
+                "turn_id": "turn-2",
+                "role": "user",
+                "text": "Keep this note around.",
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+    assert data == {"accepted": True, "scheduled": True}
+    assert "background boom" in caplog.text
+    assert "RuntimeError" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +311,40 @@ async def test_remember_creates_entities(http_client):
     assert data["entities_created"] > 0, "Expected at least one entity to be created"
     assert "already_existed" in data
     assert data["already_existed"] is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_schedule_auto_ingestion_creates_background_task(monkeypatch):
+    """_schedule_auto_ingestion() should create, not await, the auto-ingest task."""
+    from landscape import mcp_app
+
+    class DummyTask:
+        def __init__(self, coro):
+            self.coro = coro
+            self.callbacks = []
+
+        def add_done_callback(self, callback):
+            self.callbacks.append(callback)
+
+    scheduled_coroutines = []
+
+    def fake_create_task(coro):
+        scheduled_coroutines.append(coro)
+        coro.close()
+        return DummyTask(coro)
+
+    monkeypatch.setattr(
+        mcp_app, "asyncio", SimpleNamespace(create_task=fake_create_task), raising=False
+    )
+    task = mcp_app._schedule_auto_ingestion(
+        "Alice Chen joined the Platform Team in January.", "test-session", "t1"
+    )
+
+    assert len(scheduled_coroutines) == 1, "Expected a background task to be scheduled"
+    assert scheduled_coroutines[0].cr_code.co_name == "_auto_ingest_turn"
+    assert len(task.callbacks) == 1
+    assert task.callbacks[0] is mcp_app._log_auto_ingestion_failure
 
 
 @pytest.mark.asyncio
