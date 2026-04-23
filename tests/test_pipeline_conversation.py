@@ -125,6 +125,52 @@ async def test_ingest_conversation_turn_skips_duplicate_in_same_process(monkeypa
     assert second.ingest_result is None
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_conversation_turn_marks_seen_only_after_success(monkeypatch):
+    from landscape.conversation_ingestion import ConversationTurn
+    from landscape.pipeline import IngestResult
+
+    attempts = 0
+
+    async def flaky_ingest(text: str, title: str, session_id: str | None = None, turn_id: str | None = None):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary ingestion failure")
+        return IngestResult(
+            doc_id=f"doc:{title}",
+            already_existed=False,
+            entities_created=1,
+            entities_reinforced=0,
+            relations_created=0,
+            relations_reinforced=0,
+            relations_superseded=0,
+            chunks_created=1,
+        )
+
+    monkeypatch.setattr("landscape.conversation_ingestion.ingest", flaky_ingest)
+
+    seen = set()
+    turn = ConversationTurn(
+        session_id="conv-6",
+        turn_id="t1",
+        role="user",
+        text="Alice joined Beacon Labs.",
+    )
+
+    with pytest.raises(RuntimeError, match="temporary ingestion failure"):
+        await ingest_conversation_turn(turn, seen_fingerprints=seen)
+
+    assert seen == set()
+
+    retry = await ingest_conversation_turn(turn, seen_fingerprints=seen)
+
+    assert retry.skipped is False
+    assert retry.ingest_result is not None
+    assert attempts == 2
+
+
 # ---------------------------------------------------------------------------
 # Test 1: no session/turn — backwards compat
 # ---------------------------------------------------------------------------

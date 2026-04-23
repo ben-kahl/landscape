@@ -21,6 +21,27 @@ class ConversationIngestResult:
     reason: str | None
     ingest_result: IngestResult | None
 
+    def _require_ingest_result(self) -> IngestResult:
+        if self.ingest_result is None:
+            raise AttributeError("skipped conversation ingests do not have a pipeline result")
+        return self.ingest_result
+
+    @property
+    def doc_id(self) -> str:
+        return self._require_ingest_result().doc_id
+
+    @property
+    def already_existed(self) -> bool:
+        return self._require_ingest_result().already_existed
+
+    @property
+    def entities_created(self) -> int:
+        return self._require_ingest_result().entities_created
+
+    @property
+    def relations_created(self) -> int:
+        return self._require_ingest_result().relations_created
+
 
 def normalize_turn_text(text: str) -> str:
     return text.strip()
@@ -84,15 +105,15 @@ async def ingest_conversation_turn(
             ingest_result=None,
         )
 
-    if seen_fingerprints is not None:
-        seen_fingerprints.add(fingerprint)
-
     result = await ingest(
         turn.text,
         title,
         session_id=turn.session_id,
         turn_id=turn.turn_id,
     )
+    if seen_fingerprints is not None:
+        seen_fingerprints.add(fingerprint)
+
     return ConversationIngestResult(
         title=title,
         skipped=False,
