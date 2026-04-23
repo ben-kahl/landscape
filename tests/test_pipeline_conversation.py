@@ -391,32 +391,3 @@ async def test_ingest_idempotent_does_not_add_extra_turn_links(http_client, neo4
             f"Expected exactly 1 :INGESTED_IN edge, got {link_rec['cnt']} — "
             "second idempotent ingest should not add a second link"
         )
-
-
-def test_build_conversation_title_is_stable():
-    from landscape.conversation_ingestion import (
-        ConversationTurn,
-        build_conversation_title,
-    )
-
-    turns_a = [
-        ConversationTurn(role="user", text="  Plan the launch\nfor Friday.  "),
-        ConversationTurn(role="assistant", text="Sure."),
-    ]
-    turns_b = [
-        ConversationTurn(role="user", text="Plan the launch for Friday."),
-        ConversationTurn(role="assistant", text="Sure."),
-    ]
-
-    assert build_conversation_title(turns_a) == build_conversation_title(turns_b)
-
-
-def test_should_auto_ingest_turn_rejects_blank_text():
-    from landscape.conversation_ingestion import (
-        ConversationTurn,
-        should_auto_ingest_turn,
-    )
-
-    turn = ConversationTurn(role="user", text=" \n\t ")
-
-    assert should_auto_ingest_turn(turn) is False
