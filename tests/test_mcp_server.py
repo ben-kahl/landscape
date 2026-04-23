@@ -199,6 +199,84 @@ async def test_capture_turn_rejects_ineligible_turns_at_mcp_boundary(monkeypatch
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_capture_turn_skips_turn_already_written_by_remember(monkeypatch):
+    """Auto-ingest should not duplicate a turn already written explicitly."""
+    import landscape.mcp_app as mcp_app
+    from landscape.pipeline import IngestResult
+
+    mcp_app._EXPLICIT_MEMORY_TURN_KEYS.clear()
+
+    async def fake_ingest(text, title, source_type="text", session_id=None, turn_id=None):
+        return IngestResult(
+            doc_id="explicit-doc",
+            already_existed=False,
+            entities_created=1,
+            entities_reinforced=0,
+            relations_created=0,
+            relations_reinforced=0,
+            relations_superseded=0,
+            chunks_created=1,
+        )
+
+    def fail_schedule(text: str, session_id: str, turn_id: str, role: str = "user"):
+        raise AssertionError("explicitly remembered turns must not be auto-ingested")
+
+    monkeypatch.setattr("landscape.pipeline.ingest", fake_ingest)
+    monkeypatch.setattr(mcp_app, "_schedule_auto_ingestion", fail_schedule)
+
+    async with _mcp_client() as client:
+        remember_result = await client.call_tool(
+            "remember",
+            {
+                "text": "Alice joined Beacon Labs.",
+                "title": "explicit-alice-memory",
+                "session_id": "test-session",
+                "turn_id": "turn-3",
+            },
+        )
+        capture_result = await client.call_tool(
+            "capture_turn",
+            {
+                "session_id": "test-session",
+                "turn_id": "turn-3",
+                "role": "assistant",
+                "text": "I remembered that Alice joined Beacon Labs.",
+            },
+        )
+
+    assert not remember_result.isError, f"Tool returned error: {remember_result.content}"
+    assert not capture_result.isError, f"Tool returned error: {capture_result.content}"
+    assert _parse(capture_result) == {"accepted": False, "scheduled": False}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_capture_turn_rejects_tool_role_turns(monkeypatch):
+    """Tool-result/protocol turns should not be auto-ingested as memory."""
+    import landscape.mcp_app as mcp_app
+
+    def fail_schedule(text: str, session_id: str, turn_id: str, role: str = "user"):
+        raise AssertionError("tool-role turns must not be auto-ingested")
+
+    monkeypatch.setattr(mcp_app, "_schedule_auto_ingestion", fail_schedule)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "capture_turn",
+            {
+                "session_id": "test-session",
+                "turn_id": "turn-4",
+                "role": "tool",
+                "text": '{"doc_id": "explicit-doc", "already_existed": false}',
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    assert _parse(result) == {"accepted": False, "scheduled": False}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_capture_turn_logs_background_failure_without_raising(monkeypatch, caplog):
     """capture_turn should return success even if the background task fails."""
     import landscape.mcp_app as mcp_app

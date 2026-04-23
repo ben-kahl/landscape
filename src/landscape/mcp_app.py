@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("landscape")
 _AUTO_INGEST_SEEN_FINGERPRINTS: set[str] = set()
+_EXPLICIT_MEMORY_TURN_KEYS: set[tuple[str, str]] = set()
+
+
+def _turn_key(session_id: str, turn_id: str) -> tuple[str, str]:
+    return (session_id, turn_id)
 
 
 async def _auto_ingest_turn(
@@ -27,6 +32,9 @@ async def _auto_ingest_turn(
     role: str = "user",
 ):
     from landscape.conversation_ingestion import ConversationTurn, ingest_conversation_turn
+
+    if _turn_key(session_id, turn_id) in _EXPLICIT_MEMORY_TURN_KEYS:
+        return None
 
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
     return await ingest_conversation_turn(turn, seen_fingerprints=_AUTO_INGEST_SEEN_FINGERPRINTS)
@@ -117,6 +125,7 @@ async def remember(text: str, title: str, session_id: str, turn_id: str) -> str:
     from landscape.pipeline import ingest
 
     result = await ingest(text, title, session_id=session_id, turn_id=turn_id)
+    _EXPLICIT_MEMORY_TURN_KEYS.add(_turn_key(session_id, turn_id))
     output = {
         "doc_id": result.doc_id,
         "entities_created": result.entities_created,
@@ -133,6 +142,8 @@ async def capture_turn(session_id: str, turn_id: str, role: str, text: str) -> s
     from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
 
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
+    if _turn_key(session_id, turn_id) in _EXPLICIT_MEMORY_TURN_KEYS:
+        return json.dumps({"accepted": False, "scheduled": False})
     if not should_auto_ingest_turn(turn, seen_fingerprints=set()):
         return json.dumps({"accepted": False, "scheduled": False})
 

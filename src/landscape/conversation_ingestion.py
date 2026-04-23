@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from landscape.pipeline import IngestResult, ingest
 
+_TOOL_NOISE_ROLES = frozenset({"tool", "function"})
+
 
 @dataclass(frozen=True)
 class ConversationTurn:
@@ -88,6 +90,8 @@ def should_auto_ingest_turn(
     normalized = normalize_turn_text(turn.text)
     if not turn.session_id or not turn.turn_id or not normalized:
         return False
+    if normalize_turn_role(turn.role) in _TOOL_NOISE_ROLES:
+        return False
     if seen_fingerprints is None:
         return True
     normalized_turn = ConversationTurn(turn.session_id, turn.turn_id, turn.role, normalized)
@@ -108,6 +112,13 @@ async def ingest_conversation_turn(
             title=title,
             skipped=True,
             reason="ineligible",
+            ingest_result=None,
+        )
+    if normalize_turn_role(turn.role) in _TOOL_NOISE_ROLES:
+        return ConversationIngestResult(
+            title=title,
+            skipped=True,
+            reason="tool_noise",
             ingest_result=None,
         )
 
