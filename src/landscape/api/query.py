@@ -16,6 +16,7 @@ class QueryRequest(BaseModel):
     reinforce: bool = True
     session_id: str | None = None
     since_hours: int | None = Field(default=None, ge=1)
+    debug: bool = False
 
 
 class QueryResultItem(BaseModel):
@@ -64,6 +65,7 @@ async def query_endpoint(req: QueryRequest) -> QueryResponse:
         reinforce=req.reinforce,
         session_id=req.session_id,
         since=since,
+        debug=req.debug,
     )
     return QueryResponse(
         query=result.query,

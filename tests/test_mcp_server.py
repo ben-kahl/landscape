@@ -565,6 +565,66 @@ async def test_search_returns_results_shape(http_client):
         assert "path_edge_types" in first
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_search_threads_debug_flag_to_retrieve(monkeypatch):
+    from landscape.retrieval.query import RetrievalResult
+
+    calls = []
+
+    async def fake_retrieve(
+        query_text,
+        hops=2,
+        limit=10,
+        chunk_limit=3,
+        weights=None,
+        reinforce=True,
+        session_id=None,
+        since=None,
+        debug=False,
+        log_context=None,
+    ):
+        calls.append(
+            {
+                "query_text": query_text,
+                "hops": hops,
+                "limit": limit,
+                "chunk_limit": chunk_limit,
+                "reinforce": reinforce,
+                "session_id": session_id,
+                "debug": debug,
+            }
+        )
+        return RetrievalResult(
+            query=query_text,
+            results=[],
+            touched_entity_ids=[],
+            touched_edge_ids=[],
+            chunks=[],
+        )
+
+    monkeypatch.setattr("landscape.retrieval.query.retrieve", fake_retrieve)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "search",
+            {"query": "Project Atlas", "debug": True},
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    assert calls == [
+        {
+            "query_text": "Project Atlas",
+            "hops": 2,
+            "limit": 10,
+            "chunk_limit": 3,
+            "reinforce": True,
+            "session_id": None,
+            "debug": True,
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_remember_creates_entities(http_client):
     """remember() should ingest text and report entities_created > 0."""

@@ -268,6 +268,82 @@ def test_seed_killer_demo_threads_debug_flag(monkeypatch, tmp_path, capsys):
     assert "Step 3/3  Ingesting 2 docs..." in output
 
 
+def test_query_command_threads_debug_flag(monkeypatch, capsys):
+    from landscape.cli import query as query_cli
+    from landscape.retrieval.query import RetrievalResult, RetrievedEntity
+
+    class FakeQueryRetrieve:
+        def __init__(self):
+            self.calls = []
+
+        async def __call__(
+            self,
+            query_text,
+            hops=2,
+            limit=10,
+            chunk_limit=3,
+            weights=None,
+            reinforce=True,
+            session_id=None,
+            since=None,
+            debug=False,
+            log_context=None,
+        ):
+            self.calls.append(
+                {
+                    "query_text": query_text,
+                    "hops": hops,
+                    "limit": limit,
+                    "reinforce": reinforce,
+                    "debug": debug,
+                }
+            )
+            return RetrievalResult(
+                query=query_text,
+                results=[
+                    RetrievedEntity(
+                        neo4j_id="atlas-id",
+                        name="Project Atlas",
+                        type="PROJECT",
+                        distance=0,
+                        vector_sim=0.9,
+                        reinforcement=0.0,
+                        edge_confidence=0.0,
+                        score=1.0,
+                    )
+                ],
+                touched_entity_ids=["atlas-id"],
+                touched_edge_ids=[],
+                chunks=[],
+            )
+
+    fake_retrieve = FakeQueryRetrieve()
+    encoder = FakeEncoder()
+    qdrant_store = FakeQdrantStore()
+    neo4j_store = FakeNeo4jStore()
+
+    monkeypatch.setattr(
+        query_cli,
+        "_get_runtime",
+        lambda: (encoder, fake_retrieve, neo4j_store, qdrant_store),
+    )
+
+    exit_code = cli.main(["query", "Project Atlas", "--debug"])
+
+    assert exit_code == 0
+    assert fake_retrieve.calls == [
+        {
+            "query_text": "Project Atlas",
+            "hops": 2,
+            "limit": 10,
+            "reinforce": True,
+            "debug": True,
+        }
+    ]
+    output = capsys.readouterr().out
+    assert "1. Project Atlas [PROJECT]" in output
+
+
 @pytest.fixture
 def fake_runtime(monkeypatch):
     from landscape.cli import ingest as ingest_cli

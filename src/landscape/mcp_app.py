@@ -83,6 +83,7 @@ async def search(
     chunk_limit: int = 3,
     session_id: str | None = None,
     since_hours: int | None = None,
+    debug: bool = False,
 ) -> str:
     """Hybrid retrieval over the Landscape knowledge graph."""
     from landscape.retrieval.query import retrieve
@@ -99,6 +100,7 @@ async def search(
         chunk_limit=chunk_limit,
         session_id=session_id,
         since=since,
+        debug=debug,
     )
     output = {
         "results": [
