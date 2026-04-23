@@ -51,4 +51,4 @@ async def healthz():
     return {"status": "ok"}
 
 
-app.mount("/", mcp_http_app)
+app.router.routes.extend(mcp_http_app.routes)

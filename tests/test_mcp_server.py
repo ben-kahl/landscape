@@ -53,9 +53,11 @@ def test_fastapi_app_exposes_single_mcp_path_without_nested_mount():
     app_mounts = {
         route.path for route in app.routes if isinstance(route, Mount)
     }
+    app_paths = {route.path for route in app.routes if hasattr(route, "path")}
     mcp_paths = {route.path for route in mcp_http_app.routes if hasattr(route, "path")}
 
-    assert "" in app_mounts
+    assert "" not in app_mounts
+    assert "/mcp" in app_paths
     assert "/mcp" in mcp_paths
     assert "/mcp" not in app_mounts
 
