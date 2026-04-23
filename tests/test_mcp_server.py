@@ -12,6 +12,7 @@ DB isolation is provided by the autouse ``_isolated_test`` fixture in conftest
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -178,6 +179,46 @@ async def test_capture_turn_rejects_ineligible_turns_at_mcp_boundary(monkeypatch
 
     assert data == {"accepted": False, "scheduled": False}
     assert scheduled == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_capture_turn_logs_background_failure_without_raising(monkeypatch, caplog):
+    """capture_turn should return success even if the background task fails."""
+    import landscape.mcp_app as mcp_app
+
+    caplog.set_level(logging.ERROR, logger=mcp_app.logger.name)
+
+    class _FailedTask:
+        def exception(self):
+            return RuntimeError("background boom")
+
+    class _ScheduledTask:
+        def add_done_callback(self, callback):
+            callback(_FailedTask())
+
+    def fake_create_task(coro):
+        coro.close()
+        return _ScheduledTask()
+
+    monkeypatch.setattr(mcp_app.asyncio, "create_task", fake_create_task)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "capture_turn",
+            {
+                "session_id": "test-session",
+                "turn_id": "turn-2",
+                "role": "user",
+                "text": "Keep this note around.",
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+    assert data == {"accepted": True, "scheduled": True}
+    assert "background boom" in caplog.text
+    assert "RuntimeError" in caplog.text
 
 
 # ---------------------------------------------------------------------------

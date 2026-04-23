@@ -14,7 +14,12 @@ class ConversationTurn:
     text: str
 
 
-ConversationIngestResult = IngestResult
+@dataclass(frozen=True)
+class ConversationIngestResult:
+    title: str
+    skipped: bool
+    reason: str | None
+    ingest_result: IngestResult | None
 
 
 def normalize_turn_text(text: str) -> str:
@@ -38,10 +43,16 @@ def turn_fingerprint(turn: ConversationTurn) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def should_auto_ingest_turn(turn: ConversationTurn, *, seen_fingerprints: set[str]) -> bool:
+def should_auto_ingest_turn(
+    turn: ConversationTurn,
+    *,
+    seen_fingerprints: set[str] | None = None,
+) -> bool:
     normalized = normalize_turn_text(turn.text)
     if not turn.session_id or not turn.turn_id or not normalized:
         return False
+    if seen_fingerprints is None:
+        return True
     normalized_turn = ConversationTurn(turn.session_id, turn.turn_id, turn.role, normalized)
     if turn_fingerprint(normalized_turn) in seen_fingerprints:
         return False
@@ -50,10 +61,41 @@ def should_auto_ingest_turn(turn: ConversationTurn, *, seen_fingerprints: set[st
 
 async def ingest_conversation_turn(
     turn: ConversationTurn,
+    *,
+    seen_fingerprints: set[str] | None = None,
 ) -> ConversationIngestResult:
-    return await ingest(
+    title = build_conversation_title(turn)
+    normalized = normalize_turn_text(turn.text)
+    if not turn.session_id or not turn.turn_id or not normalized:
+        return ConversationIngestResult(
+            title=title,
+            skipped=True,
+            reason="ineligible",
+            ingest_result=None,
+        )
+
+    normalized_turn = ConversationTurn(turn.session_id, turn.turn_id, turn.role, normalized)
+    fingerprint = turn_fingerprint(normalized_turn)
+    if seen_fingerprints is not None and fingerprint in seen_fingerprints:
+        return ConversationIngestResult(
+            title=title,
+            skipped=True,
+            reason="duplicate",
+            ingest_result=None,
+        )
+
+    if seen_fingerprints is not None:
+        seen_fingerprints.add(fingerprint)
+
+    result = await ingest(
         turn.text,
-        build_conversation_title(turn),
+        title,
         session_id=turn.session_id,
         turn_id=turn.turn_id,
+    )
+    return ConversationIngestResult(
+        title=title,
+        skipped=False,
+        reason=None,
+        ingest_result=result,
     )

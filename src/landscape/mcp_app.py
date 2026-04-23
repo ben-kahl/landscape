@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("landscape")
+_AUTO_INGEST_SEEN_FINGERPRINTS: set[str] = set()
 
 
 async def _auto_ingest_turn(
@@ -28,7 +29,7 @@ async def _auto_ingest_turn(
     from landscape.conversation_ingestion import ConversationTurn, ingest_conversation_turn
 
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
-    return await ingest_conversation_turn(turn)
+    return await ingest_conversation_turn(turn, seen_fingerprints=_AUTO_INGEST_SEEN_FINGERPRINTS)
 
 
 def _log_auto_ingestion_failure(task: asyncio.Task) -> None:
@@ -41,7 +42,10 @@ def _log_auto_ingestion_failure(task: asyncio.Task) -> None:
         return
 
     if exc is not None:
-        logger.exception("Landscape auto-ingestion task failed", exc_info=exc)
+        logger.error(
+            "Landscape auto-ingestion task failed",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
 
 
 def _schedule_auto_ingestion(

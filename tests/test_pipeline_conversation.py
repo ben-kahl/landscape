@@ -65,7 +65,11 @@ async def test_ingest_conversation_turn_creates_document_and_links_turn(
     result = await ingest_conversation_turn(turn)
 
     assert isinstance(result, ConversationIngestResult)
-    assert result.already_existed is False
+    assert result.skipped is False
+    assert result.reason is None
+    assert result.title == expected_title
+    assert result.ingest_result is not None
+    assert result.ingest_result.already_existed is False
 
     async with neo4j_driver.session() as session:
         doc_link_rec = await (
@@ -78,6 +82,47 @@ async def test_ingest_conversation_turn_creates_document_and_links_turn(
             )
         ).single()
         assert doc_link_rec["cnt"] == 1, "Conversation turn ingest did not link Document to Turn"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_conversation_turn_skips_duplicate_in_same_process(monkeypatch):
+    from landscape.conversation_ingestion import ConversationTurn
+    from landscape.pipeline import IngestResult
+
+    async def fake_ingest(text: str, title: str, session_id: str | None = None, turn_id: str | None = None):
+        return IngestResult(
+            doc_id=f"doc:{title}",
+            already_existed=False,
+            entities_created=1,
+            entities_reinforced=0,
+            relations_created=0,
+            relations_reinforced=0,
+            relations_superseded=0,
+            chunks_created=1,
+        )
+
+    monkeypatch.setattr("landscape.conversation_ingestion.ingest", fake_ingest)
+
+    seen = set()
+    turn = ConversationTurn(
+        session_id="conv-5",
+        turn_id="t1",
+        role="user",
+        text="Alice joined Beacon Labs.",
+    )
+
+    first = await ingest_conversation_turn(turn, seen_fingerprints=seen)
+    second = await ingest_conversation_turn(turn, seen_fingerprints=seen)
+
+    assert first.skipped is False
+    assert first.reason is None
+    assert first.ingest_result is not None
+    assert first.ingest_result.already_existed is False
+
+    assert second.skipped is True
+    assert second.reason == "duplicate"
+    assert second.ingest_result is None
 
 
 # ---------------------------------------------------------------------------
