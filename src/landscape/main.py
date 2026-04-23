@@ -27,14 +27,17 @@ def _refresh_mcp_http_session_manager() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with mcp_http_app.router.lifespan_context(mcp_http_app):
-        encoder.load_model()
-        await qdrant_store.init_collection()
-        await qdrant_store.init_chunks_collection()
-        yield
-        await neo4j_store.close_driver()
-        await qdrant_store.close_client()
     _refresh_mcp_http_session_manager()
+    try:
+        async with mcp_http_app.router.lifespan_context(mcp_http_app):
+            encoder.load_model()
+            await qdrant_store.init_collection()
+            await qdrant_store.init_chunks_collection()
+            yield
+            await neo4j_store.close_driver()
+            await qdrant_store.close_client()
+    finally:
+        _refresh_mcp_http_session_manager()
 
 
 app = FastAPI(title="Landscape", lifespan=lifespan)
