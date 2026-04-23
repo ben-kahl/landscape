@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -10,9 +11,11 @@ from time import perf_counter
 
 LOGGER_NAME = "landscape.ingest"
 DEFAULT_LOG_DIR = Path("logs") / "ingest"
-DEFAULT_LOG_FILE = "ingest.jsonl"
 _INGEST_FILE_HANDLER: logging.FileHandler | None = None
 _INGEST_LOG_PATH: Path | None = None
+_PROCESS_LOG_BASENAME = (
+    f"ingest-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}-pid{os.getpid()}.jsonl"
+)
 
 
 def _now_iso() -> str:
@@ -27,6 +30,10 @@ def _compact_fields(fields: dict[str, object]) -> dict[str, object]:
     return {key: value for key, value in fields.items() if value is not None}
 
 
+def _default_process_log_path(log_dir: Path) -> Path:
+    return log_dir / _PROCESS_LOG_BASENAME
+
+
 def ensure_ingest_log_sink(
     log_dir: Path | None = None,
     *,
@@ -38,7 +45,7 @@ def ensure_ingest_log_sink(
         return _INGEST_LOG_PATH
 
     resolved_dir = (log_dir or DEFAULT_LOG_DIR).resolve()
-    log_path = resolved_dir / DEFAULT_LOG_FILE
+    log_path = _default_process_log_path(resolved_dir)
 
     if (
         not force

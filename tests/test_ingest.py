@@ -514,7 +514,7 @@ async def test_ingest_api_threads_debug_flag(monkeypatch, http_client):
 
 
 @pytest.mark.unit
-def test_ingest_log_sink_writes_jsonl_to_logs_folder(tmp_path):
+def test_ingest_log_sink_writes_jsonl_to_process_scoped_file(tmp_path):
     from landscape.observability.ingest_logging import (
         create_ingest_log_context,
         ensure_ingest_log_sink,
@@ -522,6 +522,7 @@ def test_ingest_log_sink_writes_jsonl_to_logs_folder(tmp_path):
 
     log_dir = tmp_path / "logs" / "ingest"
     log_path = ensure_ingest_log_sink(log_dir, force=True)
+    second_path = ensure_ingest_log_sink(log_dir)
 
     ctx = create_ingest_log_context(
         title="sink-doc",
@@ -540,7 +541,10 @@ def test_ingest_log_sink_writes_jsonl_to_logs_folder(tmp_path):
         chunks_created=1,
     )
 
-    assert log_path == log_dir / "ingest.jsonl"
+    assert second_path == log_path
+    assert log_path.parent == log_dir
+    assert log_path.name.startswith("ingest-")
+    assert log_path.suffix == ".jsonl"
     assert log_path.exists()
     lines = log_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 2
