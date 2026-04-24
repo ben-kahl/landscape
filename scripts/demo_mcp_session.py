@@ -141,8 +141,8 @@ async def run_demo() -> None:
                         ec = data.get("entities_created", "?")
                         rc = data.get("relations_created", "?")
                         rs = data.get("relations_superseded", "?")
-                        print(f"  -> remember(\"Alice works for Atlas Corp as a senior engineer.\")")
-                        print(f"     session_id=demo-mcp-1  turn_id=t1")
+                        print("  -> remember(\"Alice works for Atlas Corp as a senior engineer.\")")
+                        print("     session_id=demo-mcp-1  turn_id=t1")
                         print(f"     entities_created={ec}, relations_created={rc},")
                         print(f"     relations_superseded={rs}")
                 except Exception as exc:
@@ -203,8 +203,8 @@ async def run_demo() -> None:
                         data = _parse(result)
                         outcome = data.get("outcome", "?")
                         rid = data.get("relation_id", "?")
-                        print(f"  -> add_relation(Alice, Beacon, WORKS_FOR)")
-                        print(f"     session_id=demo-mcp-1  turn_id=t2")
+                        print("  -> add_relation(Alice, Beacon, WORKS_FOR)")
+                        print("     session_id=demo-mcp-1  turn_id=t2")
                         print(f"     outcome={outcome}  relation_id={rid}")
                         if outcome == "superseded":
                             superseded = True
@@ -264,7 +264,7 @@ async def run_demo() -> None:
                         print(f"  ERROR: {result.content[0].text if result.content else 'unknown'}")
                     else:
                         data = _parse(result)
-                        print(f"  -> status()")
+                        print("  -> status()")
                         print(f"     entity_count        = {data.get('entity_count', '?')}")
                         print(f"     document_count      = {data.get('document_count', '?')}")
                         print(f"     relation_count      = {data.get('relation_count', '?')}")
@@ -351,7 +351,7 @@ async def run_demo() -> None:
                         turns = data.get("turns", [])
                         conv_id = conv.get("id") if conv else "N/A"
                         conv_title = conv.get("title") if conv else "N/A"
-                        print(f"  -> conversation_history(session_id=demo-mcp-1)")
+                        print("  -> conversation_history(session_id=demo-mcp-1)")
                         print(f"     conversation id={conv_id}  title={conv_title}")
                         for t in turns:
                             entities = [e.get("name") for e in t.get("entities_mentioned", [])]

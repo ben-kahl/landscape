@@ -113,7 +113,7 @@ async def main() -> None:
         record = await result.single()
     print()
     print(f"Done. entities={record['ents']} live_relations={record['live_rels']}")
-    print(f"Ready. Point an MCP client at `uv run landscape-mcp` to query.")
+    print("Ready. Point an MCP client at `uv run landscape-mcp` to query.")
 
     await neo4j_store.close_driver()
     await qdrant_store.close_client()

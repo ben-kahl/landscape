@@ -17,13 +17,11 @@ Usage:
     uv run python scripts/bench_extraction.py --list
 """
 import argparse
-import asyncio
+import os
 import pathlib
 import sys
 import time
 from dataclasses import dataclass, field
-
-import os
 
 os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
 os.environ.setdefault("NEO4J_USER", "neo4j")
@@ -45,7 +43,8 @@ CORPUS_DIR = pathlib.Path(__file__).resolve().parent / "../tests/fixtures/killer
 # vs "Maya"). Relations are (subject_substring, rel_type, object_substring).
 
 EXPECTED_ENTITIES: dict[str, set[str]] = {
-    "01_org_chart": {"Helios Robotics", "Maya", "Diego", "Wei Zhang", "Anika Patel", "Platform Team", "Vision Team", "Fleet Operations", "Boston"},
+    "01_org_chart": {"Helios Robotics", "Maya", "Diego", "Wei Zhang", "Anika Patel", "Platform Team",
+                     "Vision Team", "Fleet Operations", "Boston"},
     "02_platform_team_roster": {"Maya", "Tomás", "Priya", "Rahul", "Platform Team"},
     "03_project_aurora": {"Aurora", "PostgreSQL", "Priya", "Platform Team"},
     "04_aurora_db_decision": {"Maya", "PostgreSQL", "Aurora"},

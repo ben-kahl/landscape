@@ -266,7 +266,8 @@ def build_agent():
     def _search_sync(query: str) -> str:
         return asyncio.get_event_loop().run_until_complete(_search_memory(query))
 
-    def _record_sync(subject: str, subject_type: str, object: str, object_type: str, rel_type: str) -> str:  # noqa: A002
+    def _record_sync(subject: str, subject_type: str, 
+                     object: str, object_type: str, rel_type: str) -> str:  # noqa: A002
         return asyncio.get_event_loop().run_until_complete(
             _record_relation(subject, subject_type, object, object_type, rel_type)
         )
@@ -484,7 +485,7 @@ async def run_demo() -> int:  # noqa: C901
         edge = await _inspect_alice_works_for_edge()
         superseded_ok = await _check_alice_supersession()
         if edge:
-            print(f"  Most recent agent-written edge from Alice:")
+            print("  Most recent agent-written edge from Alice:")
             print(f"    rel_type={edge.get('rel_type')}  object={edge.get('object')}  status={edge.get('status')}")
         else:
             print("  No agent-written edge from Alice found in graph.")

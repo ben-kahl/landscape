@@ -18,10 +18,6 @@ Usage:
 
 import argparse
 import json
-import pathlib
-import sys
-import tempfile
-import uuid
 
 # Bootstrap env before landscape imports so Settings picks up defaults.
 # PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python is required because chromadb
@@ -29,6 +25,10 @@ import uuid
 # descriptors that are incompatible with protobuf >= 4.x (present in this env).
 # The pure-Python implementation is slower but correct.
 import os
+import pathlib
+import sys
+import tempfile
+import uuid
 
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 # Force CPU for embedding to avoid VRAM contention with other processes.

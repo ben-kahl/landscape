@@ -2,8 +2,8 @@
 
 These tests cover the pure-logic helpers that do not need the docker stack.
 """
-import sys
 import os
+import sys
 
 import pytest
 
@@ -13,12 +13,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 @pytest.mark.unit
 def test_format_docs_for_prompt_joins_page_content():
-    from langchain_core.documents import Document
     from bench_longmemeval import _format_docs_for_prompt
+    from langchain_core.documents import Document
 
     docs = [
         Document(page_content="Alice (Person) [seed]", metadata={"kind": "entity"}),
-        Document(page_content="Atlas Corp (Organization) [1 hops via WORKS_FOR]", metadata={"kind": "entity"}),
+        Document(page_content="Atlas Corp (Organization) [1 hops via WORKS_FOR]", 
+                 metadata={"kind": "entity"}),
         Document(page_content="Alice joined Atlas Corp last year.", metadata={"kind": "chunk"}),
     ]
     result = _format_docs_for_prompt(docs)
