@@ -82,6 +82,10 @@ async def reset_state() -> None:
     finally:
         await qclient.close()
 
+    # Re-initialize collections — the running server won't redo its lifespan startup.
+    await qdrant_store.init_collection()
+    await qdrant_store.init_chunks_collection()
+
 
 # ---------------------------------------------------------------------------
 # MCP client helpers
