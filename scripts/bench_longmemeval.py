@@ -47,7 +47,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from landscape import pipeline  # noqa: E402
 from landscape.embeddings import encoder  # noqa: E402
-from landscape.retrieval.query import retrieve  # noqa: E402
+from landscape.retrieval.langchain_retriever import LandscapeRetriever  # noqa: E402
 from landscape.storage import neo4j_store, qdrant_store  # noqa: E402
 
 QUESTION_TYPE = "single-session-user"
@@ -168,9 +168,16 @@ def _pick_sessions(q: dict, max_sessions: int) -> list[int]:
     return picked[:max_sessions]
 
 
-async def _run_question(q: dict, max_sessions: int, k: int) -> dict:
-    """Wipe → ingest sampled sessions (tagged by Landscape session_id) →
-    query question → check top-k coverage of evidence sessions."""
+async def _run_question(
+    q: dict,
+    max_sessions: int,
+    k: int,
+    bedrock_client,
+    judge_model: str,
+    skip_judge: bool,
+) -> dict:
+    """Wipe → ingest sampled sessions → retrieve via LandscapeRetriever →
+    optionally generate answer and judge against gold."""
     qid = q["question_id"]
     question = q["question"]
     answer = q.get("answer")
@@ -198,7 +205,7 @@ async def _run_question(q: dict, max_sessions: int, k: int) -> dict:
                 session_id=landscape_sid,
                 turn_id="t0",
             )
-        except Exception as exc:  # extraction-layer failures shouldn't abort the smoke
+        except Exception as exc:
             print(f"  [warn] ingest failed for {source_sid}: {exc!r}", file=sys.stderr)
             continue
         if source_sid in gold_source_ids:
@@ -209,20 +216,24 @@ async def _run_question(q: dict, max_sessions: int, k: int) -> dict:
     for sid in gold_landscape_sids:
         gold_entity_ids.update(await neo4j_store.get_entities_in_conversation(sid))
 
+    retriever = LandscapeRetriever(hops=2, limit=k, reinforce=False)
     query_t0 = time.time()
-    result = await retrieve(
-        query_text=question,
-        hops=2,
-        limit=k,
-        reinforce=False,
-    )
+    docs = await retriever.ainvoke(question)
     query_s = time.time() - query_t0
 
-    top_names = [r.name for r in result.results]
-    top_ids = [r.neo4j_id for r in result.results]
-    hit = any(eid in gold_entity_ids for eid in top_ids)
+    top_names = [
+        d.metadata.get("name", d.page_content[:40])
+        for d in docs
+        if d.metadata.get("kind") == "entity"
+    ]
+    top_ids = [
+        d.metadata.get("neo4j_id")
+        for d in docs
+        if d.metadata.get("kind") == "entity"
+    ]
+    hit = any(eid in gold_entity_ids for eid in top_ids if eid)
 
-    return {
+    row: dict = {
         "question_id": qid,
         "question": question,
         "answer": answer,
@@ -234,6 +245,15 @@ async def _run_question(q: dict, max_sessions: int, k: int) -> dict:
         "ingest_s": round(ingest_s, 2),
         "query_s": round(query_s, 3),
     }
+
+    if not skip_judge and bedrock_client is not None:
+        generated = _generate_answer(bedrock_client, judge_model, docs, question)
+        judgment = _judge_answer(bedrock_client, judge_model, question, answer or "", generated)
+        row["generated_answer"] = generated
+        row["judgment"] = judgment.get("judgment", "incorrect")
+        row["judgment_reason"] = judgment.get("reason", "")
+
+    return row
 
 
 async def main() -> int:
@@ -272,7 +292,14 @@ async def main() -> int:
     results: list[dict] = []
     for i, q in enumerate(sampled, start=1):
         print(f"[{i}/{len(sampled)}] {q['question_id']}: {q['question'][:80]}")
-        row = await _run_question(q, max_sessions=args.max_sessions, k=args.k)
+        row = await _run_question(
+            q,
+            max_sessions=args.max_sessions,
+            k=args.k,
+            bedrock_client=None,
+            judge_model="",
+            skip_judge=True,
+        )
         print(f"    hit@{args.k}={row['hit_at_k']}  ingest={row['ingest_s']}s  query={row['query_s']}s")
         results.append(row)
 
