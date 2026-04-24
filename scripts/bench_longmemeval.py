@@ -104,13 +104,15 @@ def _format_docs_for_prompt(docs: list) -> str:
 def _parse_judge_response(raw: str) -> dict:
     """Parse a Bedrock judge response string into {judgment, reason}.
 
-    Handles plain JSON and JSON wrapped in markdown code fences.
+    Handles plain JSON, JSON wrapped in markdown code fences, and Bedrock
+    responses that prepend prose before the fence.
     Returns {"judgment": "incorrect", "reason": "parse error: ..."} on failure.
     """
     text = raw.strip()
-    if text.startswith("```"):
+    fence_start = text.find("```")
+    if fence_start != -1:
+        text = text[fence_start:]
         parts = text.split("```")
-        # parts[1] is the content between the first pair of fences
         inner = parts[1] if len(parts) > 1 else ""
         if inner.startswith("json"):
             inner = inner[4:]
@@ -124,12 +126,12 @@ def _parse_judge_response(raw: str) -> dict:
         return {"judgment": "incorrect", "reason": f"parse error: {exc!r} raw={raw!r}"}
 
 
-def _bedrock_invoke(client, model_id: str, prompt: str) -> str:
+def _bedrock_invoke(client, model_id: str, prompt: str, max_tokens: int = 512) -> str:
     """Send a single-turn prompt to Bedrock and return the response text."""
     response = client.converse(
         modelId=model_id,
         messages=[{"role": "user", "content": [{"text": prompt}]}],
-        inferenceConfig={"maxTokens": 512, "temperature": 0},
+        inferenceConfig={"maxTokens": max_tokens, "temperature": 0},
     )
     return response["output"]["message"]["content"][0]["text"].strip()
 
@@ -163,7 +165,7 @@ def _judge_answer(client, model_id: str, question: str, gold: str, generated: st
         "gold answer also indicates the information was not available.\n"
         '- "incorrect": any other case.'
     )
-    raw = _bedrock_invoke(client, model_id, prompt)
+    raw = _bedrock_invoke(client, model_id, prompt, max_tokens=256)
     return _parse_judge_response(raw)
 
 
@@ -202,6 +204,7 @@ async def _run_question(
     await _wipe_stack()
 
     gold_landscape_sids: list[str] = []
+    ingested_count = 0
     ingest_t0 = time.time()
     for i in picked_idx:
         source_sid = session_ids[i] if i < len(session_ids) else f"s{i}"
@@ -220,6 +223,7 @@ async def _run_question(
         except Exception as exc:
             print(f"  [warn] ingest failed for {source_sid}: {exc!r}", file=sys.stderr)
             continue
+        ingested_count += 1
         if source_sid in gold_source_ids:
             gold_landscape_sids.append(landscape_sid)
     ingest_s = time.time() - ingest_t0
@@ -249,7 +253,7 @@ async def _run_question(
         "question_id": qid,
         "question": question,
         "answer": answer,
-        "n_sessions_ingested": len(picked_idx),
+        "n_sessions_ingested": ingested_count,
         "n_gold_sessions": len(gold_landscape_sids),
         "n_gold_entities": len(gold_entity_ids),
         "hit_at_k": hit,
@@ -259,11 +263,17 @@ async def _run_question(
     }
 
     if not skip_judge and bedrock_client is not None:
-        generated = _generate_answer(bedrock_client, judge_model, docs, question)
-        judgment = _judge_answer(bedrock_client, judge_model, question, answer or "", generated)
-        row["generated_answer"] = generated
-        row["judgment"] = judgment.get("judgment", "incorrect")
-        row["judgment_reason"] = judgment.get("reason", "")
+        try:
+            generated = _generate_answer(bedrock_client, judge_model, docs, question)
+            judgment = _judge_answer(bedrock_client, judge_model, question, answer or "", generated)
+            row["generated_answer"] = generated
+            row["judgment"] = judgment.get("judgment", "incorrect")
+            row["judgment_reason"] = judgment.get("reason", "")
+        except Exception as exc:
+            print(f"  [warn] Bedrock call failed for {qid}: {exc!r}", file=sys.stderr)
+            row["generated_answer"] = None
+            row["judgment"] = "error"
+            row["judgment_reason"] = str(exc)
 
     return row
 

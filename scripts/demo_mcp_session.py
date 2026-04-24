@@ -366,7 +366,7 @@ async def run_demo() -> None:
                 print()
     except Exception as exc:
         import httpx
-        if isinstance(exc, httpx.ConnectError):
+        if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException)):
             print(
                 f"Error: could not connect to MCP server at {MCP_URL}\n"
                 "Start the server first: uv run uvicorn landscape.main:app --host 0.0.0.0 --port 8000"
