@@ -84,6 +84,77 @@ def _format_session(session_turns: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
+def _format_docs_for_prompt(docs: list) -> str:
+    """Render retrieved Documents (entities + chunks) as a plain-text context block."""
+    return "\n\n".join(d.page_content for d in docs)
+
+
+def _parse_judge_response(raw: str) -> dict:
+    """Parse a Bedrock judge response string into {judgment, reason}.
+
+    Handles plain JSON and JSON wrapped in markdown code fences.
+    Returns {"judgment": "incorrect", "reason": "parse error: ..."} on failure.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        parts = text.split("```")
+        # parts[1] is the content between the first pair of fences
+        inner = parts[1] if len(parts) > 1 else ""
+        if inner.startswith("json"):
+            inner = inner[4:]
+        text = inner.strip()
+    try:
+        parsed = json.loads(text)
+        if "judgment" not in parsed:
+            raise ValueError("missing 'judgment' key")
+        return parsed
+    except Exception as exc:
+        return {"judgment": "incorrect", "reason": f"parse error: {exc!r} raw={raw!r}"}
+
+
+def _bedrock_invoke(client, model_id: str, prompt: str) -> str:
+    """Send a single-turn prompt to Bedrock and return the response text."""
+    response = client.converse(
+        modelId=model_id,
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
+        inferenceConfig={"maxTokens": 512, "temperature": 0},
+    )
+    return response["output"]["message"]["content"][0]["text"].strip()
+
+
+def _generate_answer(client, model_id: str, docs: list, question: str) -> str:
+    """Call Bedrock to answer question from retrieved document context."""
+    context = _format_docs_for_prompt(docs)
+    prompt = (
+        "You are answering a question about a person's memories and experiences.\n"
+        "Use only the context below. If the context does not contain enough information "
+        'to answer, respond with exactly: "I don\'t have that information."\n\n'
+        f"Context:\n{context}\n\n"
+        f"Question: {question}\n\n"
+        "Answer concisely in one or two sentences."
+    )
+    return _bedrock_invoke(client, model_id, prompt)
+
+
+def _judge_answer(client, model_id: str, question: str, gold: str, generated: str) -> dict:
+    """Call Bedrock to judge whether generated matches gold. Returns {judgment, reason}."""
+    prompt = (
+        f"Question: {question}\n"
+        f"Gold answer: {gold}\n"
+        f"Generated answer: {generated}\n\n"
+        "Does the generated answer correctly answer the question given the gold answer?\n"
+        'Respond with a JSON object only: {"judgment": "correct"|"incorrect"|"abstained", "reason": "..."}\n\n'
+        "Rules:\n"
+        '- "correct": the generated answer conveys the same information as the gold answer, '
+        "allowing for paraphrase.\n"
+        '- "abstained": the generated answer says it does not have the information AND the '
+        "gold answer also indicates the information was not available.\n"
+        '- "incorrect": any other case.'
+    )
+    raw = _bedrock_invoke(client, model_id, prompt)
+    return _parse_judge_response(raw)
+
+
 def _pick_sessions(q: dict, max_sessions: int) -> list[int]:
     """Return indices into haystack_sessions: gold evidence first, then
     distractors, capped at max_sessions."""
