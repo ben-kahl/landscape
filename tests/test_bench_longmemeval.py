@@ -4,6 +4,7 @@ These tests cover the pure-logic helpers that do not need the docker stack.
 """
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,28 +12,62 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 
+def _make_result(entities=(), chunks=()):
+    """Build a minimal RetrieveResult-like object for testing."""
+    return SimpleNamespace(results=list(entities), chunks=list(chunks))
+
+
+def _entity(name, type_, path_edge_types=(), path_edge_quantities=()):
+    return SimpleNamespace(
+        name=name,
+        type=type_,
+        path_edge_types=list(path_edge_types),
+        path_edge_quantities=list(path_edge_quantities),
+    )
+
+
+def _chunk(text, source_doc="session-1"):
+    return SimpleNamespace(text=text, source_doc=source_doc)
+
+
 @pytest.mark.unit
-def test_format_docs_for_prompt_joins_page_content():
-    from bench_longmemeval import _format_docs_for_prompt
-    from langchain_core.documents import Document
+def test_format_search_result_includes_entities_and_chunks():
+    from bench_longmemeval import _format_search_result
 
-    docs = [
-        Document(page_content="Alice (Person) [seed]", metadata={"kind": "entity"}),
-        Document(page_content="Atlas Corp (Organization) [1 hops via WORKS_FOR]", 
-                 metadata={"kind": "entity"}),
-        Document(page_content="Alice joined Atlas Corp last year.", metadata={"kind": "chunk"}),
-    ]
-    result = _format_docs_for_prompt(docs)
-    assert "Alice (Person) [seed]" in result
-    assert "Atlas Corp (Organization) [1 hops via WORKS_FOR]" in result
-    assert "Alice joined Atlas Corp last year." in result
+    result = _make_result(
+        entities=[
+            _entity("Alice", "Person"),
+            _entity("Atlas Corp", "Organization", ["WORKS_FOR"]),
+        ],
+        chunks=[_chunk("Alice joined Atlas Corp last year.", "session-42")],
+    )
+    out = _format_search_result(result)
+    assert "Alice (Person)" in out
+    assert "Atlas Corp (Organization)" in out
+    assert "WORKS_FOR" in out
+    assert "Alice joined Atlas Corp last year." in out
+    assert "session-42" in out
 
 
 @pytest.mark.unit
-def test_format_docs_for_prompt_empty_returns_empty_string():
-    from bench_longmemeval import _format_docs_for_prompt
+def test_format_search_result_renders_edge_quantities():
+    from bench_longmemeval import _format_search_result
 
-    assert _format_docs_for_prompt([]) == ""
+    qty = {"quantity_value": 3, "quantity_unit": None, "quantity_kind": "quantity", "time_scope": None}
+    result = _make_result(
+        entities=[_entity("bike", "Object", ["OWNS"], [qty])],
+    )
+    out = _format_search_result(result)
+    assert "quantity=3" in out
+
+
+@pytest.mark.unit
+def test_format_search_result_no_chunks_omits_section():
+    from bench_longmemeval import _format_search_result
+
+    result = _make_result(entities=[_entity("Alice", "Person")])
+    out = _format_search_result(result)
+    assert "Source Passages" not in out
 
 
 @pytest.mark.unit

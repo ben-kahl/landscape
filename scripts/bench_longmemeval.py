@@ -7,8 +7,8 @@ subset of those sessions.
 
 Pipeline per question:
   1. Ingest haystack sessions (gold evidence first, then distractors).
-  2. Retrieve via LandscapeRetriever — entities with edge quantities rendered
-     inline, plus raw text chunks.
+  2. Retrieve via retrieve() — same function as the MCP search tool — returning
+     entities with path/quantity data plus raw text chunks.
   3. Call AWS Bedrock to generate an answer from the retrieved context.
   4. Call AWS Bedrock to judge the generated answer against the gold answer.
 
@@ -59,7 +59,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from landscape import pipeline  # noqa: E402
 from landscape.embeddings import encoder  # noqa: E402
-from landscape.retrieval.langchain_retriever import LandscapeRetriever  # noqa: E402
+from landscape.retrieval.query import retrieve  # noqa: E402
 from landscape.storage import neo4j_store, qdrant_store  # noqa: E402
 
 QUESTION_TYPE = "single-session-user"
@@ -96,9 +96,43 @@ def _format_session(session_turns: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def _format_docs_for_prompt(docs: list) -> str:
-    """Render retrieved Documents (entities + chunks) as a plain-text context block."""
-    return "\n\n".join(d.page_content for d in docs)
+def _format_search_result(result) -> str:
+    """Render a RetrieveResult as the context block an agent sees from search().
+
+    Mirrors the MCP search tool output: entities with relationship paths and
+    edge quantities, followed by labelled source passages.
+    """
+    parts = ["## Entities"]
+    for r in result.results:
+        line = f"- {r.name} ({r.type})"
+        if r.path_edge_types:
+            edges = []
+            quantities = r.path_edge_quantities or [{}] * len(r.path_edge_types)
+            for rel_type, qty in zip(r.path_edge_types, quantities):
+                edge = rel_type
+                if qty:
+                    value = qty.get("quantity_value")
+                    unit = qty.get("quantity_unit")
+                    kind = qty.get("quantity_kind")
+                    scope = qty.get("time_scope")
+                    qparts = []
+                    if value is not None:
+                        label = str(kind) if kind else "quantity"
+                        qparts.append(f"{label}={value}" + (f" {unit}" if unit else ""))
+                    if scope:
+                        qparts.append(f"scope={scope}")
+                    if qparts:
+                        edge = f"{edge} {{{', '.join(qparts)}}}"
+                edges.append(edge)
+            line += f" [via {' → '.join(edges)}]"
+        parts.append(line)
+
+    if result.chunks:
+        parts.append("\n## Source Passages")
+        for c in result.chunks:
+            parts.append(f"[{c.source_doc}]\n{c.text}")
+
+    return "\n".join(parts)
 
 
 def _parse_judge_response(raw: str) -> dict:
@@ -136,9 +170,9 @@ def _bedrock_invoke(client, model_id: str, prompt: str, max_tokens: int = 512) -
     return response["output"]["message"]["content"][0]["text"].strip()
 
 
-def _generate_answer(client, model_id: str, docs: list, question: str) -> str:
-    """Call Bedrock to answer question from retrieved document context."""
-    context = _format_docs_for_prompt(docs)
+def _generate_answer(client, model_id: str, result, question: str) -> str:
+    """Call Bedrock to answer question from retrieved context."""
+    context = _format_search_result(result)
     prompt = (
         "You are answering a question about a person's memories and experiences.\n"
         "Use only the context below. If the context does not contain enough information "
@@ -232,21 +266,12 @@ async def _run_question(
     for sid in gold_landscape_sids:
         gold_entity_ids.update(await neo4j_store.get_entities_in_conversation(sid))
 
-    retriever = LandscapeRetriever(hops=2, limit=k, reinforce=False)
     query_t0 = time.time()
-    docs = await retriever.ainvoke(question)
+    result = await retrieve(question, hops=2, limit=k, chunk_limit=10, reinforce=False)
     query_s = time.time() - query_t0
 
-    top_names = [
-        d.metadata.get("name", d.page_content[:40])
-        for d in docs
-        if d.metadata.get("kind") == "entity"
-    ]
-    top_ids = [
-        d.metadata.get("neo4j_id")
-        for d in docs
-        if d.metadata.get("kind") == "entity"
-    ]
+    top_names = [r.name for r in result.results]
+    top_ids = [r.neo4j_id for r in result.results]
     hit = any(eid in gold_entity_ids for eid in top_ids if eid)
 
     row: dict = {
@@ -264,7 +289,7 @@ async def _run_question(
 
     if not skip_judge and bedrock_client is not None:
         try:
-            generated = _generate_answer(bedrock_client, judge_model, docs, question)
+            generated = _generate_answer(bedrock_client, judge_model, result, question)
             judgment = _judge_answer(bedrock_client, judge_model, question, answer or "", generated)
             row["generated_answer"] = generated
             row["judgment"] = judgment.get("judgment", "incorrect")
@@ -289,7 +314,7 @@ async def main() -> int:
     ap.add_argument("--output", default=str(RESULTS_PATH))
     ap.add_argument(
         "--judge-model",
-        default=os.environ.get("BEDROCK_JUDGE_MODEL_ID", "anthropic.claude-3-5-haiku-20241022-v1:0"),
+        default=os.environ.get("BEDROCK_JUDGE_MODEL_ID", "global.anthropic.claude-haiku-4-5-20251001-v1:0"),
         help="Bedrock model ID for answer generation and judging",
     )
     ap.add_argument(
