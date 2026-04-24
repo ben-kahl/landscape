@@ -47,8 +47,7 @@ os.environ.setdefault("NEO4J_PASSWORD", NEO4J_PASSWORD)
 os.environ.setdefault("QDRANT_URL", QDRANT_URL)
 os.environ.setdefault("OLLAMA_URL", os.environ.get("OLLAMA_URL", "http://localhost:11434"))
 
-# Force CPU torch in this process (the subprocess inherits the env and will
-# also use CPU for the encoder, avoiding CUDA contention with the Docker stack).
+# Force CPU torch in this process to avoid CUDA contention with the Docker stack.
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 MCP_URL = os.environ.get("LANDSCAPE_MCP_URL", "http://localhost:8000/mcp")
@@ -103,7 +102,7 @@ def _parse(result) -> dict:
 
 async def run_demo() -> None:
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
 
     # ------------------------------------------------------------------ #
     # Step 0: Reset                                                        #
@@ -117,7 +116,7 @@ async def run_demo() -> None:
     print()
 
     try:
-        async with streamablehttp_client(MCP_URL) as (read, write, _):
+        async with streamable_http_client(MCP_URL) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
 
@@ -366,7 +365,8 @@ async def run_demo() -> None:
                     print(f"  EXCEPTION: {exc}")
                 print()
     except Exception as exc:
-        if "connection" in str(exc).lower() or "refused" in str(exc).lower():
+        import httpx
+        if isinstance(exc, httpx.ConnectError):
             print(
                 f"Error: could not connect to MCP server at {MCP_URL}\n"
                 "Start the server first: uv run uvicorn landscape.main:app --host 0.0.0.0 --port 8000"
