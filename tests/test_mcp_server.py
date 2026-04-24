@@ -156,13 +156,20 @@ async def test_capture_turn_schedules_auto_ingestion_via_mcp_boundary(monkeypatc
         def __await__(self):
             raise AssertionError("capture_turn must not await the scheduled task")
 
-    def fake_schedule_auto_ingestion(text: str, session_id: str, turn_id: str, role: str = "user"):
+    def fake_schedule_auto_ingestion(
+        text: str,
+        session_id: str,
+        turn_id: str,
+        role: str = "user",
+        debug: bool = False,
+    ):
         calls.append(
             {
                 "text": text,
                 "session_id": session_id,
                 "turn_id": turn_id,
                 "role": role,
+                "debug": debug,
             }
         )
         return _NoAwait()
@@ -190,6 +197,7 @@ async def test_capture_turn_schedules_auto_ingestion_via_mcp_boundary(monkeypatc
             "session_id": "test-session",
             "turn_id": "turn-1",
             "role": "user",
+            "debug": False,
         }
     ]
 
@@ -202,8 +210,14 @@ async def test_capture_turn_rejects_ineligible_turns_at_mcp_boundary(monkeypatch
 
     scheduled = []
 
-    def fake_schedule_auto_ingestion(text: str, session_id: str, turn_id: str, role: str = "user"):
-        scheduled.append((text, session_id, turn_id, role))
+    def fake_schedule_auto_ingestion(
+        text: str,
+        session_id: str,
+        turn_id: str,
+        role: str = "user",
+        debug: bool = False,
+    ):
+        scheduled.append((text, session_id, turn_id, role, debug))
         raise AssertionError("ineligible turns must not be scheduled")
 
     monkeypatch.setattr(mcp_app, "_schedule_auto_ingestion", fake_schedule_auto_ingestion)
@@ -228,6 +242,127 @@ async def test_capture_turn_rejects_ineligible_turns_at_mcp_boundary(monkeypatch
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_remember_threads_debug_flag_to_pipeline(monkeypatch):
+    from landscape.pipeline import IngestResult
+
+    calls = []
+
+    async def fake_ingest(
+        text,
+        title,
+        source_type="text",
+        session_id=None,
+        turn_id=None,
+        debug=False,
+    ):
+        calls.append(
+            {
+                "text": text,
+                "title": title,
+                "source_type": source_type,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "debug": debug,
+            }
+        )
+        return IngestResult(
+            doc_id="doc-debug",
+            already_existed=False,
+            entities_created=0,
+            entities_reinforced=0,
+            relations_created=0,
+            relations_reinforced=0,
+            relations_superseded=0,
+            chunks_created=0,
+        )
+
+    monkeypatch.setattr("landscape.pipeline.ingest", fake_ingest)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "remember",
+            {
+                "text": "Alice joined Beacon Labs.",
+                "title": "debug-memory",
+                "session_id": "s1",
+                "turn_id": "t1",
+                "debug": True,
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    assert calls == [
+        {
+            "text": "Alice joined Beacon Labs.",
+            "title": "debug-memory",
+            "source_type": "text",
+            "session_id": "s1",
+            "turn_id": "t1",
+            "debug": True,
+        }
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_capture_turn_threads_debug_flag_to_scheduler(monkeypatch):
+    import landscape.mcp_app as mcp_app
+
+    calls = []
+
+    class _NoAwait:
+        def __await__(self):
+            raise AssertionError("capture_turn must not await the scheduled task")
+
+    def fake_schedule_auto_ingestion(
+        text: str,
+        session_id: str,
+        turn_id: str,
+        role: str = "user",
+        debug: bool = False,
+    ):
+        calls.append(
+            {
+                "text": text,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "role": role,
+                "debug": debug,
+            }
+        )
+        return _NoAwait()
+
+    monkeypatch.setattr(mcp_app, "_schedule_auto_ingestion", fake_schedule_auto_ingestion)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "capture_turn",
+            {
+                "session_id": "test-session",
+                "turn_id": "turn-1",
+                "role": "user",
+                "text": "Remember this note for later.",
+                "debug": True,
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+
+    assert data == {"accepted": True, "scheduled": True}
+    assert calls == [
+        {
+            "text": "Remember this note for later.",
+            "session_id": "test-session",
+            "turn_id": "turn-1",
+            "role": "user",
+            "debug": True,
+        }
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_capture_turn_skips_turn_already_written_by_remember(monkeypatch):
     """Auto-ingest should not duplicate a turn already written explicitly."""
     import landscape.mcp_app as mcp_app
@@ -235,7 +370,14 @@ async def test_capture_turn_skips_turn_already_written_by_remember(monkeypatch):
 
     mcp_app._EXPLICIT_MEMORY_TURN_KEYS.clear()
 
-    async def fake_ingest(text, title, source_type="text", session_id=None, turn_id=None):
+    async def fake_ingest(
+        text,
+        title,
+        source_type="text",
+        session_id=None,
+        turn_id=None,
+        debug=False,
+    ):
         return IngestResult(
             doc_id="explicit-doc",
             already_existed=False,
@@ -247,7 +389,13 @@ async def test_capture_turn_skips_turn_already_written_by_remember(monkeypatch):
             chunks_created=1,
         )
 
-    def fail_schedule(text: str, session_id: str, turn_id: str, role: str = "user"):
+    def fail_schedule(
+        text: str,
+        session_id: str,
+        turn_id: str,
+        role: str = "user",
+        debug: bool = False,
+    ):
         raise AssertionError("explicitly remembered turns must not be auto-ingested")
 
     monkeypatch.setattr("landscape.pipeline.ingest", fake_ingest)
@@ -284,7 +432,13 @@ async def test_capture_turn_rejects_tool_role_turns(monkeypatch):
     """Tool-result/protocol turns should not be auto-ingested as memory."""
     import landscape.mcp_app as mcp_app
 
-    def fail_schedule(text: str, session_id: str, turn_id: str, role: str = "user"):
+    def fail_schedule(
+        text: str,
+        session_id: str,
+        turn_id: str,
+        role: str = "user",
+        debug: bool = False,
+    ):
         raise AssertionError("tool-role turns must not be auto-ingested")
 
     monkeypatch.setattr(mcp_app, "_schedule_auto_ingestion", fail_schedule)
@@ -409,6 +563,66 @@ async def test_search_returns_results_shape(http_client):
         assert "type" in first
         assert "score" in first
         assert "path_edge_types" in first
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_search_threads_debug_flag_to_retrieve(monkeypatch):
+    from landscape.retrieval.query import RetrievalResult
+
+    calls = []
+
+    async def fake_retrieve(
+        query_text,
+        hops=2,
+        limit=10,
+        chunk_limit=3,
+        weights=None,
+        reinforce=True,
+        session_id=None,
+        since=None,
+        debug=False,
+        log_context=None,
+    ):
+        calls.append(
+            {
+                "query_text": query_text,
+                "hops": hops,
+                "limit": limit,
+                "chunk_limit": chunk_limit,
+                "reinforce": reinforce,
+                "session_id": session_id,
+                "debug": debug,
+            }
+        )
+        return RetrievalResult(
+            query=query_text,
+            results=[],
+            touched_entity_ids=[],
+            touched_edge_ids=[],
+            chunks=[],
+        )
+
+    monkeypatch.setattr("landscape.retrieval.query.retrieve", fake_retrieve)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "search",
+            {"query": "Project Atlas", "debug": True},
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    assert calls == [
+        {
+            "query_text": "Project Atlas",
+            "hops": 2,
+            "limit": 10,
+            "chunk_limit": 3,
+            "reinforce": True,
+            "session_id": None,
+            "debug": True,
+        }
+    ]
 
 
 @pytest.mark.asyncio

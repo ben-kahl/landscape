@@ -8,6 +8,9 @@ Verifies that:
    :MENTIONED_IN and session/turn properties.
 3. The MCP remember tool threads session_id/turn_id through to ingest().
 """
+import json
+import logging
+
 import pytest
 
 from landscape.conversation_ingestion import ConversationIngestResult, ingest_conversation_turn
@@ -95,6 +98,8 @@ async def test_ingest_conversation_turn_skips_duplicate_in_same_process(monkeypa
         title: str,
         session_id: str | None = None,
         turn_id: str | None = None,
+        debug: bool = False,
+        log_context=None,
     ):
         return IngestResult(
             doc_id=f"doc:{title}",
@@ -150,6 +155,8 @@ async def test_ingest_conversation_turn_marks_seen_only_after_success(monkeypatc
         title: str,
         session_id: str | None = None,
         turn_id: str | None = None,
+        debug: bool = False,
+        log_context=None,
     ):
         nonlocal attempts
         attempts += 1
@@ -186,6 +193,38 @@ async def test_ingest_conversation_turn_marks_seen_only_after_success(monkeypatc
     assert retry.skipped is False
     assert retry.ingest_result is not None
     assert attempts == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_conversation_turn_logs_skip_reason(monkeypatch, caplog):
+    from landscape.conversation_ingestion import ConversationTurn, ingest_conversation_turn
+
+    caplog.set_level(logging.INFO, logger="landscape.ingest")
+
+    result = await ingest_conversation_turn(
+        ConversationTurn(
+            session_id="conv-7",
+            turn_id="t2",
+            role="tool",
+            text="internal tool envelope",
+        ),
+        debug=True,
+    )
+
+    assert result.skipped is True
+    assert result.reason == "tool_noise"
+
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "landscape.ingest"
+    ]
+    assert [event["event"] for event in events] == [
+        "conversation_ingest_started",
+        "conversation_ingest_skipped",
+    ]
+    assert events[-1]["reason"] == "tool_noise"
 
 
 # ---------------------------------------------------------------------------

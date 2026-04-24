@@ -30,6 +30,7 @@ async def _auto_ingest_turn(
     session_id: str,
     turn_id: str,
     role: str = "user",
+    debug: bool = False,
 ):
     from landscape.conversation_ingestion import ConversationTurn, ingest_conversation_turn
 
@@ -37,7 +38,11 @@ async def _auto_ingest_turn(
         return None
 
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
-    return await ingest_conversation_turn(turn, seen_fingerprints=_AUTO_INGEST_SEEN_FINGERPRINTS)
+    return await ingest_conversation_turn(
+        turn,
+        seen_fingerprints=_AUTO_INGEST_SEEN_FINGERPRINTS,
+        debug=debug,
+    )
 
 
 def _log_auto_ingestion_failure(task: asyncio.Task) -> None:
@@ -61,8 +66,11 @@ def _schedule_auto_ingestion(
     session_id: str,
     turn_id: str,
     role: str = "user",
+    debug: bool = False,
 ) -> asyncio.Task:
-    task = asyncio.create_task(_auto_ingest_turn(text, session_id, turn_id, role=role))
+    task = asyncio.create_task(
+        _auto_ingest_turn(text, session_id, turn_id, role=role, debug=debug)
+    )
     task.add_done_callback(_log_auto_ingestion_failure)
     return task
 
@@ -75,6 +83,7 @@ async def search(
     chunk_limit: int = 3,
     session_id: str | None = None,
     since_hours: int | None = None,
+    debug: bool = False,
 ) -> str:
     """Hybrid retrieval over the Landscape knowledge graph."""
     from landscape.retrieval.query import retrieve
@@ -91,6 +100,7 @@ async def search(
         chunk_limit=chunk_limit,
         session_id=session_id,
         since=since,
+        debug=debug,
     )
     output = {
         "results": [
@@ -120,11 +130,23 @@ async def search(
 
 
 @mcp.tool()
-async def remember(text: str, title: str, session_id: str, turn_id: str) -> str:
+async def remember(
+    text: str,
+    title: str,
+    session_id: str,
+    turn_id: str,
+    debug: bool = False,
+) -> str:
     """Ingest a text document into the Landscape memory store."""
     from landscape.pipeline import ingest
 
-    result = await ingest(text, title, session_id=session_id, turn_id=turn_id)
+    result = await ingest(
+        text,
+        title,
+        session_id=session_id,
+        turn_id=turn_id,
+        debug=debug,
+    )
     _EXPLICIT_MEMORY_TURN_KEYS.add(_turn_key(session_id, turn_id))
     output = {
         "doc_id": result.doc_id,
@@ -137,7 +159,13 @@ async def remember(text: str, title: str, session_id: str, turn_id: str) -> str:
 
 
 @mcp.tool()
-async def capture_turn(session_id: str, turn_id: str, role: str, text: str) -> str:
+async def capture_turn(
+    session_id: str,
+    turn_id: str,
+    role: str,
+    text: str,
+    debug: bool = False,
+) -> str:
     """Capture an explicit conversation turn boundary for background ingestion."""
     from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
 
@@ -147,7 +175,7 @@ async def capture_turn(session_id: str, turn_id: str, role: str, text: str) -> s
     if not should_auto_ingest_turn(turn, seen_fingerprints=set()):
         return json.dumps({"accepted": False, "scheduled": False})
 
-    _schedule_auto_ingestion(text, session_id, turn_id, role=role)
+    _schedule_auto_ingestion(text, session_id, turn_id, role=role, debug=debug)
     return json.dumps({"accepted": True, "scheduled": True})
 
 

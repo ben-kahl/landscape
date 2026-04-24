@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
+from landscape.observability import create_ingest_log_context
 from landscape.pipeline import IngestResult, ingest
 
 _TOOL_NOISE_ROLES = frozenset({"tool", "function"})
@@ -104,10 +105,25 @@ async def ingest_conversation_turn(
     turn: ConversationTurn,
     *,
     seen_fingerprints: set[str] | None = None,
+    debug: bool = False,
 ) -> ConversationIngestResult:
     title = build_conversation_title(turn)
     normalized = normalize_turn_text(turn.text)
+    log = create_ingest_log_context(
+        title=title,
+        source_type="text",
+        session_id=turn.session_id or None,
+        turn_id=turn.turn_id or None,
+        debug=debug,
+    )
+    log.emit(
+        "conversation_ingest_started",
+        always=True,
+        role=normalize_turn_role(turn.role),
+        text_length=len(normalized),
+    )
     if not turn.session_id or not turn.turn_id or not normalized:
+        log.emit("conversation_ingest_skipped", always=True, reason="ineligible")
         return ConversationIngestResult(
             title=title,
             skipped=True,
@@ -115,6 +131,7 @@ async def ingest_conversation_turn(
             ingest_result=None,
         )
     if normalize_turn_role(turn.role) in _TOOL_NOISE_ROLES:
+        log.emit("conversation_ingest_skipped", always=True, reason="tool_noise")
         return ConversationIngestResult(
             title=title,
             skipped=True,
@@ -125,6 +142,7 @@ async def ingest_conversation_turn(
     normalized_turn = ConversationTurn(turn.session_id, turn.turn_id, turn.role, normalized)
     fingerprint = turn_fingerprint(normalized_turn)
     if seen_fingerprints is not None and fingerprint in seen_fingerprints:
+        log.emit("conversation_ingest_skipped", always=True, reason="duplicate")
         return ConversationIngestResult(
             title=title,
             skipped=True,
@@ -132,12 +150,25 @@ async def ingest_conversation_turn(
             ingest_result=None,
         )
 
-    result = await ingest(
-        turn.text,
-        title,
-        session_id=turn.session_id,
-        turn_id=turn.turn_id,
-    )
+    try:
+        result = await ingest(
+            turn.text,
+            title,
+            session_id=turn.session_id,
+            turn_id=turn.turn_id,
+            debug=debug,
+            log_context=log,
+        )
+    except Exception as exc:
+        log.emit(
+            "conversation_ingest_failed",
+            level=40,
+            always=True,
+            reason="pipeline_error",
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
     if seen_fingerprints is not None:
         seen_fingerprints.add(fingerprint)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from landscape.cli.runtime import close_runtime
+from landscape.observability import ensure_query_cli_logging
 
 
 def _get_runtime():
@@ -23,12 +24,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--hops", type=int, default=2)
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--no-reinforce", action="store_true")
+    parser.add_argument("--debug", action="store_true")
     parser.set_defaults(func=handle_query)
 
 
 async def handle_query(args: argparse.Namespace) -> int:
     encoder, retrieve, neo4j_store, qdrant_store = _get_runtime()
     try:
+        ensure_query_cli_logging()
         encoder.load_model()
         await qdrant_store.init_collection()
         await qdrant_store.init_chunks_collection()
@@ -37,6 +40,7 @@ async def handle_query(args: argparse.Namespace) -> int:
             hops=args.hops,
             limit=args.limit,
             reinforce=not args.no_reinforce,
+            debug=args.debug,
         )
         if not result.results:
             print("No results.")

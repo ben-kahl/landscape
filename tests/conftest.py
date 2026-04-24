@@ -90,11 +90,18 @@ async def qdrant_client():
 
 
 @pytest_asyncio.fixture
-async def http_client():
+async def http_client(request):
     from landscape.main import app
 
-    async with app.router.lifespan_context(app):
+    is_ci_safe = request.node.get_closest_marker("unit") or request.node.get_closest_marker("smoke")
+    if is_ci_safe:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             yield client
+    else:
+        async with app.router.lifespan_context(app):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                yield client

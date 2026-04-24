@@ -1,3 +1,6 @@
+import json
+import logging
+
 import pytest
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
@@ -239,3 +242,314 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     assert captured_relation_kwargs["quantity_unit"] == "hour"
     assert captured_relation_kwargs["quantity_kind"] == "duration"
     assert captured_relation_kwargs["time_scope"] == "last_month"
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
+    from landscape import pipeline
+    from landscape.extraction.chunker import Chunk
+    from landscape.extraction.schema import ExtractedEntity, ExtractedRelation
+
+    async def fake_merge_document(content_hash, title, source_type):
+        return "doc-1", True
+
+    async def fake_create_chunk(doc_id, chunk_index, text, content_hash):
+        return f"chunk-{chunk_index}"
+
+    async def fake_upsert_chunk(**kwargs):
+        return None
+
+    async def fake_resolve_entity(name, entity_type, vector, source_doc):
+        return "entity-1", True, 0.0
+
+    async def fake_merge_entity(**kwargs):
+        return "entity-1"
+
+    async def fake_upsert_entity(**kwargs):
+        return None
+
+    async def fake_upsert_relation(**kwargs):
+        return "created", "rel-1"
+
+    monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
+    monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", fake_upsert_chunk)
+    monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
+    monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
+    monkeypatch.setattr(pipeline.neo4j_store, "upsert_relation", fake_upsert_relation)
+    monkeypatch.setattr(pipeline, "coerce_rel_type", lambda rel_type: (rel_type, 1.0))
+    monkeypatch.setattr(pipeline, "chunk_text", lambda text: [Chunk(index=0, text="chunk one")])
+    monkeypatch.setattr(
+        pipeline.encoder,
+        "embed_documents",
+        lambda texts: [[0.1, 0.2] for _ in texts],
+    )
+    monkeypatch.setattr(
+        pipeline.llm,
+        "extract",
+        lambda text: Extraction(
+            entities=[
+                ExtractedEntity(name="Alice", type="PERSON", confidence=0.9),
+            ],
+            relations=[
+                ExtractedRelation(
+                    subject="Alice",
+                    object="Beacon Labs",
+                    relation_type="WORKS_FOR",
+                    confidence=0.9,
+                ),
+            ],
+        ),
+    )
+
+    caplog.set_level(logging.INFO, logger="landscape.ingest")
+
+    await pipeline.ingest("Alice joined Beacon Labs.", "log-summary-doc")
+
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "landscape.ingest"
+    ]
+
+    assert [event["event"] for event in events] == [
+        "ingest_started",
+        "ingest_completed",
+    ]
+    assert events[-1]["chunks_created"] == 1
+    assert events[-1]["entities_created"] == 1
+    assert "duration_ms" in events[-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog):
+    from landscape import pipeline
+    from landscape.extraction.chunker import Chunk
+    from landscape.extraction.schema import ExtractedEntity, ExtractedRelation
+
+    async def fake_merge_document(content_hash, title, source_type):
+        return "doc-2", True
+
+    async def fake_create_chunk(doc_id, chunk_index, text, content_hash):
+        return f"chunk-{chunk_index}"
+
+    async def fake_upsert_chunk(**kwargs):
+        return None
+
+    async def fake_resolve_entity(name, entity_type, vector, source_doc):
+        return "entity-2", True, 0.0
+
+    async def fake_merge_entity(**kwargs):
+        return "entity-2"
+
+    async def fake_upsert_entity(**kwargs):
+        return None
+
+    async def fake_upsert_relation(**kwargs):
+        return "created", "rel-2"
+
+    monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
+    monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", fake_upsert_chunk)
+    monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
+    monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
+    monkeypatch.setattr(pipeline.neo4j_store, "upsert_relation", fake_upsert_relation)
+    monkeypatch.setattr(pipeline, "coerce_rel_type", lambda rel_type: (rel_type, 1.0))
+    monkeypatch.setattr(pipeline, "chunk_text", lambda text: [Chunk(index=0, text="chunk two")])
+    monkeypatch.setattr(
+        pipeline.encoder,
+        "embed_documents",
+        lambda texts: [[0.1, 0.2] for _ in texts],
+    )
+    monkeypatch.setattr(
+        pipeline.llm,
+        "extract",
+        lambda text: Extraction(
+            entities=[
+                ExtractedEntity(name="Alice", type="PERSON", confidence=0.9),
+            ],
+            relations=[
+                ExtractedRelation(
+                    subject="Alice",
+                    object="Beacon Labs",
+                    relation_type="WORKS_FOR",
+                    confidence=0.9,
+                ),
+            ],
+        ),
+    )
+
+    caplog.set_level(logging.INFO, logger="landscape.ingest")
+
+    await pipeline.ingest("Alice joined Beacon Labs.", "log-debug-doc", debug=True)
+
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "landscape.ingest"
+    ]
+    event_names = {event["event"] for event in events}
+
+    assert {
+        "ingest_started",
+        "document_merged",
+        "chunking_completed",
+        "chunk_embeddings_completed",
+        "chunk_upserts_completed",
+        "extraction_completed",
+        "entity_grouping_completed",
+        "entity_resolution_completed",
+        "entity_writes_completed",
+        "relation_upserts_completed",
+        "ingest_completed",
+    } <= event_names
+    assert all(event["ingest_id"] == events[0]["ingest_id"] for event in events)
+    assert all(event["debug"] is True for event in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_ingest_logs_failure_with_failed_stage(monkeypatch, caplog):
+    from landscape import pipeline
+    from landscape.extraction.chunker import Chunk
+
+    async def fake_merge_document(content_hash, title, source_type):
+        return "doc-3", True
+
+    async def fake_create_chunk(doc_id, chunk_index, text, content_hash):
+        return f"chunk-{chunk_index}"
+
+    async def boom_upsert_chunk(**kwargs):
+        raise RuntimeError("chunk upsert exploded")
+
+    monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
+    monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", boom_upsert_chunk)
+    monkeypatch.setattr(pipeline, "chunk_text", lambda text: [Chunk(index=0, text="chunk three")])
+    monkeypatch.setattr(
+        pipeline.encoder,
+        "embed_documents",
+        lambda texts: [[0.1, 0.2] for _ in texts],
+    )
+
+    caplog.set_level(logging.INFO, logger="landscape.ingest")
+
+    with pytest.raises(RuntimeError, match="chunk upsert exploded"):
+        await pipeline.ingest("Alice joined Beacon Labs.", "log-failure-doc", debug=True)
+
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "landscape.ingest"
+    ]
+
+    assert events[-1]["event"] == "ingest_failed"
+    assert events[-1]["failed_stage"] == "chunk_upserts_completed"
+    assert "chunk upsert exploded" in events[-1]["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_ingest_api_threads_debug_flag(monkeypatch, http_client):
+    from landscape.api import ingest as ingest_api
+    from landscape.pipeline import IngestResult
+
+    calls = []
+
+    async def fake_ingest(
+        text,
+        title,
+        source_type="text",
+        session_id=None,
+        turn_id=None,
+        debug=False,
+    ):
+        calls.append(
+            {
+                "text": text,
+                "title": title,
+                "source_type": source_type,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "debug": debug,
+            }
+        )
+        return IngestResult(
+            doc_id="doc-api-debug",
+            already_existed=False,
+            entities_created=0,
+            entities_reinforced=0,
+            relations_created=0,
+            relations_reinforced=0,
+            relations_superseded=0,
+            chunks_created=0,
+        )
+
+    monkeypatch.setattr(ingest_api.pipeline, "ingest", fake_ingest)
+
+    response = await http_client.post(
+        "/ingest",
+        json={
+            "text": "Alice joined Beacon Labs.",
+            "title": "debug-api-doc",
+            "debug": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls == [
+        {
+            "text": "Alice joined Beacon Labs.",
+            "title": "debug-api-doc",
+            "source_type": "text",
+            "session_id": None,
+            "turn_id": None,
+            "debug": True,
+        }
+    ]
+
+
+@pytest.mark.unit
+def test_ingest_log_sink_writes_jsonl_to_process_scoped_file(tmp_path):
+    from landscape.observability.ingest_logging import (
+        create_ingest_log_context,
+        ensure_ingest_log_sink,
+    )
+
+    log_dir = tmp_path / "logs" / "ingest"
+    log_path = ensure_ingest_log_sink(log_dir, force=True)
+    second_path = ensure_ingest_log_sink(log_dir)
+
+    ctx = create_ingest_log_context(
+        title="sink-doc",
+        source_type="text",
+        debug=False,
+    )
+    ctx.emit_started(content_hash="abc123", text_length=42)
+    ctx.emit_completed(
+        doc_id="doc-1",
+        already_existed=False,
+        entities_created=1,
+        entities_reinforced=0,
+        relations_created=1,
+        relations_reinforced=0,
+        relations_superseded=0,
+        chunks_created=1,
+    )
+
+    assert second_path == log_path
+    assert log_path.parent == log_dir
+    assert log_path.name.startswith("ingest-")
+    assert log_path.suffix == ".jsonl"
+    assert log_path.exists()
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    first = json.loads(lines[0])
+    second = json.loads(lines[1])
+    assert first["event"] == "ingest_started"
+    assert second["event"] == "ingest_completed"
+    assert second["title"] == "sink-doc"

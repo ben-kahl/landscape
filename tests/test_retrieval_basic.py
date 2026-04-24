@@ -2,6 +2,9 @@
 
 The multi-hop killer demo lives in test_retrieval_multihop.py under
 the 'retrieval' marker. Tests here run by default."""
+import json
+import logging
+
 import pytest
 
 BASIC_DOC = (
@@ -262,3 +265,274 @@ async def test_retrieval_includes_path_edge_quantities(monkeypatch):
             "time_scope": "last_month",
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
+    from landscape.retrieval import query
+
+    monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+
+    class Hit:
+        def __init__(self, score, payload):
+            self.score = score
+            self.payload = payload
+
+    async def fake_search_entities_any_type(vector, limit=10):
+        return [Hit(0.9, {"neo4j_node_id": "atlas-id"})]
+
+    async def fake_search_chunks(vector, limit=10):
+        return []
+
+    async def fake_get_entities_from_chunks(chunk_ids):
+        return []
+
+    async def fake_hydrate_entities(ids):
+        return [
+            {
+                "eid": "atlas-id",
+                "name": "Project Atlas",
+                "type": "PROJECT",
+                "access_count": 0,
+                "last_accessed": None,
+            }
+        ]
+
+    async def fake_bfs_expand(seed_ids, max_hops):
+        return []
+
+    async def noop_touch(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        query.qdrant_store,
+        "search_entities_any_type",
+        fake_search_entities_any_type,
+    )
+    monkeypatch.setattr(query.qdrant_store, "search_chunks", fake_search_chunks)
+    monkeypatch.setattr(
+        query.neo4j_store,
+        "get_entities_from_chunks",
+        fake_get_entities_from_chunks,
+    )
+    monkeypatch.setattr(query, "_hydrate_entities", fake_hydrate_entities)
+    monkeypatch.setattr(query.neo4j_store, "bfs_expand", fake_bfs_expand)
+    monkeypatch.setattr(query.neo4j_store, "touch_entities", noop_touch)
+    monkeypatch.setattr(query.neo4j_store, "touch_relations", noop_touch)
+
+    caplog.set_level(logging.INFO, logger="landscape.retrieval")
+
+    await query.retrieve("What does Project Atlas use?")
+
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "landscape.retrieval"
+    ]
+
+    assert [event["event"] for event in events] == [
+        "retrieval_started",
+        "retrieval_completed",
+    ]
+    assert events[-1]["result_count"] == 1
+    assert events[-1]["top_results"] == [
+        {
+            "name": "Project Atlas",
+            "type": "PROJECT",
+            "score": 1.7,
+            "distance": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplog):
+    from landscape.retrieval import query
+
+    monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+
+    class Hit:
+        def __init__(self, score, payload):
+            self.score = score
+            self.payload = payload
+
+    async def fake_search_entities_any_type(vector, limit=10):
+        return [Hit(0.9, {"neo4j_node_id": "atlas-id"})]
+
+    async def fake_search_chunks(vector, limit=10):
+        return [
+            Hit(
+                0.7,
+                {
+                    "chunk_neo4j_id": "chunk-1",
+                    "text": "Project Atlas uses PostgreSQL.",
+                    "doc_id": "doc-1",
+                    "source_doc": "atlas-doc",
+                    "position": 0,
+                },
+            )
+        ]
+
+    async def fake_get_entities_from_chunks(chunk_ids):
+        return [{"eid": "atlas-id", "chunk_eids": chunk_ids}]
+
+    async def fake_hydrate_entities(ids):
+        return [
+            {
+                "eid": "atlas-id",
+                "name": "Project Atlas",
+                "type": "PROJECT",
+                "access_count": 0,
+                "last_accessed": None,
+            }
+        ]
+
+    async def fake_bfs_expand(seed_ids, max_hops):
+        return []
+
+    async def noop_touch(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        query.qdrant_store,
+        "search_entities_any_type",
+        fake_search_entities_any_type,
+    )
+    monkeypatch.setattr(query.qdrant_store, "search_chunks", fake_search_chunks)
+    monkeypatch.setattr(
+        query.neo4j_store,
+        "get_entities_from_chunks",
+        fake_get_entities_from_chunks,
+    )
+    monkeypatch.setattr(query, "_hydrate_entities", fake_hydrate_entities)
+    monkeypatch.setattr(query.neo4j_store, "bfs_expand", fake_bfs_expand)
+    monkeypatch.setattr(query.neo4j_store, "touch_entities", noop_touch)
+    monkeypatch.setattr(query.neo4j_store, "touch_relations", noop_touch)
+
+    caplog.set_level(logging.INFO, logger="landscape.retrieval")
+
+    await query.retrieve("What does Project Atlas use?", debug=True)
+
+    events = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "landscape.retrieval"
+    ]
+    names = {event["event"] for event in events}
+
+    assert {
+        "retrieval_started",
+        "query_embedding_completed",
+        "seed_search_completed",
+        "chunk_entity_propagation_completed",
+        "seed_hydration_completed",
+        "graph_expansion_completed",
+        "filter_completed",
+        "ranking_completed",
+        "reinforcement_completed",
+        "retrieval_completed",
+    } <= names
+    assert all(event["retrieval_id"] == events[0]["retrieval_id"] for event in events)
+    assert all(event["debug"] is True for event in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_query_api_threads_debug_flag(monkeypatch, http_client):
+    from landscape.api import query as query_api
+    from landscape.retrieval.query import RetrievalResult
+
+    calls = []
+
+    async def fake_retrieve(
+        query_text,
+        hops=2,
+        limit=10,
+        chunk_limit=3,
+        weights=None,
+        reinforce=True,
+        session_id=None,
+        since=None,
+        debug=False,
+        log_context=None,
+    ):
+        calls.append(
+            {
+                "query_text": query_text,
+                "hops": hops,
+                "limit": limit,
+                "chunk_limit": chunk_limit,
+                "reinforce": reinforce,
+                "session_id": session_id,
+                "debug": debug,
+            }
+        )
+        return RetrievalResult(
+            query=query_text,
+            results=[],
+            touched_entity_ids=[],
+            touched_edge_ids=[],
+            chunks=[],
+        )
+
+    monkeypatch.setattr(query_api.query_module, "retrieve", fake_retrieve)
+
+    response = await http_client.post(
+        "/query",
+        json={"text": "Project Atlas", "debug": True},
+    )
+
+    assert response.status_code == 200
+    assert calls == [
+        {
+            "query_text": "Project Atlas",
+            "hops": 2,
+            "limit": 10,
+            "chunk_limit": 3,
+            "reinforce": True,
+            "session_id": None,
+            "debug": True,
+        }
+    ]
+
+
+@pytest.mark.unit
+def test_retrieval_log_sink_writes_jsonl_to_process_scoped_file(tmp_path):
+    from landscape.observability.retrieval_logging import (
+        create_retrieval_log_context,
+        ensure_retrieval_log_sink,
+    )
+
+    log_dir = tmp_path / "logs" / "retrieval"
+    log_path = ensure_retrieval_log_sink(log_dir, force=True)
+    second_path = ensure_retrieval_log_sink(log_dir)
+
+    ctx = create_retrieval_log_context(
+        query_text="Project Atlas",
+        hops=2,
+        limit=10,
+        chunk_limit=3,
+        reinforce=True,
+        debug=False,
+    )
+    ctx.emit_started()
+    ctx.emit_completed(
+        result_count=1,
+        touched_entity_count=1,
+        touched_edge_count=0,
+        chunk_count=0,
+    )
+
+    assert second_path == log_path
+    assert log_path.parent == log_dir
+    assert log_path.name.startswith("retrieval-")
+    assert log_path.suffix == ".jsonl"
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    first = json.loads(lines[0])
+    second = json.loads(lines[1])
+    assert first["event"] == "retrieval_started"
+    assert second["event"] == "retrieval_completed"
+    assert second["top_results"] == []
