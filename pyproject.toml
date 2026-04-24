@@ -29,6 +29,7 @@ dev = [
 ]
 bench = [
     "chromadb>=1.5",
+    "boto3>=1.34",
 ]
 
 [project.scripts]
