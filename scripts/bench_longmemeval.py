@@ -1,32 +1,44 @@
 #!/usr/bin/env python3
-"""Smoke benchmark: Landscape hybrid retrieval on a LongMemEval slice.
+"""LongMemEval benchmark for Landscape hybrid retrieval with LLM judging.
 
 LongMemEval (Wu et al.) probes personal-memory recall: given a haystack of
 conversation sessions, answer a question whose evidence lives in a known
-subset of those sessions. This script runs a small slice and reports a
-retrieval-coverage proxy metric — "did top-k retrieval surface at least one
-entity from an evidence session" — which is what step 7 of the
-vocab_expansion spec asks for.
+subset of those sessions.
 
-We are NOT running the official LLM-judge scorer. This smoke measures
-whether the expanded vocab + subtype layer routes evidence sessions to
-top-k, which is the precondition for any downstream answer-quality gain.
+Pipeline per question:
+  1. Ingest haystack sessions (gold evidence first, then distractors).
+  2. Retrieve via LandscapeRetriever — entities with edge quantities rendered
+     inline, plus raw text chunks.
+  3. Call AWS Bedrock to generate an answer from the retrieved context.
+  4. Call AWS Bedrock to judge the generated answer against the gold answer.
+
+Metrics reported:
+  hit_at_k_rate      — retrieval coverage proxy (was the gold entity in top-k?)
+  judge_correct_rate — answer quality (correct + abstained) / total
 
 Usage:
-    # Requires docker stack up (Neo4j, Qdrant, Ollama).
-    # LongMemEval data is NOT in-repo. Point at a local JSON dump:
+    # Requires docker stack up (Neo4j, Qdrant, Ollama) and AWS credentials.
     uv run python scripts/bench_longmemeval.py \\
-        --data /path/to/longmemeval_s.json \\
+        --data tests/longmemeval_s_cleaned.json \\
         --n-questions 10 \\
-        --max-sessions 6
+        --max-sessions 4
 
-    # Download LongMemEval from the authors' release:
-    #   https://github.com/xiaowu0162/LongMemEval
-    # Pick longmemeval_s.json (small haystack) for this smoke.
+    # Skip Bedrock judging for a quick retrieval-only smoke run:
+    uv run python scripts/bench_longmemeval.py \\
+        --data tests/longmemeval_s_cleaned.json \\
+        --n-questions 10 \\
+        --skip-judge
 
-The script ingests each question's haystack sessions (capped at
---max-sessions, always including the gold evidence sessions first), runs
-hybrid retrieval for the question text, and records top-k hit status.
+    # Override judge model:
+    uv run python scripts/bench_longmemeval.py \\
+        --data tests/longmemeval_s_cleaned.json \\
+        --judge-model anthropic.claude-3-5-sonnet-20241022-v2:0
+
+AWS credentials required (unless --skip-judge):
+    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
+    BEDROCK_JUDGE_MODEL_ID (optional override, default claude-3-5-haiku)
+
+    Enable the model in the AWS Bedrock console before first use.
 Results land at scripts/bench_longmemeval_results.json.
 """
 import argparse
@@ -265,7 +277,35 @@ async def main() -> int:
     ap.add_argument("--k", type=int, default=10, help="top-k for retrieval hit check")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--output", default=str(RESULTS_PATH))
+    ap.add_argument(
+        "--judge-model",
+        default=os.environ.get("BEDROCK_JUDGE_MODEL_ID", "anthropic.claude-3-5-haiku-20241022-v1:0"),
+        help="Bedrock model ID for answer generation and judging",
+    )
+    ap.add_argument(
+        "--aws-region",
+        default=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        help="AWS region for Bedrock",
+    )
+    ap.add_argument(
+        "--skip-judge",
+        action="store_true",
+        help="Skip Bedrock generation and judging; run retrieval only",
+    )
     args = ap.parse_args()
+
+    bedrock_client = None
+    if not args.skip_judge:
+        try:
+            import boto3
+            bedrock_client = boto3.client("bedrock-runtime", region_name=args.aws_region)
+        except ImportError:
+            print(
+                "warning: boto3 not installed. Install with: uv sync --extra bench\n"
+                "Falling back to --skip-judge mode.",
+                file=sys.stderr,
+            )
+            args.skip_judge = True
 
     random.seed(args.seed)
 
@@ -296,16 +336,22 @@ async def main() -> int:
             q,
             max_sessions=args.max_sessions,
             k=args.k,
-            bedrock_client=None,
-            judge_model="",
-            skip_judge=True,
+            bedrock_client=bedrock_client,
+            judge_model=args.judge_model,
+            skip_judge=args.skip_judge,
         )
-        print(f"    hit@{args.k}={row['hit_at_k']}  ingest={row['ingest_s']}s  query={row['query_s']}s")
+        judgment_str = f"  judgment={row['judgment']}" if "judgment" in row else ""
+        print(f"    hit@{args.k}={row['hit_at_k']}{judgment_str}  ingest={row['ingest_s']}s  query={row['query_s']}s")
         results.append(row)
 
     n = len(results)
     hits = sum(1 for r in results if r["hit_at_k"])
-    summary = {
+    judged = [r for r in results if "judgment" in r]
+    n_correct = sum(1 for r in judged if r["judgment"] == "correct")
+    n_abstained = sum(1 for r in judged if r["judgment"] == "abstained")
+    n_incorrect = sum(1 for r in judged if r["judgment"] == "incorrect")
+
+    summary: dict = {
         "slice": QUESTION_TYPE,
         "n_questions": n,
         "max_sessions_per_q": args.max_sessions,
@@ -314,11 +360,22 @@ async def main() -> int:
         "avg_ingest_s": round(sum(r["ingest_s"] for r in results) / n, 2) if n else None,
         "avg_query_s": round(sum(r["query_s"] for r in results) / n, 3) if n else None,
     }
+    if judged:
+        summary["judge_correct_rate"] = round((n_correct + n_abstained) / len(judged), 3)
+        summary["judge_correct_count"] = n_correct
+        summary["judge_abstained_count"] = n_abstained
+        summary["judge_incorrect_count"] = n_incorrect
+        summary["judge_model"] = args.judge_model
 
     output_path = pathlib.Path(args.output)
     output_path.write_text(json.dumps({"summary": summary, "results": results}, indent=2))
     print()
     print(f"hit@{args.k} = {hits}/{n} = {summary['hit_at_k_rate']}")
+    if judged:
+        print(
+            f"judge: correct={n_correct}  abstained={n_abstained}  incorrect={n_incorrect}  "
+            f"rate={summary['judge_correct_rate']}  model={args.judge_model}"
+        )
     print(f"avg ingest = {summary['avg_ingest_s']}s   avg query = {summary['avg_query_s']}s")
     print(f"wrote {output_path}")
     return 0
