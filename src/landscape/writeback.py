@@ -242,6 +242,8 @@ async def add_relation(
     canonical_subtype = normalize_subtype(subtype_source)
 
     outcome, relation_id = await neo4j_store.upsert_relation(
+        subject_node_id=subj_result.entity_id,
+        object_node_id=obj_result.entity_id,
         subject_name=subject,
         object_name=object_,
         relation_type=canonical_rel_type,

@@ -1,6 +1,9 @@
 """Chunk creation integration tests."""
 import pytest
+import pytest_asyncio
 from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+from landscape.storage import qdrant_store
 
 pytestmark = pytest.mark.integration
 
@@ -14,6 +17,12 @@ LONG_DOC = " ".join(
 
 CHUNK_TITLE_SHORT = "chunks-test-short"
 CHUNK_TITLE_LONG = "chunks-test-long"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _ensure_qdrant_collections():
+    await qdrant_store.init_collection()
+    await qdrant_store.init_chunks_collection()
 
 
 async def _clear_doc(neo4j_driver, title: str) -> None:
@@ -101,16 +110,85 @@ async def test_chunk_vectors_have_cross_ref(http_client, neo4j_driver, qdrant_cl
     assert points, "Expected chunk vectors in Qdrant"
 
     for point in points:
-        chunk_neo4j_id = point.payload.get("chunk_neo4j_id")
-        assert chunk_neo4j_id, f"Missing chunk_neo4j_id in payload: {point.payload}"
+        chunk_id = point.payload.get("chunk_id")
+        assert chunk_id, f"Missing chunk_id in payload: {point.payload}"
 
-        # Verify the id resolves to an actual :Chunk node
+        # Verify the id resolves to an actual :Chunk node with persisted metadata.
         async with neo4j_driver.session() as session:
             result = await session.run(
-                "MATCH (c:Chunk) WHERE elementId(c) = $cid RETURN c.chunk_index AS idx",
-                cid=chunk_neo4j_id,
+                """
+                MATCH (c:Chunk {chunk_id: $cid})
+                RETURN c.doc_id AS doc_id,
+                       c.chunk_index AS idx,
+                       c.position AS position,
+                       c.content_hash AS content_hash
+                """,
+                cid=chunk_id,
             )
             record = await result.single()
         assert record is not None, (
-            f"chunk_neo4j_id {chunk_neo4j_id} does not resolve to a :Chunk node"
+            f"chunk_id {chunk_id} does not resolve to a :Chunk node"
         )
+        assert record["idx"] == record["position"]
+        assert record["content_hash"]
+
+
+@pytest.mark.asyncio
+async def test_identical_chunk_text_across_documents_stays_separate(
+    http_client, neo4j_driver, qdrant_client, monkeypatch
+):
+    from landscape.extraction.chunker import Chunk
+
+    titles = ["chunks-doc-a", "chunks-doc-b"]
+    texts = [
+        "Document A has a unique intro. Shared chunk text.",
+        "Document B has a different intro. Shared chunk text.",
+    ]
+
+    for title in titles:
+        await _clear_doc(neo4j_driver, title)
+
+    monkeypatch.setattr(
+        "landscape.pipeline.chunk_text",
+        lambda text: [Chunk(index=0, text="Shared chunk text.")],
+    )
+
+    for title, text in zip(titles, texts, strict=True):
+        r = await http_client.post("/ingest", json={"text": text, "title": title})
+        assert r.status_code == 200
+        assert r.json()["chunks_created"] == 1
+
+    points_a, _ = await qdrant_client.scroll(
+        collection_name="chunks",
+        scroll_filter=Filter(
+            must=[FieldCondition(key="source_doc", match=MatchValue(value=titles[0]))]
+        ),
+        with_payload=True,
+        limit=10,
+    )
+    points_b, _ = await qdrant_client.scroll(
+        collection_name="chunks",
+        scroll_filter=Filter(
+            must=[FieldCondition(key="source_doc", match=MatchValue(value=titles[1]))]
+        ),
+        with_payload=True,
+        limit=10,
+    )
+
+    assert len(points_a) == 1
+    assert len(points_b) == 1
+    assert points_a[0].payload["chunk_id"] != points_b[0].payload["chunk_id"]
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (c:Chunk)-[:PART_OF]->(d:Document)
+            WHERE d.title IN $titles
+            RETURN count(c) AS cnt, collect(DISTINCT c.chunk_id) AS chunk_ids
+            """,
+            titles=titles,
+        )
+        record = await result.single()
+
+    assert record["cnt"] == 2
+    assert len(record["chunk_ids"]) == 2

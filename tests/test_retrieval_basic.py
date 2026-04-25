@@ -498,6 +498,100 @@ async def test_query_api_threads_debug_flag(monkeypatch, http_client):
     ]
 
 
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_alias_resolved_relation_traversable_from_canonical(neo4j_driver):
+    """Regression: a relation written via add_relation('Bob', ...) where Bob is an
+    alias for Robert must be traversable via bfs_expand starting from Robert's
+    canonical node id -- not only from the alias stub's id.
+
+    This is the retrieval counterpart to the writeback alias regression:
+    verifies that the corrected relation endpoint lands on the canonical node
+    and is therefore reachable during graph expansion.
+    """
+    from datetime import UTC, datetime
+
+    from landscape.embeddings import encoder
+    from landscape.storage import neo4j_store, qdrant_store
+    from landscape.writeback import add_relation
+
+    # Ensure Qdrant collections exist (lifespan not triggered without http_client).
+    await qdrant_store.init_collection()
+    await qdrant_store.init_chunks_collection()
+
+    # Seed Robert in Neo4j + Qdrant using the "Bob (Person)" vector so that
+    # the resolver finds Robert when add_entity("Bob") queries Qdrant.
+    bob_vector = encoder.encode("Bob (Person)")
+    doc_id, _ = await neo4j_store.merge_document(
+        "hash-ret-alias-robert", "ret-alias-robert-doc", "text"
+    )
+    robert_id = await neo4j_store.merge_entity(
+        "Robert", "Person", "ret-alias-robert-doc", 0.9, doc_id, "test"
+    )
+    await qdrant_store.upsert_entity(
+        neo4j_element_id=robert_id,
+        name="Robert",
+        entity_type="Person",
+        source_doc="ret-alias-robert-doc",
+        timestamp=datetime.now(UTC).isoformat(),
+        vector=bob_vector,
+    )
+    # Register "Bob" as alias stub for Robert in Neo4j.
+    await neo4j_store.add_alias(robert_id, "Bob", "test-alias", 0.95)
+
+    # Seed Acme in Neo4j + Qdrant.
+    doc_id2, _ = await neo4j_store.merge_document(
+        "hash-ret-alias-acme", "ret-alias-acme-doc", "text"
+    )
+    acme_id = await neo4j_store.merge_entity(
+        "AcmeCorp", "Organization", "ret-alias-acme-doc", 0.9, doc_id2, "test"
+    )
+    await qdrant_store.upsert_entity(
+        neo4j_element_id=acme_id,
+        name="AcmeCorp",
+        entity_type="Organization",
+        source_doc="ret-alias-acme-doc",
+        timestamp=datetime.now(UTC).isoformat(),
+        vector=encoder.encode("AcmeCorp (Organization)"),
+    )
+
+    # Write the relation via the writeback path using alias name "Bob".
+    result = await add_relation(
+        "Bob",
+        "Person",
+        "AcmeCorp",
+        "Organization",
+        "WORKS_FOR",
+        source="agent:ret-alias-test:1",
+        session_id="s-ret-alias",
+        turn_id="t-ret-alias",
+    )
+    assert result.outcome in ("created", "reinforced", "superseded")
+
+    # bfs_expand from Robert's canonical id must reach AcmeCorp.
+    expansions = await neo4j_store.bfs_expand([robert_id], max_hops=1)
+    target_names = {row["target_name"] for row in expansions}
+
+    assert "AcmeCorp" in target_names, (
+        f"AcmeCorp should be reachable from Robert (canonical) via bfs_expand, "
+        f"got: {target_names}. The relation may have been written to the alias stub."
+    )
+
+    # Confirm the alias stub has no RELATES_TO edges (the canonical node owns the edge).
+    async with neo4j_driver.session() as session:
+        stub_edges = await (
+            await session.run(
+                "MATCH (stub:Entity {name: 'Bob', canonical: false})"
+                "-[r:RELATES_TO]->() RETURN count(r) AS cnt"
+            )
+        ).single()
+
+    assert stub_edges["cnt"] == 0, (
+        f"Alias stub 'Bob' must not have any RELATES_TO edges; the canonical 'Robert' "
+        f"node owns the relation. Got {stub_edges['cnt']} edge(s) on stub."
+    )
+
+
 @pytest.mark.unit
 def test_retrieval_log_sink_writes_jsonl_to_process_scoped_file(tmp_path):
     from landscape.observability.retrieval_logging import (

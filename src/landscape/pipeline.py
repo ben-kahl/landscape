@@ -102,10 +102,10 @@ async def ingest(
         )
         chunks_created = 0
         if chunks:
-            chunk_neo4j_ids: list[str] = []
+            chunk_ids: list[str] = []
             for chunk in chunks:
                 chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
-                chunk_neo4j_ids.append(
+                chunk_ids.append(
                     await neo4j_store.create_chunk(doc_id, chunk.index, chunk.text, chunk_hash)
                 )
 
@@ -121,14 +121,14 @@ async def ingest(
             await asyncio.gather(
                 *(
                     qdrant_store.upsert_chunk(
-                        chunk_neo4j_id=cid,
+                        chunk_id=cid,
                         doc_id=doc_id,
                         source_doc=title,
                         position=chunk.index,
                         text=chunk.text,
                         vector=vec,
                     )
-                    for chunk, cid, vec in zip(chunks, chunk_neo4j_ids, chunk_vectors, strict=True)
+                    for chunk, cid, vec in zip(chunks, chunk_ids, chunk_vectors, strict=True)
                 )
             )
             chunks_created = len(chunks)

@@ -76,10 +76,20 @@ Landscape uses Qdrant collections for vector lookup:
 | Collection | Payload |
 |---|---|
 | `entities` | Neo4j element ID, entity name, type, source document, timestamp |
-| `chunks` | Neo4j chunk ID, document ID, source document, position |
+| `chunks` | Document-scoped chunk ID, document ID, source document, position |
 
 Entity vectors give graph traversal a semantic starting point. Chunk vectors
 provide source text context when graph facts alone are too sparse.
+
+Chunk identity is now scoped to the owning document and chunk position rather
+than a global `content_hash`. The stable key is:
+
+`chunk_id = f"{doc_id}:{position}:{content_hash}"`
+
+This prevents identical text in different documents from collapsing into one
+Neo4j `:Chunk` node or one Qdrant point. It also means older chunk data must be
+rebuilt or reingested after this migration, because the identity contract has
+changed.
 
 ## Ingestion Flow
 

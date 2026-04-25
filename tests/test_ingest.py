@@ -2,12 +2,22 @@ import json
 import logging
 
 import pytest
+import pytest_asyncio
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from landscape.extraction.schema import Extraction
+from landscape.storage import qdrant_store
 
 TEST_DOC = "Alice leads Project Atlas at Acme Corp. Project Atlas uses PostgreSQL for storage."
 TEST_TITLE = "test-doc-integration"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _ensure_qdrant_collections(request):
+    if request.node.get_closest_marker("unit") or request.node.get_closest_marker("smoke"):
+        return
+    await qdrant_store.init_collection()
+    await qdrant_store.init_chunks_collection()
 
 @pytest.mark.unit
 def test_extraction_schema_accepts_quantified_relation_fields():
@@ -146,7 +156,7 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
     )
     assert len(chunk_points) >= body["chunks_created"]
     for cp in chunk_points:
-        assert cp.payload.get("chunk_neo4j_id"), "Missing chunk_neo4j_id in Qdrant payload"
+        assert cp.payload.get("chunk_id"), "Missing chunk_id in Qdrant payload"
 
 
 @pytest.mark.asyncio

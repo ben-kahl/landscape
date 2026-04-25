@@ -256,15 +256,15 @@ async def get_entities_since(since: datetime) -> list[str]:
 
 
 async def get_chunks_in_conversation(session_id: str) -> list[str]:
-    """Return elementIds of :Chunk nodes belonging to Documents ingested in
-    any Turn of the named Conversation. Empty list if session_id unknown."""
+    """Return chunk ids belonging to Documents ingested in any Turn of the
+    named Conversation. Empty list if session_id unknown."""
     driver = get_driver()
     async with driver.session() as session:
         result = await session.run(
             """
             MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)
                   <-[:INGESTED_IN]-(d:Document)<-[:PART_OF]-(ch:Chunk)
-            RETURN DISTINCT elementId(ch) AS cid
+            RETURN DISTINCT coalesce(ch.chunk_id, elementId(ch)) AS cid
             """,
             session_id=session_id,
         )
@@ -272,8 +272,8 @@ async def get_chunks_in_conversation(session_id: str) -> list[str]:
 
 
 async def get_chunks_since(since: datetime) -> list[str]:
-    """Return elementIds of :Chunk nodes belonging to Documents ingested in
-    Turns with t.timestamp >= since (ISO string compare)."""
+    """Return chunk ids belonging to Documents ingested in Turns with
+    t.timestamp >= since (ISO string compare)."""
     since_iso = since.isoformat()
     driver = get_driver()
     async with driver.session() as session:
@@ -281,7 +281,7 @@ async def get_chunks_since(since: datetime) -> list[str]:
             """
             MATCH (ch:Chunk)-[:PART_OF]->(d:Document)-[:INGESTED_IN]->(t:Turn)
             WHERE t.timestamp >= $since_iso
-            RETURN DISTINCT elementId(ch) AS cid
+            RETURN DISTINCT coalesce(ch.chunk_id, elementId(ch)) AS cid
             """,
             since_iso=since_iso,
         )
@@ -525,34 +525,47 @@ async def create_chunk(
     text: str,
     content_hash: str,
 ) -> str:
-    """MERGE a :Chunk node and [:PART_OF] edge. Returns elementId."""
+    """MERGE a document-scoped :Chunk node and [:PART_OF] edge.
+
+    The stable chunk identity is ``chunk_id = f"{doc_id}:{chunk_index}:{content_hash}"``.
+    Returns that chunk_id so downstream systems can use it as the shared key.
+    """
     driver = get_driver()
+    chunk_id = f"{doc_id}:{chunk_index}:{content_hash}"
     async with driver.session() as session:
         result = await session.run(
             """
             MATCH (d:Document) WHERE elementId(d) = $doc_id
-            MERGE (c:Chunk {content_hash: $hash})
+            MERGE (c:Chunk {chunk_id: $chunk_id})
             ON CREATE SET c.text = $text,
+                          c.doc_id = $doc_id,
                           c.chunk_index = $chunk_index,
-                          c.position = $chunk_index
+                          c.position = $chunk_index,
+                          c.content_hash = $content_hash
+            ON MATCH SET  c.text = $text,
+                          c.doc_id = $doc_id,
+                          c.chunk_index = $chunk_index,
+                          c.position = $chunk_index,
+                          c.content_hash = $content_hash
             MERGE (c)-[:PART_OF]->(d)
-            RETURN elementId(c) AS cid
+            RETURN c.chunk_id AS cid
             """,
             doc_id=doc_id,
-            hash=content_hash,
+            chunk_id=chunk_id,
             text=text,
             chunk_index=chunk_index,
+            content_hash=content_hash,
         )
         record = await result.single()
         return record["cid"]
 
 
 async def upsert_relation(
-    subject_name: str,
-    object_name: str,
-    relation_type: str,
-    confidence: float,
-    source_doc: str,
+    subject_name: str | None = None,
+    object_name: str | None = None,
+    relation_type: str = "",
+    confidence: float = 1.0,
+    source_doc: str = "",
     created_by: str = "ingest",
     session_id: str | None = None,
     turn_id: str | None = None,
@@ -561,13 +574,36 @@ async def upsert_relation(
     quantity_unit: str | None = None,
     quantity_kind: str | None = None,
     time_scope: str | None = None,
+    subject_node_id: str | None = None,
+    object_node_id: str | None = None,
 ) -> tuple[str, str | None]:
     """
     Returns (outcome, relation_id) where outcome is "created" | "reinforced" | "superseded".
     For "superseded", the new edge id is returned.
+
+    Endpoints are matched either by canonical Neo4j element id (subject_node_id /
+    object_node_id) or by name (subject_name / object_name).  Id-based matching is
+    preferred: when both ``subject_node_id`` and ``object_node_id`` are provided the
+    MATCH clauses use ``elementId()`` so alias stubs and same-surface-name homonyms
+    cannot steal the relation from the intended canonical nodes.  Name-based matching
+    is kept as a fallback for callers (e.g. the ingest pipeline) that do not have ids
+    available.
     """
     if created_by not in ("ingest", "agent"):
         raise ValueError(f"created_by must be 'ingest' or 'agent', got {created_by!r}")
+    if bool(subject_node_id) != bool(object_node_id):
+        raise ValueError(
+            "subject_node_id and object_node_id must both be provided or both omitted"
+        )
+    if not subject_node_id and not subject_name:
+        raise ValueError("Either subject_node_id or subject_name must be provided")
+    if not object_node_id and not object_name:
+        raise ValueError("Either object_node_id or object_name must be provided")
+    if not relation_type:
+        raise ValueError("relation_type must be a non-empty string")
+
+    use_ids = bool(subject_node_id and object_node_id)
+
     driver = get_driver()
     now = datetime.now(UTC).isoformat()
 
@@ -578,7 +614,7 @@ async def upsert_relation(
     from landscape.extraction.schema import FUNCTIONAL_KEYS
 
     key_fields = FUNCTIONAL_KEYS.get(relation_type)
-    # Object-keyed rels treat `subtype` as part of edge identity — a new
+    # Object-keyed rels treat `subtype` as part of edge identity -- a new
     # subtype on the same (s, o) is a distinct fact (promotion/demotion) and
     # triggers Case 2 supersession, not Case 1 reinforce. Non-object-keyed
     # rels ignore subtype in identity; Case 1 reinforces and updates subtype
@@ -595,26 +631,49 @@ async def upsert_relation(
         else:
             subtype_identity_clause = ""
 
-        result = await session.run(
-            f"""
-            MATCH (s:Entity {{name: $subject}})-[r:RELATES_TO {{type: $rel_type}}]->
-                  (o:Entity {{name: $object}})
-            WHERE r.valid_until IS NULL
-              {subtype_identity_clause}
-            RETURN elementId(r) AS rid,
-                   r.source_docs AS source_docs,
-                   r.confidence AS conf,
-                   r.subtype AS subtype,
-                   r.quantity_value AS quantity_value,
-                   r.quantity_unit AS quantity_unit,
-                   r.quantity_kind AS quantity_kind,
-                   r.time_scope AS time_scope
-            """,
-            subject=subject_name,
-            object=object_name,
-            rel_type=relation_type,
-            subtype=subtype,
-        )
+        if use_ids:
+            result = await session.run(
+                f"""
+                MATCH (s:Entity)-[r:RELATES_TO {{type: $rel_type}}]->(o:Entity)
+                WHERE elementId(s) = $subject_node_id
+                  AND elementId(o) = $object_node_id
+                  AND r.valid_until IS NULL
+                  {subtype_identity_clause}
+                RETURN elementId(r) AS rid,
+                       r.source_docs AS source_docs,
+                       r.confidence AS conf,
+                       r.subtype AS subtype,
+                       r.quantity_value AS quantity_value,
+                       r.quantity_unit AS quantity_unit,
+                       r.quantity_kind AS quantity_kind,
+                       r.time_scope AS time_scope
+                """,
+                subject_node_id=subject_node_id,
+                object_node_id=object_node_id,
+                rel_type=relation_type,
+                subtype=subtype,
+            )
+        else:
+            result = await session.run(
+                f"""
+                MATCH (s:Entity {{name: $subject_name}})-[r:RELATES_TO {{type: $rel_type}}]->
+                      (o:Entity {{name: $object_name}})
+                WHERE r.valid_until IS NULL
+                  {subtype_identity_clause}
+                RETURN elementId(r) AS rid,
+                       r.source_docs AS source_docs,
+                       r.confidence AS conf,
+                       r.subtype AS subtype,
+                       r.quantity_value AS quantity_value,
+                       r.quantity_unit AS quantity_unit,
+                       r.quantity_kind AS quantity_kind,
+                       r.time_scope AS time_scope
+                """,
+                subject_name=subject_name,
+                object_name=object_name,
+                rel_type=relation_type,
+                subtype=subtype,
+            )
         exact = await result.single()
 
         if exact:
@@ -670,16 +729,22 @@ async def upsert_relation(
         # in FUNCTIONAL_KEYS[rel_type]. Extra fields ("object", "subtype") are
         # null-safe: if either the incoming or existing edge has NULL for a
         # declared field, treat the slot as non-matching rather than colliding
-        # two unknowns — prevents spurious supersession on missing data.
+        # two unknowns -- prevents spurious supersession on missing data.
         conflict = None
         if key_fields is not None:
             # Object-keyed (HAS_TITLE): same (s, rel_type, o), different
             # subtype. Case 1 already rejected null-safe matches.
             # Subject-/subtype-keyed: different object is the conflict signal.
             if "object" in key_fields:
-                object_clause = "AND other.name = $object"
+                if use_ids:
+                    object_clause = "AND elementId(other) = $object_node_id"
+                else:
+                    object_clause = "AND other.name = $object_name"
             else:
-                object_clause = "AND other.name <> $object"
+                if use_ids:
+                    object_clause = "AND elementId(other) <> $object_node_id"
+                else:
+                    object_clause = "AND other.name <> $object_name"
 
             if "subtype" in key_fields:
                 # Subtype-keyed: both sides must carry a matching non-null
@@ -690,7 +755,7 @@ async def upsert_relation(
                 )
             elif "object" in key_fields:
                 # Object-keyed: both sides must carry a non-null differing
-                # subtype — Case 1 already absorbed null-either and equal.
+                # subtype -- Case 1 already absorbed null-safe and equal.
                 subtype_clause = (
                     "AND old.subtype IS NOT NULL AND $subtype IS NOT NULL "
                     "AND old.subtype <> $subtype"
@@ -698,50 +763,155 @@ async def upsert_relation(
             else:
                 subtype_clause = ""
 
-            result = await session.run(
-                f"""
-                MATCH (s:Entity {{name: $subject}})
-                      -[old:RELATES_TO {{type: $rel_type}}]->(other:Entity)
-                WHERE old.valid_until IS NULL
-                  {object_clause}
-                  {subtype_clause}
-                RETURN elementId(old) AS old_rid,
-                       elementId(s) AS sid,
-                       elementId(other) AS oid
-                LIMIT 1
-                """,
-                subject=subject_name,
-                object=object_name,
-                rel_type=relation_type,
-                subtype=subtype,
-            )
+            if use_ids:
+                result = await session.run(
+                    f"""
+                    MATCH (s:Entity)-[old:RELATES_TO {{type: $rel_type}}]->(other:Entity)
+                    WHERE elementId(s) = $subject_node_id
+                      AND old.valid_until IS NULL
+                      {object_clause}
+                      {subtype_clause}
+                    RETURN elementId(old) AS old_rid,
+                           elementId(s) AS sid,
+                           elementId(other) AS oid
+                    LIMIT 1
+                    """,
+                    subject_node_id=subject_node_id,
+                    object_node_id=object_node_id,
+                    rel_type=relation_type,
+                    subtype=subtype,
+                )
+            else:
+                result = await session.run(
+                    f"""
+                    MATCH (s:Entity {{name: $subject_name}})
+                          -[old:RELATES_TO {{type: $rel_type}}]->(other:Entity)
+                    WHERE old.valid_until IS NULL
+                      {object_clause}
+                      {subtype_clause}
+                    RETURN elementId(old) AS old_rid,
+                           elementId(s) AS sid,
+                           elementId(other) AS oid
+                    LIMIT 1
+                    """,
+                    subject_name=subject_name,
+                    object_name=object_name,
+                    rel_type=relation_type,
+                    subtype=subtype,
+                )
             conflict = await result.single()
 
         if conflict:
             # Mark old edge as superseded (old edge keeps its original provenance)
             await session.run(
                 """
-                MATCH (s:Entity {name: $subject})
-                      -[old:RELATES_TO {type: $rel_type}]->(other:Entity)
-                WHERE old.valid_until IS NULL
-                  AND elementId(old) = $old_rid
+                MATCH ()-[old:RELATES_TO]->()
+                WHERE elementId(old) = $old_rid
                 SET old.valid_until = $now, old.superseded_by_doc = $source_doc
                 """,
-                subject=subject_name,
-                rel_type=relation_type,
+                old_rid=conflict["old_rid"],
                 now=now,
                 source_doc=source_doc,
-                old_rid=conflict["old_rid"],
             )
             # Build source_docs for new edge, appending agent entry if applicable
             new_edge_docs = [source_doc]
             if agent_entry:
                 new_edge_docs.append(agent_entry)
             # Create the new edge with provenance
-            result2 = await session.run(
+            if use_ids:
+                result2 = await session.run(
+                    """
+                    MATCH (s:Entity) WHERE elementId(s) = $subject_node_id
+                    MATCH (o:Entity) WHERE elementId(o) = $object_node_id
+                    CREATE (s)-[r:RELATES_TO {
+                        type: $rel_type,
+                        subtype: $subtype,
+                        confidence: $confidence,
+                        source_docs: $source_docs,
+                        valid_from: $now,
+                        valid_until: null,
+                        supersedes_edge_id: $old_rid,
+                        access_count: 1,
+                        last_accessed: $now,
+                        created_by: $created_by,
+                        session_id: $session_id,
+                        turn_id: $turn_id,
+                        quantity_value: $quantity_value,
+                        quantity_unit: $quantity_unit,
+                        quantity_kind: $quantity_kind,
+                        time_scope: $time_scope
+                    }]->(o)
+                    RETURN elementId(r) AS rid
+                    """,
+                    subject_node_id=subject_node_id,
+                    object_node_id=object_node_id,
+                    rel_type=relation_type,
+                    subtype=subtype,
+                    confidence=confidence,
+                    source_docs=new_edge_docs,
+                    now=now,
+                    old_rid=conflict["old_rid"],
+                    created_by=created_by,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    quantity_value=quantity_value,
+                    quantity_unit=quantity_unit,
+                    quantity_kind=quantity_kind,
+                    time_scope=time_scope,
+                )
+            else:
+                result2 = await session.run(
+                    """
+                    MATCH (s:Entity {name: $subject_name}) WITH s LIMIT 1
+                    MATCH (o:Entity {name: $object_name}) WITH s, o LIMIT 1
+                    CREATE (s)-[r:RELATES_TO {
+                        type: $rel_type,
+                        subtype: $subtype,
+                        confidence: $confidence,
+                        source_docs: $source_docs,
+                        valid_from: $now,
+                        valid_until: null,
+                        supersedes_edge_id: $old_rid,
+                        access_count: 1,
+                        last_accessed: $now,
+                        created_by: $created_by,
+                        session_id: $session_id,
+                        turn_id: $turn_id,
+                        quantity_value: $quantity_value,
+                        quantity_unit: $quantity_unit,
+                        quantity_kind: $quantity_kind,
+                        time_scope: $time_scope
+                    }]->(o)
+                    RETURN elementId(r) AS rid
+                    """,
+                    subject_name=subject_name,
+                    object_name=object_name,
+                    rel_type=relation_type,
+                    subtype=subtype,
+                    confidence=confidence,
+                    source_docs=new_edge_docs,
+                    now=now,
+                    old_rid=conflict["old_rid"],
+                    created_by=created_by,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    quantity_value=quantity_value,
+                    quantity_unit=quantity_unit,
+                    quantity_kind=quantity_kind,
+                    time_scope=time_scope,
+                )
+            new_rec = await result2.single()
+            return ("superseded", new_rec["rid"] if new_rec else None)
+
+        # Case 3: fresh relation -- no prior edge with this (s, rel_type) exists
+        fresh_docs = [source_doc]
+        if agent_entry:
+            fresh_docs.append(agent_entry)
+        if use_ids:
+            result = await session.run(
                 """
-                MATCH (s:Entity {name: $subject}) WITH s LIMIT 1
-                MATCH (o:Entity {name: $object}) WITH s, o LIMIT 1
+                MATCH (s:Entity) WHERE elementId(s) = $subject_node_id
+                MATCH (o:Entity) WHERE elementId(o) = $object_node_id
                 CREATE (s)-[r:RELATES_TO {
                     type: $rel_type,
                     subtype: $subtype,
@@ -749,7 +919,6 @@ async def upsert_relation(
                     source_docs: $source_docs,
                     valid_from: $now,
                     valid_until: null,
-                    supersedes_edge_id: $old_rid,
                     access_count: 1,
                     last_accessed: $now,
                     created_by: $created_by,
@@ -762,14 +931,13 @@ async def upsert_relation(
                 }]->(o)
                 RETURN elementId(r) AS rid
                 """,
-                subject=subject_name,
-                object=object_name,
+                subject_node_id=subject_node_id,
+                object_node_id=object_node_id,
                 rel_type=relation_type,
                 subtype=subtype,
                 confidence=confidence,
-                source_docs=new_edge_docs,
+                source_docs=fresh_docs,
                 now=now,
-                old_rid=conflict["old_rid"],
                 created_by=created_by,
                 session_id=session_id,
                 turn_id=turn_id,
@@ -778,59 +946,53 @@ async def upsert_relation(
                 quantity_kind=quantity_kind,
                 time_scope=time_scope,
             )
-            new_rec = await result2.single()
-            return ("superseded", new_rec["rid"] if new_rec else None)
-
-        # Case 3: fresh relation — no prior edge with this (s, rel_type) exists
-        fresh_docs = [source_doc]
-        if agent_entry:
-            fresh_docs.append(agent_entry)
-        result = await session.run(
-            """
-            MATCH (s:Entity {name: $subject}) WITH s LIMIT 1
-            MATCH (o:Entity {name: $object}) WITH s, o LIMIT 1
-            CREATE (s)-[r:RELATES_TO {
-                type: $rel_type,
-                subtype: $subtype,
-                confidence: $confidence,
-                source_docs: $source_docs,
-                valid_from: $now,
-                valid_until: null,
-                access_count: 1,
-                last_accessed: $now,
-                created_by: $created_by,
-                session_id: $session_id,
-                turn_id: $turn_id,
-                quantity_value: $quantity_value,
-                quantity_unit: $quantity_unit,
-                quantity_kind: $quantity_kind,
-                time_scope: $time_scope
-            }]->(o)
-            RETURN elementId(r) AS rid
-            """,
-            subject=subject_name,
-            object=object_name,
-            rel_type=relation_type,
-            subtype=subtype,
-            confidence=confidence,
-            source_docs=fresh_docs,
-            now=now,
-            created_by=created_by,
-            session_id=session_id,
-            turn_id=turn_id,
-            quantity_value=quantity_value,
-            quantity_unit=quantity_unit,
-            quantity_kind=quantity_kind,
-            time_scope=time_scope,
-        )
+        else:
+            result = await session.run(
+                """
+                MATCH (s:Entity {name: $subject_name}) WITH s LIMIT 1
+                MATCH (o:Entity {name: $object_name}) WITH s, o LIMIT 1
+                CREATE (s)-[r:RELATES_TO {
+                    type: $rel_type,
+                    subtype: $subtype,
+                    confidence: $confidence,
+                    source_docs: $source_docs,
+                    valid_from: $now,
+                    valid_until: null,
+                    access_count: 1,
+                    last_accessed: $now,
+                    created_by: $created_by,
+                    session_id: $session_id,
+                    turn_id: $turn_id,
+                    quantity_value: $quantity_value,
+                    quantity_unit: $quantity_unit,
+                    quantity_kind: $quantity_kind,
+                    time_scope: $time_scope
+                }]->(o)
+                RETURN elementId(r) AS rid
+                """,
+                subject_name=subject_name,
+                object_name=object_name,
+                rel_type=relation_type,
+                subtype=subtype,
+                confidence=confidence,
+                source_docs=fresh_docs,
+                now=now,
+                created_by=created_by,
+                session_id=session_id,
+                turn_id=turn_id,
+                quantity_value=quantity_value,
+                quantity_unit=quantity_unit,
+                quantity_kind=quantity_kind,
+                time_scope=time_scope,
+            )
         record = await result.single()
         return ("created", record["rid"] if record else None)
 
 
 async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[str, Any]]:
-    """For a set of :Chunk elementIds, return the canonical :Entity nodes
+    """For a set of document-scoped chunk ids, return the canonical :Entity nodes
     extracted from the parent :Document of each chunk, together with the
-    list of seed chunk elementIds each entity was reached via (so the caller
+    list of seed chunk ids each entity was reached via (so the caller
     can propagate chunk-hit similarity scores to the right entities)."""
     if not chunk_element_ids:
         return []
@@ -839,8 +1001,12 @@ async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[st
         result = await session.run(
             """
             MATCH (c:Chunk)-[:PART_OF]->(d:Document)<-[:EXTRACTED_FROM]-(e:Entity)
-            WHERE elementId(c) IN $chunk_ids AND e.canonical = true
-            WITH e, collect(DISTINCT elementId(c)) AS chunk_eids
+            WHERE (c.chunk_id IN $chunk_ids OR elementId(c) IN $chunk_ids)
+              AND e.canonical = true
+            WITH e,
+                 collect(
+                     DISTINCT coalesce(c.chunk_id, elementId(c))
+                 ) AS chunk_eids
             RETURN
                 elementId(e) AS eid,
                 e.name AS name,
