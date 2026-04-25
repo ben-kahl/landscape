@@ -578,10 +578,16 @@ async def upsert_relation(
     """
     if created_by not in ("ingest", "agent"):
         raise ValueError(f"created_by must be 'ingest' or 'agent', got {created_by!r}")
+    if bool(subject_node_id) != bool(object_node_id):
+        raise ValueError(
+            "subject_node_id and object_node_id must both be provided or both omitted"
+        )
     if not subject_node_id and not subject_name:
         raise ValueError("Either subject_node_id or subject_name must be provided")
     if not object_node_id and not object_name:
         raise ValueError("Either object_node_id or object_name must be provided")
+    if not relation_type:
+        raise ValueError("relation_type must be a non-empty string")
 
     use_ids = bool(subject_node_id and object_node_id)
 

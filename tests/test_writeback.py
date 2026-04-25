@@ -927,3 +927,60 @@ async def test_add_relation_does_not_cross_link_same_surface_name(http_client, n
     assert all_edges[0]["stype"] == "Person", (
         f"The single edge should start from Alex-Person, got type {all_edges[0]['stype']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Unit-level guard tests — no DB connection required
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_upsert_relation_raises_when_only_subject_node_id_given():
+    """Passing only subject_node_id (without object_node_id) must raise ValueError
+    immediately — before any Cypher is executed — so partial ids cannot silently
+    degrade to name-based matching.
+    """
+    from landscape.storage import neo4j_store
+
+    with pytest.raises(ValueError, match="both be provided or both omitted"):
+        await neo4j_store.upsert_relation(
+            subject_node_id="4:abc:1",
+            subject_name="Alice",
+            object_name="Acme",
+            relation_type="WORKS_FOR",
+            confidence=0.9,
+            source_doc="test-doc",
+        )
+
+
+@pytest.mark.asyncio
+async def test_upsert_relation_raises_when_only_object_node_id_given():
+    """Passing only object_node_id (without subject_node_id) must raise ValueError
+    immediately — the symmetric partner of the subject-only test.
+    """
+    from landscape.storage import neo4j_store
+
+    with pytest.raises(ValueError, match="both be provided or both omitted"):
+        await neo4j_store.upsert_relation(
+            object_node_id="4:abc:2",
+            subject_name="Alice",
+            object_name="Acme",
+            relation_type="WORKS_FOR",
+            confidence=0.9,
+            source_doc="test-doc",
+        )
+
+
+@pytest.mark.asyncio
+async def test_upsert_relation_raises_when_relation_type_empty():
+    """An empty relation_type string must raise ValueError immediately."""
+    from landscape.storage import neo4j_store
+
+    with pytest.raises(ValueError, match="relation_type must be a non-empty string"):
+        await neo4j_store.upsert_relation(
+            subject_name="Alice",
+            object_name="Acme",
+            relation_type="",
+            confidence=0.9,
+            source_doc="test-doc",
+        )
