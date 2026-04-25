@@ -3,8 +3,10 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
 
 from landscape.retrieval.query import retrieve
+from landscape.storage import qdrant_store
 
 pytestmark = pytest.mark.integration
 
@@ -14,6 +16,12 @@ BASIC_DOC = (
     "Diego works on the Sentinel project."
 )
 TITLE = "chunk-surfacing-test"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _ensure_qdrant_collections():
+    await qdrant_store.init_collection()
+    await qdrant_store.init_chunks_collection()
 
 
 async def _clear(neo4j_driver, title: str) -> None:

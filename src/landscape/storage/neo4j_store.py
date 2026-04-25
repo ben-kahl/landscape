@@ -264,7 +264,7 @@ async def get_chunks_in_conversation(session_id: str) -> list[str]:
             """
             MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)
                   <-[:INGESTED_IN]-(d:Document)<-[:PART_OF]-(ch:Chunk)
-            RETURN DISTINCT ch.chunk_id AS cid
+            RETURN DISTINCT coalesce(ch.chunk_id, elementId(ch)) AS cid
             """,
             session_id=session_id,
         )
@@ -281,7 +281,7 @@ async def get_chunks_since(since: datetime) -> list[str]:
             """
             MATCH (ch:Chunk)-[:PART_OF]->(d:Document)-[:INGESTED_IN]->(t:Turn)
             WHERE t.timestamp >= $since_iso
-            RETURN DISTINCT ch.chunk_id AS cid
+            RETURN DISTINCT coalesce(ch.chunk_id, elementId(ch)) AS cid
             """,
             since_iso=since_iso,
         )
@@ -992,7 +992,7 @@ async def upsert_relation(
 async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[str, Any]]:
     """For a set of document-scoped chunk ids, return the canonical :Entity nodes
     extracted from the parent :Document of each chunk, together with the
-    list of seed chunk elementIds each entity was reached via (so the caller
+    list of seed chunk ids each entity was reached via (so the caller
     can propagate chunk-hit similarity scores to the right entities)."""
     if not chunk_element_ids:
         return []
@@ -1001,8 +1001,12 @@ async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[st
         result = await session.run(
             """
             MATCH (c:Chunk)-[:PART_OF]->(d:Document)<-[:EXTRACTED_FROM]-(e:Entity)
-            WHERE c.chunk_id IN $chunk_ids AND e.canonical = true
-            WITH e, collect(DISTINCT c.chunk_id) AS chunk_eids
+            WHERE (c.chunk_id IN $chunk_ids OR elementId(c) IN $chunk_ids)
+              AND e.canonical = true
+            WITH e,
+                 collect(
+                     DISTINCT coalesce(c.chunk_id, elementId(c))
+                 ) AS chunk_eids
             RETURN
                 elementId(e) AS eid,
                 e.name AS name,

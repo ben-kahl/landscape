@@ -1,6 +1,9 @@
 """Chunk creation integration tests."""
 import pytest
+import pytest_asyncio
 from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+from landscape.storage import qdrant_store
 
 pytestmark = pytest.mark.integration
 
@@ -14,6 +17,12 @@ LONG_DOC = " ".join(
 
 CHUNK_TITLE_SHORT = "chunks-test-short"
 CHUNK_TITLE_LONG = "chunks-test-long"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _ensure_qdrant_collections():
+    await qdrant_store.init_collection()
+    await qdrant_store.init_chunks_collection()
 
 
 async def _clear_doc(neo4j_driver, title: str) -> None:
@@ -34,8 +43,7 @@ async def test_single_short_doc_produces_one_chunk(http_client, neo4j_driver, qd
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (d:Document {title: $title})
-            MATCH (c:Chunk {doc_id: elementId(d)})
+            MATCH (c:Chunk)-[:PART_OF]->(d:Document {title: $title})
             RETURN count(c) AS cnt
             """,
             title=CHUNK_TITLE_SHORT,
@@ -75,8 +83,7 @@ async def test_chunks_linked_to_document(http_client, neo4j_driver):
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (d:Document {title: $title})
-            MATCH (c:Chunk {doc_id: elementId(d)})
+            MATCH (c:Chunk)-[:PART_OF]->(d:Document {title: $title})
             RETURN count(c) AS cnt
             """,
             title=CHUNK_TITLE_SHORT,
@@ -175,9 +182,8 @@ async def test_identical_chunk_text_across_documents_stays_separate(
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (d:Document)
+            MATCH (c:Chunk)-[:PART_OF]->(d:Document)
             WHERE d.title IN $titles
-            MATCH (c:Chunk {doc_id: elementId(d)})
             RETURN count(c) AS cnt, collect(DISTINCT c.chunk_id) AS chunk_ids
             """,
             titles=titles,

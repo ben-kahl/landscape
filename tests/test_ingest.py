@@ -2,12 +2,20 @@ import json
 import logging
 
 import pytest
+import pytest_asyncio
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from landscape.extraction.schema import Extraction
+from landscape.storage import qdrant_store
 
 TEST_DOC = "Alice leads Project Atlas at Acme Corp. Project Atlas uses PostgreSQL for storage."
 TEST_TITLE = "test-doc-integration"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _ensure_qdrant_collections():
+    await qdrant_store.init_collection()
+    await qdrant_store.init_chunks_collection()
 
 @pytest.mark.unit
 def test_extraction_schema_accepts_quantified_relation_fields():

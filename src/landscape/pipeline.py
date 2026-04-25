@@ -79,13 +79,6 @@ async def ingest(
             )
             return result
 
-        # Ensure both Qdrant collections exist before any chunk/entity writes or
-        # entity-resolution lookups. Some test setups spin up an empty Qdrant.
-        await asyncio.gather(
-            qdrant_store.init_collection(),
-            qdrant_store.init_chunks_collection(),
-        )
-
         # Step 1b: wire Document to Turn when conversation context is provided
         turn_element_id: str | None = None
         if session_id is not None and turn_id is not None:
