@@ -729,3 +729,201 @@ async def test_add_relation_endpoint_types_coerce(http_client, neo4j_driver):
     assert obj_rec["st"] == "Company", (
         f"Expected subtype 'Company', got {obj_rec['st']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Helpers for alias / homonym regression tests
+# ---------------------------------------------------------------------------
+
+
+async def _seed_entity_with_vector(
+    name: str,
+    entity_type: str,
+    *,
+    vector: list[float] | None = None,
+) -> str:
+    """Create Entity in Neo4j + Qdrant. Returns element id.
+
+    If vector is None, encodes ``name (entity_type)`` using the project encoder.
+    Callers that want alias resolution to fire from a different surface name
+    should pass the vector for *that* surface name so the resolver finds this
+    canonical node when queried with the alias.
+    """
+    from datetime import UTC, datetime
+
+    from landscape.embeddings import encoder
+    from landscape.storage import neo4j_store, qdrant_store
+
+    doc_id, _ = await neo4j_store.merge_document(
+        f"hash-seed-{name.lower().replace(' ', '-')}",
+        f"seed-doc-{name.lower().replace(' ', '-')}",
+        "text",
+    )
+    entity_id = await neo4j_store.merge_entity(
+        name, entity_type, f"seed-doc-{name.lower().replace(' ', '-')}", 0.9, doc_id, "test"
+    )
+    v = vector if vector is not None else encoder.encode(f"{name} ({entity_type})")
+    await qdrant_store.upsert_entity(
+        neo4j_element_id=entity_id,
+        name=name,
+        entity_type=entity_type,
+        source_doc=f"seed-doc-{name.lower().replace(' ', '-')}",
+        timestamp=datetime.now(UTC).isoformat(),
+        vector=v,
+    )
+    return entity_id
+
+
+async def _seed_alias_stub(
+    canonical_entity_id: str,
+    alias_name: str,
+) -> None:
+    """Register an alias stub for an existing canonical entity in Neo4j.
+
+    Creates the SAME_AS edge from the stub to the canonical node, and appends
+    the alias to the canonical node's aliases list — exactly as
+    neo4j_store.add_alias does.
+    """
+    from landscape.storage import neo4j_store
+
+    await neo4j_store.add_alias(
+        canonical_element_id=canonical_entity_id,
+        alias=alias_name,
+        source_doc="test-alias",
+        confidence=0.95,
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver):
+    """Regression: when 'Bob' is an alias for 'Robert', add_relation('Bob', ...)
+    must attach the edge to the canonical 'Robert' node, not to the alias stub.
+
+    Before the fix: upsert_relation was called with subject_name='Bob' which
+    matched the stub node (Entity {name: 'Bob'}).
+    After the fix: upsert_relation is called with subject_node_id=robert_id so
+    the Cypher MATCH uses elementId() and binds to the canonical node.
+    """
+    from landscape.embeddings import encoder
+    from landscape.writeback import add_relation
+
+    # Seed Robert using the 'Bob (Person)' vector so the resolver finds Robert
+    # when add_entity("Bob") searches Qdrant -- this simulates "Bob" being a
+    # known alias whose vector representation maps to Robert's canonical entry.
+    bob_vector = encoder.encode("Bob (Person)")
+    robert_id = await _seed_entity_with_vector("Robert", "Person", vector=bob_vector)
+
+    # Register "Bob" as an alias stub in Neo4j so MATCH {name: 'Bob'} finds the stub.
+    await _seed_alias_stub(robert_id, "Bob")
+
+    # Seed Acme (plain -- no alias trickery needed here).
+    acme_id = await _seed_entity_with_vector("Acme", "Organization")
+
+    result = await add_relation(
+        "Bob",
+        "Person",
+        "Acme",
+        "Organization",
+        "WORKS_FOR",
+        source="agent:alias-test:1",
+        session_id="s-alias",
+        turn_id="t-alias",
+    )
+
+    assert result.outcome in ("created", "reinforced", "superseded")
+
+    # The edge must be attached to Robert (canonical), not to the alias stub.
+    assert result.subject_id == robert_id, (
+        f"Expected edge subject_id to be Robert ({robert_id}), "
+        f"got {result.subject_id!r} -- alias stub may have stolen the relation."
+    )
+    assert result.object_id == acme_id, (
+        f"Expected edge object_id to be Acme ({acme_id}), got {result.object_id!r}"
+    )
+
+    # Double-check via the graph: Robert should have the RELATES_TO edge.
+    async with neo4j_driver.session() as session:
+        edge_on_canonical = await (
+            await session.run(
+                "MATCH (s:Entity)-[r:RELATES_TO {type: 'WORKS_FOR'}]->(o:Entity) "
+                "WHERE elementId(s) = $sid AND r.valid_until IS NULL "
+                "RETURN count(r) AS cnt",
+                sid=robert_id,
+            )
+        ).single()
+        edge_on_stub = await (
+            await session.run(
+                "MATCH (stub:Entity {name: 'Bob', canonical: false})"
+                "-[r:RELATES_TO {type: 'WORKS_FOR'}]->() "
+                "WHERE r.valid_until IS NULL "
+                "RETURN count(r) AS cnt"
+            )
+        ).single()
+
+    assert edge_on_canonical["cnt"] == 1, (
+        "Expected exactly 1 live WORKS_FOR edge starting from Robert (canonical)"
+    )
+    assert edge_on_stub["cnt"] == 0, (
+        "Alias stub 'Bob' must not have received the WORKS_FOR edge"
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_relation_does_not_cross_link_same_surface_name(http_client, neo4j_driver):
+    """Regression: when two distinct entities share the name 'Alex' (one Person,
+    one Project), add_relation with subject_type='Person' must attach the edge
+    to the Person node only -- not to both nodes (cartesian MATCH {name: 'Alex'}).
+
+    Before the fix: upsert_relation matched MATCH (s:Entity {name: 'Alex'}) which
+    returned both nodes and created N cartesian-product edges.
+    After the fix: the resolved entity_id from add_entity is passed as
+    subject_node_id so elementId() match binds exactly one canonical node.
+    """
+    from landscape.embeddings import encoder
+    from landscape.writeback import add_relation
+
+    # Seed Alex Person and Alex Project with their respective type-scoped vectors.
+    alex_person_vector = encoder.encode("Alex (Person)")
+    alex_project_vector = encoder.encode("Alex (Project)")
+    alex_person_id = await _seed_entity_with_vector("Alex", "Person", vector=alex_person_vector)
+    # Project named Alex -- same surface name, different type.
+    await _seed_entity_with_vector("Alex", "Project", vector=alex_project_vector)
+
+    northwind_id = await _seed_entity_with_vector("Northwind", "Organization")
+
+    result = await add_relation(
+        "Alex",
+        "Person",           # subject_type disambiguates to the Person node
+        "Northwind",
+        "Organization",
+        "WORKS_FOR",
+        source="agent:homonym-test:1",
+        session_id="s-homonym",
+        turn_id="t-homonym",
+    )
+
+    assert result.outcome in ("created", "reinforced", "superseded")
+    assert result.subject_id == alex_person_id, (
+        f"Expected edge to land on Alex-Person ({alex_person_id}), "
+        f"got {result.subject_id!r} -- homonym cross-link may have occurred."
+    )
+    assert result.object_id == northwind_id, (
+        f"Expected edge object to be Northwind ({northwind_id}), got {result.object_id!r}"
+    )
+
+    # Exactly one live WORKS_FOR edge should exist, and it must start from Alex Person.
+    async with neo4j_driver.session() as session:
+        all_edges = await (
+            await session.run(
+                "MATCH (s:Entity {name: 'Alex'})-[r:RELATES_TO {type: 'WORKS_FOR'}]->(o:Entity) "
+                "WHERE r.valid_until IS NULL "
+                "RETURN elementId(s) AS sid, s.type AS stype, count(r) AS cnt"
+            )
+        ).data()
+
+    assert len(all_edges) == 1, (
+        f"Expected exactly 1 WORKS_FOR edge from any 'Alex' node, got {len(all_edges)}: {all_edges}"
+    )
+    assert all_edges[0]["stype"] == "Person", (
+        f"The single edge should start from Alex-Person, got type {all_edges[0]['stype']!r}"
+    )
