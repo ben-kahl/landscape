@@ -53,7 +53,8 @@ def test_format_search_result_includes_entities_and_chunks():
 def test_format_search_result_renders_edge_quantities():
     from bench_longmemeval import _format_search_result
 
-    qty = {"quantity_value": 3, "quantity_unit": None, "quantity_kind": "quantity", "time_scope": None}
+    qty = {"quantity_value": 3, "quantity_unit": None,
+           "quantity_kind": "quantity", "time_scope": None}
     result = _make_result(
         entities=[_entity("bike", "Object", ["OWNS"], [qty])],
     )
