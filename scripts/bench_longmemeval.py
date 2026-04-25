@@ -167,12 +167,14 @@ def _bedrock_invoke(client, model_id: str, prompt: str, max_tokens: int = 512) -
         messages=[{"role": "user", "content": [{"text": prompt}]}],
         inferenceConfig={"maxTokens": max_tokens, "temperature": 0},
     )
+    print(f"Model Response:{response["output"]["message"]["content"][0]["text"].strip()}\n")
     return response["output"]["message"]["content"][0]["text"].strip()
 
 
 def _generate_answer(client, model_id: str, result, question: str) -> str:
     """Call Bedrock to answer question from retrieved context."""
     context = _format_search_result(result)
+    print(f"Context being passed to bedrock: {context}\n")
     prompt = (
         "You are answering a question about a person's memories and experiences.\n"
         "Use only the context below. If the context does not contain enough information "
@@ -193,11 +195,13 @@ def _judge_answer(client, model_id: str, question: str, gold: str, generated: st
         "Does the generated answer correctly answer the question given the gold answer?\n"
         'Respond with a JSON object only: {"judgment": "correct"|"incorrect"|"abstained", "reason": "..."}\n\n'
         "Rules:\n"
-        '- "correct": the generated answer conveys the same information as the gold answer, '
-        "allowing for paraphrase.\n"
+        '- "correct": the generated answer correctly conveys the gold answer. Additional correct '
+        "context beyond the gold answer is acceptable — judge on whether the gold is present and "
+        "accurate, not on whether the answers are identical.\n"
         '- "abstained": the generated answer says it does not have the information AND the '
         "gold answer also indicates the information was not available.\n"
-        '- "incorrect": any other case.'
+        '- "incorrect": the generated answer is missing the gold information, contradicts it, '
+        "or gives a wrong answer."
     )
     raw = _bedrock_invoke(client, model_id, prompt, max_tokens=256)
     return _parse_judge_response(raw)
