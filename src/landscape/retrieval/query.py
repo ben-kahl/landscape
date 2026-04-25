@@ -32,7 +32,7 @@ class RetrievedEntity:
 
 @dataclass
 class RetrievedChunk:
-    chunk_neo4j_id: str  # Neo4j elementId of the :Chunk node
+    chunk_neo4j_id: str  # Stable document-scoped chunk id from storage
     text: str
     doc_id: str          # Document node ID from the chunk payload
     source_doc: str      # Human-readable document title/filename slug
@@ -123,7 +123,7 @@ async def retrieve(
         retrieved_chunks: list[RetrievedChunk] = []
         for hit in chunk_hits:
             payload = hit.payload or {}
-            cid = payload.get("chunk_neo4j_id")
+            cid = payload.get("chunk_id") or payload.get("chunk_neo4j_id")
             if not cid:
                 continue
             chunk_ids.append(cid)

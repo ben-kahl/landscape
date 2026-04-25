@@ -146,7 +146,7 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
     )
     assert len(chunk_points) >= body["chunks_created"]
     for cp in chunk_points:
-        assert cp.payload.get("chunk_neo4j_id"), "Missing chunk_neo4j_id in Qdrant payload"
+        assert cp.payload.get("chunk_id"), "Missing chunk_id in Qdrant payload"
 
 
 @pytest.mark.asyncio

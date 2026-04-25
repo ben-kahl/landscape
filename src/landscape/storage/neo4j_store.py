@@ -256,15 +256,15 @@ async def get_entities_since(since: datetime) -> list[str]:
 
 
 async def get_chunks_in_conversation(session_id: str) -> list[str]:
-    """Return elementIds of :Chunk nodes belonging to Documents ingested in
-    any Turn of the named Conversation. Empty list if session_id unknown."""
+    """Return chunk ids belonging to Documents ingested in any Turn of the
+    named Conversation. Empty list if session_id unknown."""
     driver = get_driver()
     async with driver.session() as session:
         result = await session.run(
             """
             MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)
                   <-[:INGESTED_IN]-(d:Document)<-[:PART_OF]-(ch:Chunk)
-            RETURN DISTINCT elementId(ch) AS cid
+            RETURN DISTINCT ch.chunk_id AS cid
             """,
             session_id=session_id,
         )
@@ -272,8 +272,8 @@ async def get_chunks_in_conversation(session_id: str) -> list[str]:
 
 
 async def get_chunks_since(since: datetime) -> list[str]:
-    """Return elementIds of :Chunk nodes belonging to Documents ingested in
-    Turns with t.timestamp >= since (ISO string compare)."""
+    """Return chunk ids belonging to Documents ingested in Turns with
+    t.timestamp >= since (ISO string compare)."""
     since_iso = since.isoformat()
     driver = get_driver()
     async with driver.session() as session:
@@ -281,7 +281,7 @@ async def get_chunks_since(since: datetime) -> list[str]:
             """
             MATCH (ch:Chunk)-[:PART_OF]->(d:Document)-[:INGESTED_IN]->(t:Turn)
             WHERE t.timestamp >= $since_iso
-            RETURN DISTINCT elementId(ch) AS cid
+            RETURN DISTINCT ch.chunk_id AS cid
             """,
             since_iso=since_iso,
         )
@@ -525,23 +525,36 @@ async def create_chunk(
     text: str,
     content_hash: str,
 ) -> str:
-    """MERGE a :Chunk node and [:PART_OF] edge. Returns elementId."""
+    """MERGE a document-scoped :Chunk node and [:PART_OF] edge.
+
+    The stable chunk identity is ``chunk_id = f"{doc_id}:{chunk_index}:{content_hash}"``.
+    Returns that chunk_id so downstream systems can use it as the shared key.
+    """
     driver = get_driver()
+    chunk_id = f"{doc_id}:{chunk_index}:{content_hash}"
     async with driver.session() as session:
         result = await session.run(
             """
             MATCH (d:Document) WHERE elementId(d) = $doc_id
-            MERGE (c:Chunk {content_hash: $hash})
+            MERGE (c:Chunk {chunk_id: $chunk_id})
             ON CREATE SET c.text = $text,
+                          c.doc_id = $doc_id,
                           c.chunk_index = $chunk_index,
-                          c.position = $chunk_index
+                          c.position = $chunk_index,
+                          c.content_hash = $content_hash
+            ON MATCH SET  c.text = $text,
+                          c.doc_id = $doc_id,
+                          c.chunk_index = $chunk_index,
+                          c.position = $chunk_index,
+                          c.content_hash = $content_hash
             MERGE (c)-[:PART_OF]->(d)
-            RETURN elementId(c) AS cid
+            RETURN c.chunk_id AS cid
             """,
             doc_id=doc_id,
-            hash=content_hash,
+            chunk_id=chunk_id,
             text=text,
             chunk_index=chunk_index,
+            content_hash=content_hash,
         )
         record = await result.single()
         return record["cid"]
@@ -977,7 +990,7 @@ async def upsert_relation(
 
 
 async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[str, Any]]:
-    """For a set of :Chunk elementIds, return the canonical :Entity nodes
+    """For a set of document-scoped chunk ids, return the canonical :Entity nodes
     extracted from the parent :Document of each chunk, together with the
     list of seed chunk elementIds each entity was reached via (so the caller
     can propagate chunk-hit similarity scores to the right entities)."""
@@ -988,8 +1001,8 @@ async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[st
         result = await session.run(
             """
             MATCH (c:Chunk)-[:PART_OF]->(d:Document)<-[:EXTRACTED_FROM]-(e:Entity)
-            WHERE elementId(c) IN $chunk_ids AND e.canonical = true
-            WITH e, collect(DISTINCT elementId(c)) AS chunk_eids
+            WHERE c.chunk_id IN $chunk_ids AND e.canonical = true
+            WITH e, collect(DISTINCT c.chunk_id) AS chunk_eids
             RETURN
                 elementId(e) AS eid,
                 e.name AS name,

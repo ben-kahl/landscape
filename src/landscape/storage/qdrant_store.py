@@ -137,7 +137,7 @@ async def search_chunks(
 
 
 async def upsert_chunk(
-    chunk_neo4j_id: str,
+    chunk_id: str,
     doc_id: str,
     source_doc: str,
     position: int,
@@ -145,7 +145,7 @@ async def upsert_chunk(
     vector: list[float],
 ) -> None:
     client = get_client()
-    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, chunk_neo4j_id))
+    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, chunk_id))
     await client.upsert(
         collection_name=CHUNKS_COLLECTION,
         points=[
@@ -153,7 +153,8 @@ async def upsert_chunk(
                 id=point_id,
                 vector=vector,
                 payload={
-                    "chunk_neo4j_id": chunk_neo4j_id,
+                    "chunk_id": chunk_id,
+                    "chunk_neo4j_id": chunk_id,
                     "doc_id": doc_id,
                     "source_doc": source_doc,
                     "position": position,
