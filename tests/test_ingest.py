@@ -13,7 +13,9 @@ TEST_TITLE = "test-doc-integration"
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _ensure_qdrant_collections():
+async def _ensure_qdrant_collections(request):
+    if request.node.get_closest_marker("unit") or request.node.get_closest_marker("smoke"):
+        return
     await qdrant_store.init_collection()
     await qdrant_store.init_chunks_collection()
 
