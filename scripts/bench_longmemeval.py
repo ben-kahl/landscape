@@ -1,32 +1,44 @@
 #!/usr/bin/env python3
-"""Smoke benchmark: Landscape hybrid retrieval on a LongMemEval slice.
+"""LongMemEval benchmark for Landscape hybrid retrieval with LLM judging.
 
 LongMemEval (Wu et al.) probes personal-memory recall: given a haystack of
 conversation sessions, answer a question whose evidence lives in a known
-subset of those sessions. This script runs a small slice and reports a
-retrieval-coverage proxy metric — "did top-k retrieval surface at least one
-entity from an evidence session" — which is what step 7 of the
-vocab_expansion spec asks for.
+subset of those sessions.
 
-We are NOT running the official LLM-judge scorer. This smoke measures
-whether the expanded vocab + subtype layer routes evidence sessions to
-top-k, which is the precondition for any downstream answer-quality gain.
+Pipeline per question:
+  1. Ingest haystack sessions (gold evidence first, then distractors).
+  2. Retrieve via retrieve() — same function as the MCP search tool — returning
+     entities with path/quantity data plus raw text chunks.
+  3. Call AWS Bedrock to generate an answer from the retrieved context.
+  4. Call AWS Bedrock to judge the generated answer against the gold answer.
+
+Metrics reported:
+  hit_at_k_rate      — retrieval coverage proxy (was the gold entity in top-k?)
+  judge_correct_rate — answer quality (correct + abstained) / total
 
 Usage:
-    # Requires docker stack up (Neo4j, Qdrant, Ollama).
-    # LongMemEval data is NOT in-repo. Point at a local JSON dump:
+    # Requires docker stack up (Neo4j, Qdrant, Ollama) and AWS credentials.
     uv run python scripts/bench_longmemeval.py \\
-        --data /path/to/longmemeval_s.json \\
+        --data tests/longmemeval_s_cleaned.json \\
         --n-questions 10 \\
-        --max-sessions 6
+        --max-sessions 4
 
-    # Download LongMemEval from the authors' release:
-    #   https://github.com/xiaowu0162/LongMemEval
-    # Pick longmemeval_s.json (small haystack) for this smoke.
+    # Skip Bedrock judging for a quick retrieval-only smoke run:
+    uv run python scripts/bench_longmemeval.py \\
+        --data tests/longmemeval_s_cleaned.json \\
+        --n-questions 10 \\
+        --skip-judge
 
-The script ingests each question's haystack sessions (capped at
---max-sessions, always including the gold evidence sessions first), runs
-hybrid retrieval for the question text, and records top-k hit status.
+    # Override judge model:
+    uv run python scripts/bench_longmemeval.py \\
+        --data tests/longmemeval_s_cleaned.json \\
+        --judge-model anthropic.claude-3-5-sonnet-20241022-v2:0
+
+AWS credentials required (unless --skip-judge):
+    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
+    BEDROCK_JUDGE_MODEL_ID (optional override, default claude-3-5-haiku)
+
+    Enable the model in the AWS Bedrock console before first use.
 Results land at scripts/bench_longmemeval_results.json.
 """
 import argparse
@@ -84,6 +96,117 @@ def _format_session(session_turns: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
+def _format_search_result(result) -> str:
+    """Render a RetrieveResult as the context block an agent sees from search().
+
+    Mirrors the MCP search tool output: entities with relationship paths and
+    edge quantities, followed by labelled source passages.
+    """
+    parts = ["## Entities"]
+    for r in result.results:
+        line = f"- {r.name} ({r.type})"
+        if r.path_edge_types:
+            edges = []
+            quantities = r.path_edge_quantities or [{}] * len(r.path_edge_types)
+            for rel_type, qty in zip(r.path_edge_types, quantities):
+                edge = rel_type
+                if qty:
+                    value = qty.get("quantity_value")
+                    unit = qty.get("quantity_unit")
+                    kind = qty.get("quantity_kind")
+                    scope = qty.get("time_scope")
+                    qparts = []
+                    if value is not None:
+                        label = str(kind) if kind else "quantity"
+                        qparts.append(f"{label}={value}" + (f" {unit}" if unit else ""))
+                    if scope:
+                        qparts.append(f"scope={scope}")
+                    if qparts:
+                        edge = f"{edge} {{{', '.join(qparts)}}}"
+                edges.append(edge)
+            line += f" [via {' → '.join(edges)}]"
+        parts.append(line)
+
+    if result.chunks:
+        parts.append("\n## Source Passages")
+        for c in result.chunks:
+            parts.append(f"[{c.source_doc}]\n{c.text}")
+
+    return "\n".join(parts)
+
+
+def _parse_judge_response(raw: str) -> dict:
+    """Parse a Bedrock judge response string into {judgment, reason}.
+
+    Handles plain JSON, JSON wrapped in markdown code fences, and Bedrock
+    responses that prepend prose before the fence.
+    Returns {"judgment": "incorrect", "reason": "parse error: ..."} on failure.
+    """
+    text = raw.strip()
+    fence_start = text.find("```")
+    if fence_start != -1:
+        text = text[fence_start:]
+        parts = text.split("```")
+        inner = parts[1] if len(parts) > 1 else ""
+        if inner.startswith("json"):
+            inner = inner[4:]
+        text = inner.strip()
+    try:
+        parsed = json.loads(text)
+        if "judgment" not in parsed:
+            raise ValueError("missing 'judgment' key")
+        return parsed
+    except Exception as exc:
+        return {"judgment": "incorrect", "reason": f"parse error: {exc!r} raw={raw!r}"}
+
+
+def _bedrock_invoke(client, model_id: str, prompt: str, max_tokens: int = 512) -> str:
+    """Send a single-turn prompt to Bedrock and return the response text."""
+    response = client.converse(
+        modelId=model_id,
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
+        inferenceConfig={"maxTokens": max_tokens, "temperature": 0},
+    )
+    print(f"Model Response:{response["output"]["message"]["content"][0]["text"].strip()}\n")
+    return response["output"]["message"]["content"][0]["text"].strip()
+
+
+def _generate_answer(client, model_id: str, result, question: str) -> str:
+    """Call Bedrock to answer question from retrieved context."""
+    context = _format_search_result(result)
+    print(f"Context being passed to bedrock: {context}\n")
+    prompt = (
+        "You are answering a question about a person's memories and experiences.\n"
+        "Use only the context below. If the context does not contain enough information "
+        'to answer, respond with exactly: "I don\'t have that information."\n\n'
+        f"Context:\n{context}\n\n"
+        f"Question: {question}\n\n"
+        "Answer concisely in one or two sentences."
+    )
+    return _bedrock_invoke(client, model_id, prompt)
+
+
+def _judge_answer(client, model_id: str, question: str, gold: str, generated: str) -> dict:
+    """Call Bedrock to judge whether generated matches gold. Returns {judgment, reason}."""
+    prompt = (
+        f"Question: {question}\n"
+        f"Gold answer: {gold}\n"
+        f"Generated answer: {generated}\n\n"
+        "Does the generated answer correctly answer the question given the gold answer?\n"
+        'Respond with a JSON object only: {"judgment": "correct"|"incorrect"|"abstained", "reason": "..."}\n\n'
+        "Rules:\n"
+        '- "correct": the generated answer correctly conveys the gold answer. Additional correct '
+        "context beyond the gold answer is acceptable — judge on whether the gold is present and "
+        "accurate, not on whether the answers are identical.\n"
+        '- "abstained": the generated answer says it does not have the information AND the '
+        "gold answer also indicates the information was not available.\n"
+        '- "incorrect": the generated answer is missing the gold information, contradicts it, '
+        "or gives a wrong answer."
+    )
+    raw = _bedrock_invoke(client, model_id, prompt, max_tokens=256)
+    return _parse_judge_response(raw)
+
+
 def _pick_sessions(q: dict, max_sessions: int) -> list[int]:
     """Return indices into haystack_sessions: gold evidence first, then
     distractors, capped at max_sessions."""
@@ -97,9 +220,16 @@ def _pick_sessions(q: dict, max_sessions: int) -> list[int]:
     return picked[:max_sessions]
 
 
-async def _run_question(q: dict, max_sessions: int, k: int) -> dict:
-    """Wipe → ingest sampled sessions (tagged by Landscape session_id) →
-    query question → check top-k coverage of evidence sessions."""
+async def _run_question(
+    q: dict,
+    max_sessions: int,
+    k: int,
+    bedrock_client,
+    judge_model: str,
+    skip_judge: bool,
+) -> dict:
+    """Wipe → ingest sampled sessions → retrieve via LandscapeRetriever →
+    optionally generate answer and judge against gold."""
     qid = q["question_id"]
     question = q["question"]
     answer = q.get("answer")
@@ -112,6 +242,7 @@ async def _run_question(q: dict, max_sessions: int, k: int) -> dict:
     await _wipe_stack()
 
     gold_landscape_sids: list[str] = []
+    ingested_count = 0
     ingest_t0 = time.time()
     for i in picked_idx:
         source_sid = session_ids[i] if i < len(session_ids) else f"s{i}"
@@ -127,9 +258,10 @@ async def _run_question(q: dict, max_sessions: int, k: int) -> dict:
                 session_id=landscape_sid,
                 turn_id="t0",
             )
-        except Exception as exc:  # extraction-layer failures shouldn't abort the smoke
+        except Exception as exc:
             print(f"  [warn] ingest failed for {source_sid}: {exc!r}", file=sys.stderr)
             continue
+        ingested_count += 1
         if source_sid in gold_source_ids:
             gold_landscape_sids.append(landscape_sid)
     ingest_s = time.time() - ingest_t0
@@ -139,23 +271,18 @@ async def _run_question(q: dict, max_sessions: int, k: int) -> dict:
         gold_entity_ids.update(await neo4j_store.get_entities_in_conversation(sid))
 
     query_t0 = time.time()
-    result = await retrieve(
-        query_text=question,
-        hops=2,
-        limit=k,
-        reinforce=False,
-    )
+    result = await retrieve(question, hops=2, limit=k, chunk_limit=10, reinforce=False)
     query_s = time.time() - query_t0
 
     top_names = [r.name for r in result.results]
     top_ids = [r.neo4j_id for r in result.results]
-    hit = any(eid in gold_entity_ids for eid in top_ids)
+    hit = any(eid in gold_entity_ids for eid in top_ids if eid)
 
-    return {
+    row: dict = {
         "question_id": qid,
         "question": question,
         "answer": answer,
-        "n_sessions_ingested": len(picked_idx),
+        "n_sessions_ingested": ingested_count,
         "n_gold_sessions": len(gold_landscape_sids),
         "n_gold_entities": len(gold_entity_ids),
         "hit_at_k": hit,
@@ -163,6 +290,21 @@ async def _run_question(q: dict, max_sessions: int, k: int) -> dict:
         "ingest_s": round(ingest_s, 2),
         "query_s": round(query_s, 3),
     }
+
+    if not skip_judge and bedrock_client is not None:
+        try:
+            generated = _generate_answer(bedrock_client, judge_model, result, question)
+            judgment = _judge_answer(bedrock_client, judge_model, question, answer or "", generated)
+            row["generated_answer"] = generated
+            row["judgment"] = judgment.get("judgment", "incorrect")
+            row["judgment_reason"] = judgment.get("reason", "")
+        except Exception as exc:
+            print(f"  [warn] Bedrock call failed for {qid}: {exc!r}", file=sys.stderr)
+            row["generated_answer"] = None
+            row["judgment"] = "error"
+            row["judgment_reason"] = str(exc)
+
+    return row
 
 
 async def main() -> int:
@@ -174,7 +316,35 @@ async def main() -> int:
     ap.add_argument("--k", type=int, default=10, help="top-k for retrieval hit check")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--output", default=str(RESULTS_PATH))
+    ap.add_argument(
+        "--judge-model",
+        default=os.environ.get("BEDROCK_JUDGE_MODEL_ID", "global.anthropic.claude-haiku-4-5-20251001-v1:0"),
+        help="Bedrock model ID for answer generation and judging",
+    )
+    ap.add_argument(
+        "--aws-region",
+        default=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        help="AWS region for Bedrock",
+    )
+    ap.add_argument(
+        "--skip-judge",
+        action="store_true",
+        help="Skip Bedrock generation and judging; run retrieval only",
+    )
     args = ap.parse_args()
+
+    bedrock_client = None
+    if not args.skip_judge:
+        try:
+            import boto3
+            bedrock_client = boto3.client("bedrock-runtime", region_name=args.aws_region)
+        except ImportError:
+            print(
+                "warning: boto3 not installed. Install with: uv sync --extra bench\n"
+                "Falling back to --skip-judge mode.",
+                file=sys.stderr,
+            )
+            args.skip_judge = True
 
     random.seed(args.seed)
 
@@ -201,13 +371,26 @@ async def main() -> int:
     results: list[dict] = []
     for i, q in enumerate(sampled, start=1):
         print(f"[{i}/{len(sampled)}] {q['question_id']}: {q['question'][:80]}")
-        row = await _run_question(q, max_sessions=args.max_sessions, k=args.k)
-        print(f"    hit@{args.k}={row['hit_at_k']}  ingest={row['ingest_s']}s  query={row['query_s']}s")
+        row = await _run_question(
+            q,
+            max_sessions=args.max_sessions,
+            k=args.k,
+            bedrock_client=bedrock_client,
+            judge_model=args.judge_model,
+            skip_judge=args.skip_judge,
+        )
+        judgment_str = f"  judgment={row['judgment']}" if "judgment" in row else ""
+        print(f"    hit@{args.k}={row['hit_at_k']}{judgment_str}  ingest={row['ingest_s']}s  query={row['query_s']}s")
         results.append(row)
 
     n = len(results)
     hits = sum(1 for r in results if r["hit_at_k"])
-    summary = {
+    judged = [r for r in results if "judgment" in r]
+    n_correct = sum(1 for r in judged if r["judgment"] == "correct")
+    n_abstained = sum(1 for r in judged if r["judgment"] == "abstained")
+    n_incorrect = sum(1 for r in judged if r["judgment"] == "incorrect")
+
+    summary: dict = {
         "slice": QUESTION_TYPE,
         "n_questions": n,
         "max_sessions_per_q": args.max_sessions,
@@ -216,11 +399,22 @@ async def main() -> int:
         "avg_ingest_s": round(sum(r["ingest_s"] for r in results) / n, 2) if n else None,
         "avg_query_s": round(sum(r["query_s"] for r in results) / n, 3) if n else None,
     }
+    if judged:
+        summary["judge_correct_rate"] = round((n_correct + n_abstained) / len(judged), 3)
+        summary["judge_correct_count"] = n_correct
+        summary["judge_abstained_count"] = n_abstained
+        summary["judge_incorrect_count"] = n_incorrect
+        summary["judge_model"] = args.judge_model
 
     output_path = pathlib.Path(args.output)
     output_path.write_text(json.dumps({"summary": summary, "results": results}, indent=2))
     print()
     print(f"hit@{args.k} = {hits}/{n} = {summary['hit_at_k_rate']}")
+    if judged:
+        print(
+            f"judge: correct={n_correct}  abstained={n_abstained}  incorrect={n_incorrect}  "
+            f"rate={summary['judge_correct_rate']}  model={args.judge_model}"
+        )
     print(f"avg ingest = {summary['avg_ingest_s']}s   avg query = {summary['avg_query_s']}s")
     print(f"wrote {output_path}")
     return 0

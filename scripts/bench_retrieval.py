@@ -14,13 +14,12 @@ Usage:
 """
 import argparse
 import asyncio
-import pathlib
-import sys
-import time
-from dataclasses import dataclass
 
 # -- Bootstrap env before any landscape imports. --------------------------
 import os
+import pathlib
+import time
+from dataclasses import dataclass
 
 os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
 os.environ.setdefault("NEO4J_USER", "neo4j")
@@ -31,7 +30,6 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from landscape.embeddings import encoder  # noqa: E402
 from landscape.retrieval.query import retrieve  # noqa: E402
-from landscape.retrieval.scoring import ScoringWeights  # noqa: E402
 from landscape.storage import neo4j_store, qdrant_store  # noqa: E402
 
 CORPUS_DIR = pathlib.Path(__file__).resolve().parent / "../tests/fixtures/killer_demo_corpus"
@@ -49,7 +47,8 @@ QUERIES = [
     Query("Who leads the Vision Team?", ["Diego"], 1),
     Query("What does Sentinel use for computer vision?", ["PyTorch"], 1),
     Query("Who approved the database for Project Aurora?", ["Maya"], 2),
-    Query("What team does the person who approved Aurora's database lead?", ["Platform Team", "Platform"], 3),
+    Query("What team does the person who approved Aurora's database lead?", 
+          ["Platform Team", "Platform"], 3),
     Query("What database does Project Aurora use?", ["PostgreSQL"], 1),
     Query("Who created Project Aurora?", ["Priya"], 1),
     Query("What technology does Project Beacon use?", ["Kafka"], 1),
