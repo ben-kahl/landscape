@@ -14,6 +14,8 @@ from datetime import UTC, datetime, timedelta
 
 from mcp.server.fastmcp import FastMCP
 
+from landscape.security import require_current_scope
+
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("landscape")
@@ -86,6 +88,7 @@ async def search(
     debug: bool = False,
 ) -> str:
     """Hybrid retrieval over the Landscape knowledge graph."""
+    require_current_scope("agent")
     from landscape.retrieval.query import retrieve
 
     since = (
@@ -138,6 +141,7 @@ async def remember(
     debug: bool = False,
 ) -> str:
     """Ingest a text document into the Landscape memory store."""
+    require_current_scope("agent")
     from landscape.pipeline import ingest
 
     result = await ingest(
@@ -167,6 +171,7 @@ async def capture_turn(
     debug: bool = False,
 ) -> str:
     """Capture an explicit conversation turn boundary for background ingestion."""
+    require_current_scope("agent")
     from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
 
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
@@ -189,6 +194,7 @@ async def add_entity(
     confidence: float = 0.8,
 ) -> str:
     """Persist an agent-authored entity into the knowledge graph."""
+    require_current_scope("agent")
     from landscape.writeback import add_entity as _add_entity
 
     result = await _add_entity(
@@ -222,6 +228,7 @@ async def add_relation(
     subtype: str | None = None,
 ) -> str:
     """Persist an agent-authored relationship between two entities."""
+    require_current_scope("agent")
     from landscape.writeback import add_relation as _add_relation
 
     result = await _add_relation(
@@ -249,6 +256,7 @@ async def add_relation(
 @mcp.tool()
 async def graph_query(cypher: str, params: dict | None = None) -> str:
     """Execute a read-only Cypher query against the Neo4j knowledge graph."""
+    require_current_scope("graph_query")
     from landscape.storage.cypher_guard import CypherWriteAttempted
     from landscape.storage.neo4j_store import run_cypher_readonly
 
@@ -263,6 +271,7 @@ async def graph_query(cypher: str, params: dict | None = None) -> str:
 @mcp.tool()
 async def status() -> str:
     """Return a compact summary of the Landscape graph state."""
+    require_current_scope("agent")
     from landscape.writeback import status_summary
 
     summary = await status_summary()
@@ -272,6 +281,7 @@ async def status() -> str:
 @mcp.tool()
 async def conversation_history(session_id: str, limit: int = 10) -> str:
     """Return the turns of a conversation in chronological order."""
+    require_current_scope("agent")
     from landscape.storage import neo4j_store
 
     detail = await neo4j_store.get_conversation_detail(session_id, turn_limit=limit)

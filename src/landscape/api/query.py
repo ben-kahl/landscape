@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from landscape.retrieval import query as query_module
+from landscape.security import AgentPrincipal
 
 router = APIRouter()
 
@@ -51,7 +52,8 @@ class QueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query_endpoint(req: QueryRequest) -> QueryResponse:
+async def query_endpoint(req: QueryRequest, auth: AgentPrincipal) -> QueryResponse:
+    del auth  # principal resolved for authz; not needed in handler body
     since = (
         datetime.now(UTC) - timedelta(hours=req.since_hours)
         if req.since_hours

@@ -90,8 +90,15 @@ async def qdrant_client():
 
 
 @pytest_asyncio.fixture
-async def http_client(request):
+async def http_client(request, monkeypatch):
+    from landscape.config import settings
     from landscape.main import app
+
+    # The shared client targets API plumbing, not auth. Enable the loopback
+    # bypass so the (now-default-off) bearer requirement doesn't reject these
+    # 127.0.0.1 ASGI requests. Tests that exercise auth specifically use
+    # their own fixtures in test_api_security.py.
+    monkeypatch.setattr(settings, "allow_unauthenticated_loopback", True)
 
     is_ci_safe = request.node.get_closest_marker("unit") or request.node.get_closest_marker("smoke")
     if is_ci_safe:

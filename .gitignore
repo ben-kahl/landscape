@@ -15,5 +15,6 @@ docs/superpowers
 /scripts/bench_longmemeval_results.json
 AGENTS.md
 CLAUDE.md
+REVIEW.md
 Makefile
 logs/

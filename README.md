@@ -124,6 +124,12 @@ uv run python scripts/demo_mcp_session.py      # supersession demo transcript
 the appropriate Ollama mode for the host: NVIDIA GPU, AMD GPU, CPU, or host
 Ollama on macOS.
 
+The checked-in `.env.example` keeps the higher-quality Nomic embedding model as
+the default. That model requires Hugging Face remote model code, so the example
+env file also sets `ALLOW_REMOTE_MODEL_CODE=true`. If you switch to a model
+like `sentence-transformers/all-MiniLM-L6-v2`, you can remove that flag and
+keep remote model code disabled.
+
 If the script selects Docker-managed Ollama, pull the default model once:
 
 ```bash
@@ -177,6 +183,57 @@ uv run uvicorn landscape.main:app --host 127.0.0.1 --port 8000
 ```
 
 The MCP endpoint is mounted at `http://127.0.0.1:8000/mcp`.
+
+Retrieval logs under `logs/retrieval/` now hash `query_text` and `session_id`
+by default. Raw values are only written when a caller explicitly enables
+request-level debug logging with `debug=true`.
+
+### Authentication and the loopback bypass
+
+`/query`, `/ingest`, and `/mcp` all resolve a caller principal before any
+work runs. `/healthz` stays public.
+
+**Bootstrap.** Auth credentials are minted on the local machine via the CLI
+(no unauthenticated admin HTTP endpoint exists). Create the first client:
+
+```bash
+landscape auth create-client --name claude --scope agent --scope graph_query
+```
+
+The bearer token is printed once. If it's lost, rotate it:
+
+```bash
+landscape auth rotate-secret --client-id <client-id>
+```
+
+Other commands: `list-clients`, `list-secrets`, `create-secret`,
+`revoke-secret`, `disable-client`, `enable-client`. All read and write the
+local SQLite auth DB directly -- no network calls.
+
+**Loopback development mode (opt-in).** Set
+`LANDSCAPE_ALLOW_UNAUTHENTICATED_LOOPBACK=true` to allow requests from
+`127.0.0.1`, `::1`, or `localhost` to omit credentials. The synthesized
+"loopback-anonymous" principal is granted only the `agent` scope --
+enough to call `search`, `remember`, `add_entity`, `add_relation`,
+`status`, `conversation_history`, and `capture_turn`. It is **not** granted
+`graph_query`, so raw Cypher requires a real client even on localhost.
+
+The bypass is **off by default**. The server also refuses to start when
+the bypass is enabled and the API bind host is not a loopback address --
+so you can't accidentally expose `0.0.0.0:8000` with auth disabled. The
+bind host comes from `LANDSCAPE_API_HOST` (default `127.0.0.1`); the
+guard accepts `127.0.0.1`, `::1`, `localhost`, and empty string.
+
+A startup log line marks this mode as transitional:
+`TRANSITIONAL SECURITY BYPASS ENABLED: localhost requests may access
+agent scope without credentials`. Treat it as a developer-laptop convenience,
+not a production auth mode.
+
+**Remote / cloud deployment.** Leave the bypass at its default (`false`).
+Every request -- loopback or not -- must present a valid bearer token,
+presented as `Authorization: Bearer lsk_<secret_id>_<material>`. Clients
+with the `graph_query` scope can run read-only Cypher; clients with
+`agent` only get the standard memory tools.
 
 ## Use Landscape as MCP memory
 

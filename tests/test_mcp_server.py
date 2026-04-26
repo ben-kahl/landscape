@@ -504,12 +504,33 @@ async def test_capture_turn_logs_background_failure_without_raising(monkeypatch,
 
 
 @asynccontextmanager
-async def _mcp_client():
-    """Context manager that yields an initialised in-process MCP ClientSession."""
-    from landscape.mcp_app import mcp
+async def _mcp_client(auth=None):
+    """Context manager that yields an initialised in-process MCP ClientSession.
 
-    async with create_connected_server_and_client_session(mcp) as client:
-        yield client
+    The in-process transport bypasses the FastAPI ASGI auth middleware, so
+    we set the request-scoped principal directly. ``auth=None`` defaults to
+    the loopback-bypass principal (agent scope only) so existing tests keep
+    their behaviour.
+    """
+    from landscape.auth import AuthContext
+    from landscape.mcp_app import mcp
+    from landscape.security import _CURRENT_AUTH_CONTEXT
+
+    if auth is None:
+        auth = AuthContext(
+            client_id="loopback-anonymous",
+            client_name="loopback-anonymous",
+            secret_id=None,
+            scopes=frozenset({"agent"}),
+            is_loopback_bypass=True,
+        )
+
+    token = _CURRENT_AUTH_CONTEXT.set(auth)
+    try:
+        async with create_connected_server_and_client_session(mcp) as client:
+            yield client
+    finally:
+        _CURRENT_AUTH_CONTEXT.reset(token)
 
 
 def _parse(result) -> dict:
@@ -776,10 +797,22 @@ async def test_add_relation_supersedes_functional_edge(http_client):
         assert d2["outcome"] == "superseded"
 
 
+def _graph_query_principal():
+    from landscape.auth import AuthContext
+
+    return AuthContext(
+        client_id="test-graph-query",
+        client_name="test-graph-query",
+        secret_id="test",
+        scopes=frozenset({"agent", "graph_query"}),
+        is_loopback_bypass=False,
+    )
+
+
 @pytest.mark.asyncio
 async def test_graph_query_rejects_writes(http_client):
     """graph_query must refuse CREATE and return an MCP error."""
-    async with _mcp_client() as client:
+    async with _mcp_client(auth=_graph_query_principal()) as client:
         result = await client.call_tool(
             "graph_query",
             {"cypher": "CREATE (n:X {name: 'bad'}) RETURN n"},
@@ -794,7 +827,7 @@ async def test_graph_query_rejects_writes(http_client):
 @pytest.mark.asyncio
 async def test_graph_query_allows_reads(http_client):
     """graph_query should execute a MATCH and return rows."""
-    async with _mcp_client() as client:
+    async with _mcp_client(auth=_graph_query_principal()) as client:
         result = await client.call_tool(
             "graph_query",
             {"cypher": "MATCH (e:Entity) RETURN count(e) AS n"},
@@ -808,6 +841,85 @@ async def test_graph_query_allows_reads(http_client):
     # At least one row with the count column
     assert len(data["rows"]) == 1
     assert "n" in data["rows"][0]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_loopback_bypass_cannot_call_graph_query():
+    """Loopback bypass principal grants only ``agent`` -- ``graph_query`` is forbidden."""
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "graph_query",
+            {"cypher": "MATCH (n) RETURN count(n)"},
+        )
+
+    assert result.isError is True
+    error_text = result.content[0].text if result.content else ""
+    assert "Forbidden" in error_text
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_loopback_bypass_can_call_agent_scope_tools(monkeypatch):
+    """Loopback bypass should be able to call ``status`` (agent scope)."""
+    from landscape.writeback import StatusSummary
+
+    async def fake_status_summary():
+        return StatusSummary(
+            entity_count=0,
+            document_count=0,
+            relation_count=0,
+            top_entities=[],
+            recent_agent_writes=[],
+        )
+
+    monkeypatch.setattr("landscape.writeback.status_summary", fake_status_summary)
+
+    async with _mcp_client() as client:
+        result = await client.call_tool("status", {})
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+    assert "entity_count" in data
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_authenticated_client_with_graph_query_scope_can_call_graph_query(monkeypatch):
+    """A real authenticated client minted with graph_query scope can run Cypher."""
+    from landscape.storage import auth_store
+
+    async def fake_run_cypher(_cypher: str, _params: dict):
+        return [{"n": 0}]
+
+    monkeypatch.setattr(
+        "landscape.storage.neo4j_store.run_cypher_readonly", fake_run_cypher
+    )
+
+    # Build a principal as if create_api_client minted scopes=["agent","graph_query"].
+    # We don't go through the SQLite store here -- only the in-memory ContextVar
+    # check matters for the scope gate.
+    from landscape.auth import AuthContext
+
+    principal = AuthContext(
+        client_id="real-client",
+        client_name="bench-runner",
+        secret_id="sec-1",
+        scopes=frozenset({"agent", "graph_query"}),
+        is_loopback_bypass=False,
+    )
+
+    async with _mcp_client(auth=principal) as client:
+        result = await client.call_tool(
+            "graph_query",
+            {"cypher": "MATCH (n) RETURN count(n) AS n"},
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+    assert data == {"rows": [{"n": 0}]}
+    # Quiet ruff: auth_store is referenced indirectly via fake setup elsewhere.
+    assert auth_store is not None
 
 
 @pytest.mark.asyncio

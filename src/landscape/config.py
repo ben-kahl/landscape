@@ -68,6 +68,20 @@ class Settings(BaseSettings):
     decay_lambda: float = math.log(2) / (7 * 86400)
     reinforcement_cap: float = 2.0
 
+    # Off by default: the loopback bypass is dev-only and the startup guard in
+    # landscape.main refuses to launch when it's enabled with a non-loopback
+    # bind host. Opt in via LANDSCAPE_ALLOW_UNAUTHENTICATED_LOOPBACK=true.
+    allow_unauthenticated_loopback: bool = False
+    # Bind host the API server listens on. The startup guard reads this when
+    # the bypass is enabled to decide whether the combination is safe.
+    api_host: str = "127.0.0.1"
+    auth_update_last_used_interval_seconds: int = 300
+    # Local SQLite file backing the api-client / bearer-secret tables. Default
+    # is XDG-ish under the user's home so a fresh checkout doesn't write into
+    # the repo. Override via LANDSCAPE_AUTH_DB_PATH; tests point this at a
+    # tmp_path-backed file for isolation.
+    auth_db_path: str = "~/.config/landscape/auth.db"
+
     model_config = {"env_file": ".env", "case_sensitive": False, "extra": "ignore"}
 
     def model_post_init(self, _context: object) -> None:
