@@ -10,8 +10,8 @@ Bearer token wire format::
     lsk_<secret_id>_<32-byte-urlsafe-material>
 
 * ``lsk_`` is a static prefix that callers can safely log/scan for.
-* ``<secret_id>`` is the UUID stored on the :ClientSecret node so we can
-  look up the record without scanning every hash.
+* ``<secret_id>`` is the UUID primary key of the ``client_secrets`` row
+  so we can look up the record without scanning every hash.
 * ``<material>`` is the actual secret. Only the Argon2 hash of the full
   bearer token (including prefix and secret_id) is persisted; the
   plaintext only exists in the response of ``create_api_client``.

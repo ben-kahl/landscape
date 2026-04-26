@@ -48,7 +48,7 @@ from landscape.config import settings
 
 @dataclass(frozen=True)
 class CreatedClientSecret:
-    """Returned by ``create_api_client`` / ``rotate_client_secret``.
+    """Returned by ``create_api_client`` (Task 5 will reuse the shape for ``rotate_client_secret``).
 
     The plaintext ``bearer_token`` is the only chance the caller has to
     capture the credential; the store keeps just the Argon2 hash.
