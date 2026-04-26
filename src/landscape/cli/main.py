@@ -9,7 +9,7 @@ from landscape.cli.runtime import _apply_cli_process_defaults
 
 def _build_parser() -> argparse.ArgumentParser:
     _apply_cli_process_defaults()
-    from landscape.cli import graph, ingest, query, seed, status, wipe
+    from landscape.cli import auth, graph, ingest, query, seed, status, wipe
 
     parser = argparse.ArgumentParser(
         prog="landscape",
@@ -20,6 +20,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  landscape ingest-dir ./docs --glob '*.md'\n"
             "  landscape query 'Who leads the project using PostgreSQL?'\n"
             "  landscape status --verbose\n"
+            "  landscape auth create-client --name claude --scope agent\n"
             "\nRun `landscape <command> --help` for command-specific options."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -32,6 +33,7 @@ def _build_parser() -> argparse.ArgumentParser:
     status.register(subparsers)
     seed.register(subparsers)
     wipe.register(subparsers)
+    auth.register(subparsers)
 
     return parser
 

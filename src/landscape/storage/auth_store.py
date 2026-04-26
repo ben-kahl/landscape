@@ -286,6 +286,155 @@ async def disable_client(client_id: str) -> None:
         await db.close()
 
 
+async def enable_client(client_id: str) -> None:
+    """Flip an api_clients row back to ``status='active'``. Idempotent."""
+    db = await _connect()
+    try:
+        await db.execute(
+            """
+            UPDATE api_clients
+            SET status = 'active'
+            WHERE client_id = ?
+            """,
+            (client_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def create_client_secret(client_id: str) -> CreatedClientSecret:
+    """Mint a new bearer secret for an existing client.
+
+    Used both for first-time additional secrets and for rotation: the
+    overlap window is a CLI concern (operators can keep both secrets live
+    until clients flip over, then call ``revoke_client_secret`` on the
+    old one). Raises ``LookupError`` if the client doesn't exist.
+    """
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "SELECT name, scopes, status FROM api_clients WHERE client_id = ?",
+            (client_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            raise LookupError(f"Unknown client_id: {client_id}")
+        client_name, scopes_json, _status = row
+
+        secret_id = str(uuid4())
+        bearer_token, secret_prefix, secret_hash = mint_client_secret(secret_id)
+        now = _now_iso()
+        await db.execute(
+            """
+            INSERT INTO client_secrets
+                (secret_id, client_id, secret_hash, secret_prefix,
+                 created_at, expires_at, revoked_at)
+            VALUES (?, ?, ?, ?, ?, NULL, NULL)
+            """,
+            (secret_id, client_id, secret_hash, secret_prefix, now),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    scopes_list = json.loads(scopes_json) if scopes_json else []
+    return CreatedClientSecret(
+        client_id=client_id,
+        client_name=client_name,
+        secret_id=secret_id,
+        bearer_token=bearer_token,
+        secret_prefix=secret_prefix,
+        scopes=tuple(scopes_list),
+        created_at=now,
+    )
+
+
+# Rotation is the same store-level op as creating an additional secret. The
+# difference is operator intent + the CLI workflow around revoking the old
+# secret after a handoff window. Keeping a thin alias avoids duplicating SQL.
+rotate_client_secret = create_client_secret
+
+
+async def list_api_clients() -> list[dict[str, Any]]:
+    """Return all api_clients with a count of currently-live secrets.
+
+    Live = ``revoked_at IS NULL`` and (``expires_at IS NULL`` OR in the
+    future). Never exposes ``secret_hash``.
+    """
+    now = _now_iso()
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT
+                c.client_id,
+                c.name,
+                c.description,
+                c.scopes,
+                c.status,
+                c.created_at,
+                c.last_used_at,
+                (
+                    SELECT COUNT(*) FROM client_secrets s
+                    WHERE s.client_id = c.client_id
+                      AND s.revoked_at IS NULL
+                      AND (s.expires_at IS NULL OR s.expires_at > ?)
+                ) AS live_secret_count
+            FROM api_clients c
+            ORDER BY c.created_at ASC
+            """,
+            (now,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+    finally:
+        await db.close()
+
+    columns = [
+        "client_id",
+        "name",
+        "description",
+        "scopes",
+        "status",
+        "created_at",
+        "last_used_at",
+        "live_secret_count",
+    ]
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        record = dict(zip(columns, row, strict=True))
+        record["scopes"] = json.loads(record["scopes"]) if record["scopes"] else []
+        out.append(record)
+    return out
+
+
+async def list_client_secrets(client_id: str) -> list[dict[str, Any]]:
+    """Return non-sensitive metadata for every secret on a client.
+
+    Never returns ``secret_hash`` -- this is for operator inspection.
+    """
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT secret_id, secret_prefix, created_at, expires_at, revoked_at
+            FROM client_secrets
+            WHERE client_id = ?
+            ORDER BY created_at ASC
+            """,
+            (client_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+    finally:
+        await db.close()
+
+    columns = ["secret_id", "secret_prefix", "created_at", "expires_at", "revoked_at"]
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
 async def _touch_last_used(client_id: str, now_iso: str) -> None:
     """Update ``api_clients.last_used_at`` only when the configured interval has lapsed.
 
