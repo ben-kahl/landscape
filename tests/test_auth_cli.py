@@ -181,6 +181,25 @@ async def test_create_secret_on_unknown_client_errors(auth_db, capsys):
     assert "Unknown client_id" in err or "Error:" in err
 
 
+async def test_rotate_secret_negative_revoke_after_does_not_mint(auth_db, capsys):
+    await _run_cli(["auth", "create-client", "--name", "neg", "--scope", "agent"])
+    first_out = capsys.readouterr().out
+    first_bearer = _extract_bearer(first_out)
+    client_id = _extract_first(_CLIENT_ID_RE, first_out)
+
+    code = await _run_cli(
+        ["auth", "rotate-secret", "--client-id", client_id, "--revoke-after", "-1"]
+    )
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "--revoke-after must be >= 0" in err
+
+    # Original secret stays live; no extra secret was minted.
+    assert await auth_store.authenticate_bearer_token(first_bearer) is not None
+    secrets = await auth_store.list_client_secrets(client_id)
+    assert len(secrets) == 1
+
+
 async def test_rotate_secret_with_zero_revoke_after_revokes_old(auth_db, capsys):
     await _run_cli(["auth", "create-client", "--name", "rot0", "--scope", "agent"])
     first_out = capsys.readouterr().out

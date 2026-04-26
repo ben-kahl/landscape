@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 
 from landscape.storage import auth_store
 
@@ -137,6 +138,12 @@ async def handle_create_secret(args: argparse.Namespace) -> int:
 
 
 async def handle_rotate_secret(args: argparse.Namespace) -> int:
+    if args.revoke_after is not None and args.revoke_after < 0:
+        # Validate before minting so a bad flag doesn't leave a new live secret
+        # and then bail with an error.
+        print("Error: --revoke-after must be >= 0", file=sys.stderr, flush=True)
+        return 2
+
     await _ensure_schema()
     existing = await auth_store.list_client_secrets(args.client_id)
     prior_live = [s["secret_id"] for s in existing if s["revoked_at"] is None]
@@ -151,9 +158,6 @@ async def handle_rotate_secret(args: argparse.Namespace) -> int:
             )
         return 0
 
-    if args.revoke_after < 0:
-        print("Error: --revoke-after must be >= 0", flush=True)
-        return 2
     if args.revoke_after > 0:
         print(f"Waiting {args.revoke_after}s before revoking prior secrets...")
         await asyncio.sleep(args.revoke_after)
