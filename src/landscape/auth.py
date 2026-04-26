@@ -56,7 +56,7 @@ def mint_client_secret(secret_id: str) -> tuple[str, str, str]:
       secret id). Safe to log/store for rotation UX without disclosing
       the secret material.
     * ``secret_hash`` -- Argon2id hash of the full bearer token; this is
-      what gets written to Neo4j.
+      what gets persisted in the auth store.
     """
     secret_material = token_urlsafe(32)
     bearer_token = f"lsk_{secret_id}_{secret_material}"
