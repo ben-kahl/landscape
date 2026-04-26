@@ -7,7 +7,7 @@ from landscape.api.ingest import router as ingest_router
 from landscape.api.query import router as query_router
 from landscape.embeddings import encoder
 from landscape.mcp_app import mcp
-from landscape.storage import neo4j_store, qdrant_store
+from landscape.storage import auth_store, neo4j_store, qdrant_store
 
 mcp_http_app = mcp.streamable_http_app()
 
@@ -33,6 +33,7 @@ def _should_start_mcp_http_session_manager() -> bool:
 
 async def _startup_storage() -> None:
     encoder.load_model()
+    await auth_store.ensure_schema()
     await qdrant_store.init_collection()
     await qdrant_store.init_chunks_collection()
 

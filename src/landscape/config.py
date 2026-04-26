@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     decay_lambda: float = math.log(2) / (7 * 86400)
     reinforcement_cap: float = 2.0
 
+    # Auth (Task 3): set to False once Task 4/5 onboarding flow is in place to
+    # require bearer credentials for all clients including loopback callers.
+    allow_unauthenticated_loopback: bool = True
+    auth_update_last_used_interval_seconds: int = 300
+    # Local SQLite file backing the api-client / bearer-secret tables. Default
+    # is XDG-ish under the user's home so a fresh checkout doesn't write into
+    # the repo. Override via LANDSCAPE_AUTH_DB_PATH; tests point this at a
+    # tmp_path-backed file for isolation.
+    auth_db_path: str = "~/.config/landscape/auth.db"
+
     model_config = {"env_file": ".env", "case_sensitive": False, "extra": "ignore"}
 
     def model_post_init(self, _context: object) -> None:
