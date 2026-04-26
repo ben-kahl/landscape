@@ -181,3 +181,35 @@ async def test_client_lacking_agent_scope_is_forbidden(remote_client):
         headers={"Authorization": f"Bearer {created.bearer_token}"},
     )
     assert response.status_code == 403
+
+
+def test_allow_unauthenticated_loopback_defaults_to_false():
+    """Regression: dev bypass must be opt-in, not a fresh-checkout default."""
+    from landscape.config import Settings
+
+    fresh = Settings(_env_file=None)
+    assert fresh.allow_unauthenticated_loopback is False
+
+
+def test_loopback_bypass_safety_guard_rejects_non_loopback_bind():
+    from landscape.main import _enforce_loopback_bypass_safety
+
+    with pytest.raises(RuntimeError, match="Refusing to start"):
+        _enforce_loopback_bypass_safety("0.0.0.0", True)
+    with pytest.raises(RuntimeError, match="Refusing to start"):
+        _enforce_loopback_bypass_safety("203.0.113.5", True)
+
+
+def test_loopback_bypass_safety_guard_allows_loopback_hosts():
+    from landscape.main import _enforce_loopback_bypass_safety
+
+    for host in ("127.0.0.1", "::1", "localhost", ""):
+        _enforce_loopback_bypass_safety(host, True)
+
+
+def test_loopback_bypass_safety_guard_no_op_when_bypass_disabled():
+    from landscape.main import _enforce_loopback_bypass_safety
+
+    # If the bypass is off the bind host is irrelevant -- no guard fires.
+    _enforce_loopback_bypass_safety("0.0.0.0", False)
+    _enforce_loopback_bypass_safety("203.0.113.5", False)

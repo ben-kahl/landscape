@@ -193,26 +193,47 @@ request-level debug logging with `debug=true`.
 `/query`, `/ingest`, and `/mcp` all resolve a caller principal before any
 work runs. `/healthz` stays public.
 
-**Loopback development mode (default).** When the server's
-`allow_unauthenticated_loopback` setting is `True`, requests originating
-from `127.0.0.1`, `::1`, or `localhost` may omit credentials. The synthesized
+**Bootstrap.** Auth credentials are minted on the local machine via the CLI
+(no unauthenticated admin HTTP endpoint exists). Create the first client:
+
+```bash
+landscape auth create-client --name claude --scope agent --scope graph_query
+```
+
+The bearer token is printed once. If it's lost, rotate it:
+
+```bash
+landscape auth rotate-secret --client-id <client-id>
+```
+
+Other commands: `list-clients`, `list-secrets`, `create-secret`,
+`revoke-secret`, `disable-client`, `enable-client`. All read and write the
+local SQLite auth DB directly -- no network calls.
+
+**Loopback development mode (opt-in).** Set
+`LANDSCAPE_ALLOW_UNAUTHENTICATED_LOOPBACK=true` to allow requests from
+`127.0.0.1`, `::1`, or `localhost` to omit credentials. The synthesized
 "loopback-anonymous" principal is granted only the `agent` scope --
 enough to call `search`, `remember`, `add_entity`, `add_relation`,
 `status`, `conversation_history`, and `capture_turn`. It is **not** granted
 `graph_query`, so raw Cypher requires a real client even on localhost.
+
+The bypass is **off by default**. The server also refuses to start when
+the bypass is enabled and the API bind host is not a loopback address --
+so you can't accidentally expose `0.0.0.0:8000` with auth disabled. The
+bind host comes from `LANDSCAPE_API_HOST` (default `127.0.0.1`); the
+guard accepts `127.0.0.1`, `::1`, `localhost`, and empty string.
 
 A startup log line marks this mode as transitional:
 `TRANSITIONAL SECURITY BYPASS ENABLED: localhost requests may access
 agent scope without credentials`. Treat it as a developer-laptop convenience,
 not a production auth mode.
 
-**Remote / cloud deployment.** Set `LANDSCAPE_ALLOW_UNAUTHENTICATED_LOOPBACK=false`
-(or flip `allow_unauthenticated_loopback` in your settings file). With the
-bypass disabled, every request -- loopback or not -- must present a valid
-bearer token. Tokens are minted via the auth store and presented as
-`Authorization: Bearer lsk_<secret_id>_<material>`. Clients with the
-`graph_query` scope can run read-only Cypher; clients with `agent` only
-get the standard memory tools.
+**Remote / cloud deployment.** Leave the bypass at its default (`false`).
+Every request -- loopback or not -- must present a valid bearer token,
+presented as `Authorization: Bearer lsk_<secret_id>_<material>`. Clients
+with the `graph_query` scope can run read-only Cypher; clients with
+`agent` only get the standard memory tools.
 
 ## Use Landscape as MCP memory
 

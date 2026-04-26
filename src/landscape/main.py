@@ -14,6 +14,23 @@ from landscape.storage import auth_store, neo4j_store, qdrant_store
 
 logger = logging.getLogger(__name__)
 
+_LOOPBACK_BIND_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", ""})
+
+
+def _enforce_loopback_bypass_safety(host: str, bypass_enabled: bool) -> None:
+    """Refuse to start when the dev-only loopback bypass is paired with a
+    non-loopback bind host. Pure helper so tests can drive it directly."""
+    if not bypass_enabled:
+        return
+    if host in _LOOPBACK_BIND_HOSTS:
+        return
+    raise RuntimeError(
+        "Refusing to start: allow_unauthenticated_loopback=True is dev-only "
+        f"and incompatible with non-loopback bind host '{host}'. "
+        "Set LANDSCAPE_ALLOW_UNAUTHENTICATED_LOOPBACK=false or bind to 127.0.0.1."
+    )
+
+
 mcp_http_app = mcp.streamable_http_app()
 
 
@@ -37,6 +54,9 @@ def _should_start_mcp_http_session_manager() -> bool:
 
 
 async def _startup_storage() -> None:
+    _enforce_loopback_bypass_safety(
+        settings.api_host, settings.allow_unauthenticated_loopback
+    )
     encoder.load_model()
     await auth_store.ensure_schema()
     await qdrant_store.init_collection()
