@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -28,6 +29,12 @@ def _elapsed_ms(started_at: float) -> float:
 
 def _compact_fields(fields: dict[str, object]) -> dict[str, object]:
     return {key: value for key, value in fields.items() if value is not None}
+
+
+def _sha256_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _default_process_log_path(log_dir: Path) -> Path:
@@ -116,12 +123,14 @@ class RetrievalLogContext:
                 "timestamp": _now_iso(),
                 "event": event,
                 "retrieval_id": self.retrieval_id,
-                "query_text": self.query_text,
+                "query_text": self.query_text if self.debug else None,
+                "query_text_sha256": _sha256_text(self.query_text),
                 "hops": self.hops,
                 "limit": self.limit,
                 "chunk_limit": self.chunk_limit,
                 "reinforce": self.reinforce,
-                "session_id": self.session_id,
+                "session_id": self.session_id if self.debug else None,
+                "session_id_sha256": _sha256_text(self.session_id),
                 "since": self.since.isoformat() if self.since is not None else None,
                 "debug": self.debug,
                 **fields,

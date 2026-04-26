@@ -124,6 +124,12 @@ uv run python scripts/demo_mcp_session.py      # supersession demo transcript
 the appropriate Ollama mode for the host: NVIDIA GPU, AMD GPU, CPU, or host
 Ollama on macOS.
 
+The checked-in `.env.example` keeps the higher-quality Nomic embedding model as
+the default. That model requires Hugging Face remote model code, so the example
+env file also sets `ALLOW_REMOTE_MODEL_CODE=true`. If you switch to a model
+like `sentence-transformers/all-MiniLM-L6-v2`, you can remove that flag and
+keep remote model code disabled.
+
 If the script selects Docker-managed Ollama, pull the default model once:
 
 ```bash
@@ -177,6 +183,10 @@ uv run uvicorn landscape.main:app --host 127.0.0.1 --port 8000
 ```
 
 The MCP endpoint is mounted at `http://127.0.0.1:8000/mcp`.
+
+Retrieval logs under `logs/retrieval/` now hash `query_text` and `session_id`
+by default. Raw values are only written when a caller explicitly enables
+request-level debug logging with `debug=true`.
 
 ## Use Landscape as MCP memory
 
