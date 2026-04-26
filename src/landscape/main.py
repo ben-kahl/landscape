@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -5,9 +6,13 @@ from fastapi import FastAPI
 
 from landscape.api.ingest import router as ingest_router
 from landscape.api.query import router as query_router
+from landscape.config import settings
 from landscape.embeddings import encoder
 from landscape.mcp_app import mcp
+from landscape.security import mcp_auth_middleware
 from landscape.storage import auth_store, neo4j_store, qdrant_store
+
+logger = logging.getLogger(__name__)
 
 mcp_http_app = mcp.streamable_http_app()
 
@@ -36,6 +41,12 @@ async def _startup_storage() -> None:
     await auth_store.ensure_schema()
     await qdrant_store.init_collection()
     await qdrant_store.init_chunks_collection()
+    if settings.allow_unauthenticated_loopback:
+        logger.warning(
+            "TRANSITIONAL SECURITY BYPASS ENABLED: localhost requests may "
+            "access agent scope without credentials. Disable "
+            "allow_unauthenticated_loopback for remote/cloud deployments."
+        )
 
 
 async def _shutdown_storage() -> None:
@@ -74,4 +85,11 @@ async def healthz():
     return {"status": "ok"}
 
 
-app.router.routes.extend(mcp_http_app.routes)
+for _mcp_route in mcp_http_app.routes:
+    # Wrap each MCP transport route's dispatched ASGI app so per-request auth
+    # resolution populates the request-scoped principal before any tool runs.
+    # We leave `endpoint` alone so `_refresh_mcp_http_session_manager` can
+    # still hot-swap the underlying StreamableHTTPASGIApp's session_manager.
+    if hasattr(_mcp_route, "app"):
+        _mcp_route.app = mcp_auth_middleware(_mcp_route.app)
+    app.router.routes.append(_mcp_route)

@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from landscape import pipeline
+from landscape.security import AgentPrincipal
 
 router = APIRouter()
 
@@ -27,7 +28,8 @@ class IngestResponse(BaseModel):
 
 
 @router.post("/ingest", response_model=IngestResponse)
-async def ingest_document(req: IngestRequest) -> IngestResponse:
+async def ingest_document(req: IngestRequest, auth: AgentPrincipal) -> IngestResponse:
+    del auth  # principal resolved for authz; not needed in handler body
     result = await pipeline.ingest(
         req.text,
         req.title,
