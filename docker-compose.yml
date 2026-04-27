@@ -4,8 +4,11 @@ x-app-base: &app-base
     - "8000:8000"
   volumes:
     - ./src:/app/src
+    - landscape_auth_data:/var/lib/landscape
   env_file:
     - .env
+  environment:
+    AUTH_DB_PATH: /var/lib/landscape/auth.db
   extra_hosts:
     - "host.docker.internal:host-gateway"
   depends_on:
@@ -115,3 +118,4 @@ volumes:
   neo4j_data:
   qdrant_storage:
   ollama_models:
+  landscape_auth_data:

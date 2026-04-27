@@ -211,7 +211,7 @@ Other commands: `list-clients`, `list-secrets`, `create-secret`,
 local SQLite auth DB directly -- no network calls.
 
 **Loopback development mode (opt-in).** Set
-`LANDSCAPE_ALLOW_UNAUTHENTICATED_LOOPBACK=true` to allow requests from
+`ALLOW_UNAUTHENTICATED_LOOPBACK=true` to allow requests from
 `127.0.0.1`, `::1`, or `localhost` to omit credentials. The synthesized
 "loopback-anonymous" principal is granted only the `agent` scope --
 enough to call `search`, `remember`, `add_entity`, `add_relation`,
@@ -221,8 +221,15 @@ enough to call `search`, `remember`, `add_entity`, `add_relation`,
 The bypass is **off by default**. The server also refuses to start when
 the bypass is enabled and the API bind host is not a loopback address --
 so you can't accidentally expose `0.0.0.0:8000` with auth disabled. The
-bind host comes from `LANDSCAPE_API_HOST` (default `127.0.0.1`); the
-guard accepts `127.0.0.1`, `::1`, `localhost`, and empty string.
+bind host comes from `API_HOST` (default `127.0.0.1`); the guard accepts
+`127.0.0.1`, `::1`, `localhost`, and empty string. Inside docker-compose
+the API binds to `0.0.0.0` for host reachability, so the bypass is
+effectively unavailable there -- mint a bearer token instead.
+
+**Where the auth DB lives.** Defaults to `~/.config/landscape/auth.db`.
+Override with `AUTH_DB_PATH`. Under docker-compose the path is pinned to
+`/var/lib/landscape/auth.db` on a named volume (`landscape_auth_data`)
+so credentials survive container rebuilds.
 
 A startup log line marks this mode as transitional:
 `TRANSITIONAL SECURITY BYPASS ENABLED: localhost requests may access
