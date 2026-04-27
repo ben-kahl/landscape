@@ -122,10 +122,15 @@ async def store_oauth_client(client_info: OAuthClientInformationFull) -> None:
     try:
         await db.execute(
             """
-            INSERT OR REPLACE INTO api_clients
+            INSERT INTO api_clients
                 (client_id, name, description, scopes, status,
                  created_at, last_used_at, redirect_uris, client_metadata)
             VALUES (?, ?, NULL, ?, 'active', ?, NULL, ?, ?)
+            ON CONFLICT(client_id) DO UPDATE SET
+                name = excluded.name,
+                scopes = excluded.scopes,
+                redirect_uris = excluded.redirect_uris,
+                client_metadata = excluded.client_metadata
             """,
             (client_id, name, json.dumps(scopes_list), now, redirect_uris, metadata),
         )
@@ -150,6 +155,8 @@ async def get_oauth_client(client_id: str) -> OAuthClientInformationFull | None:
         return None
     status, metadata_json = row
     if status == "disabled":
+        return None
+    if metadata_json is None:
         return None
     return OAuthClientInformationFull.model_validate_json(metadata_json)
 
@@ -301,7 +308,7 @@ async def load_authorization_code_record(code: str) -> dict[str, Any] | None:
 
 
 async def mark_code_used(code: str) -> None:
-    """Stamp used_at. Call inside the same logical transaction as token minting."""
+    """Stamp used_at. Call immediately before minting the token; these are separate commits."""
     db = await _connect()
     try:
         await db.execute(
@@ -406,7 +413,7 @@ async def revoke_oauth_token_by_id(token_id: str) -> None:
     db = await _connect()
     try:
         await db.execute(
-            "UPDATE oauth_tokens SET revoked_at = ? WHERE token_id = ?",
+            "UPDATE oauth_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE token_id = ?",
             (time.time(), token_id),
         )
         await db.commit()
