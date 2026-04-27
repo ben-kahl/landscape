@@ -1,94 +1,79 @@
-"""Persistence layer for API clients and their hashed bearer secrets.
+"""Persistence layer for OAuth clients, authorization codes, and tokens.
 
 Storage shape (SQLite, local file at ``settings.auth_db_path``)::
 
     api_clients(client_id PK, name, description, scopes JSON,
-                status, created_at, last_used_at)
-    client_secrets(secret_id PK, client_id FK -> api_clients.client_id,
-                   secret_hash, secret_prefix,
-                   created_at, expires_at, revoked_at)
+                status, created_at, last_used_at,
+                redirect_uris JSON, client_metadata JSON)
+    authorization_codes(code PK, client_id FK, redirect_uri,
+                        redirect_uri_provided_explicitly INTEGER,
+                        scopes JSON, code_challenge,
+                        expires_at REAL, used_at REAL)
+    oauth_tokens(token_id PK, client_id FK, client_name,
+                 access_token UNIQUE, refresh_token UNIQUE,
+                 scopes JSON, expires_at REAL, revoked_at REAL)
 
-Why SQLite (not Neo4j) for auth state? Auth records are small, relational, and
-need strict uniqueness/integrity. Neo4j is the right tool for traversing
-multi-hop memory; it is the wrong tool for "is this bearer token valid?". A
-local SQLite file keeps auth orthogonal to the graph stack: tests don't need
-Neo4j running, and the auth file is trivially backed up / wiped independently
-of the memory graph.
-
-* ``client_id`` and ``secret_id`` are UUIDs minted at creation time. The
-  client-facing bearer token is ``lsk_<secret_id>_<material>`` -- the
-  secret_id is intentionally derivable from the token so we can do an
-  indexed lookup without scanning every hash.
-* ``secret_hash`` is the Argon2id hash of the full bearer token; the
-  plaintext is never persisted. Verification goes through
-  ``password_hash.verify`` -- never a string compare.
-* A client may rotate through multiple ClientSecret rows. The currently
-  live secret is whichever row has ``revoked_at IS NULL`` and (if set) an
-  ``expires_at`` in the future.
+Why SQLite (not Neo4j) for auth state? Auth records are small, relational,
+and need strict uniqueness/integrity. Neo4j is the right tool for traversing
+multi-hop memory; it is the wrong tool for "is this bearer token valid?".
 """
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import aiosqlite
+from mcp.shared.auth import OAuthClientInformationFull
 
-from landscape.auth import (
-    AuthContext,
-    mint_client_secret,
-    parse_bearer_token,
-    password_hash,
-)
 from landscape.config import settings
-
-
-@dataclass(frozen=True)
-class CreatedClientSecret:
-    """Returned by ``create_api_client`` (Task 5 will reuse the shape for ``rotate_client_secret``).
-
-    The plaintext ``bearer_token`` is the only chance the caller has to
-    capture the credential; the store keeps just the Argon2 hash.
-    """
-
-    client_id: str
-    client_name: str
-    secret_id: str
-    bearer_token: str
-    secret_prefix: str
-    scopes: tuple[str, ...]
-    created_at: str
 
 
 SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS api_clients (
-        client_id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        scopes TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active',
-        created_at TEXT NOT NULL,
-        last_used_at TEXT
+        client_id       TEXT PRIMARY KEY,
+        name            TEXT NOT NULL,
+        description     TEXT,
+        scopes          TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'active',
+        created_at      TEXT NOT NULL,
+        last_used_at    TEXT,
+        redirect_uris   TEXT,
+        client_metadata TEXT
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS client_secrets (
-        secret_id TEXT PRIMARY KEY,
-        client_id TEXT NOT NULL REFERENCES api_clients(client_id),
-        secret_hash TEXT NOT NULL,
-        secret_prefix TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        expires_at TEXT,
-        revoked_at TEXT
+    CREATE TABLE IF NOT EXISTS authorization_codes (
+        code                          TEXT PRIMARY KEY,
+        client_id                     TEXT NOT NULL REFERENCES api_clients(client_id),
+        redirect_uri                  TEXT NOT NULL,
+        redirect_uri_provided_explicitly INTEGER NOT NULL DEFAULT 1,
+        scopes                        TEXT NOT NULL,
+        code_challenge                TEXT NOT NULL,
+        expires_at                    REAL NOT NULL,
+        used_at                       REAL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+        token_id       TEXT PRIMARY KEY,
+        client_id      TEXT NOT NULL REFERENCES api_clients(client_id),
+        client_name    TEXT NOT NULL,
+        access_token   TEXT UNIQUE NOT NULL,
+        refresh_token  TEXT UNIQUE,
+        scopes         TEXT NOT NULL,
+        expires_at     REAL,
+        revoked_at     REAL
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_api_clients_status ON api_clients(status)",
-    "CREATE INDEX IF NOT EXISTS idx_client_secrets_client_id ON client_secrets(client_id)",
-    "CREATE INDEX IF NOT EXISTS idx_client_secrets_revoked_at ON client_secrets(revoked_at)",
+    "CREATE INDEX IF NOT EXISTS idx_auth_codes_client ON authorization_codes(client_id)",
+    "CREATE INDEX IF NOT EXISTS idx_oauth_tokens_access  ON oauth_tokens(access_token)",
+    "CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_token)",
 )
 
 
@@ -97,23 +82,10 @@ def _now_iso() -> str:
 
 
 def _db_path() -> Path:
-    """Resolve the configured auth DB path, expanding ``~`` etc.
-
-    Centralized so tests can override ``settings.auth_db_path`` and have
-    every call pick up the new value without restarting the process.
-    """
     return Path(settings.auth_db_path).expanduser()
 
 
 async def _connect() -> aiosqlite.Connection:
-    """Open a fresh aiosqlite connection with the PRAGMAs we want.
-
-    WAL gives us cheap concurrent readers (relevant once Task 4 wires
-    bearer auth into every request). ``foreign_keys=ON`` enforces the
-    ``client_secrets.client_id`` FK -- SQLite ignores it by default.
-    ``busy_timeout=5000`` lets writers wait up to 5s for the WAL writer
-    rather than failing immediately under contention.
-    """
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     db = await aiosqlite.connect(path)
@@ -124,12 +96,7 @@ async def _connect() -> aiosqlite.Connection:
 
 
 async def ensure_schema() -> None:
-    """Apply every DDL statement against the auth DB.
-
-    Idempotent: every CREATE is ``IF NOT EXISTS``-guarded. Called once at
-    FastAPI startup (see ``landscape.main._startup_storage``) and from
-    test fixtures so each test sees a fully-initialized DB.
-    """
+    """Apply all DDL statements. Idempotent (CREATE IF NOT EXISTS)."""
     db = await _connect()
     try:
         for statement in SCHEMA_STATEMENTS:
@@ -139,269 +106,70 @@ async def ensure_schema() -> None:
         await db.close()
 
 
-async def create_api_client(
-    *,
-    name: str,
-    scopes: list[str],
-    description: str | None = None,
-) -> CreatedClientSecret:
-    """Insert a new api_clients row + a single live client_secrets row.
+# ── OAuth client CRUD ────────────────────────────────────────────────────────
 
-    UUID4 collisions are vanishingly rare; the PRIMARY KEY constraints
-    surface them as ``IntegrityError`` rather than silently overwriting.
-    """
-    client_id = str(uuid4())
-    secret_id = str(uuid4())
-    bearer_token, secret_prefix, secret_hash = mint_client_secret(secret_id)
+async def store_oauth_client(client_info: OAuthClientInformationFull) -> None:
+    """Persist a client registered via dynamic registration."""
+    client_id = client_info.client_id or str(uuid4())
+    name = client_info.client_name or client_id[:16]
+    scopes_list = client_info.scope.split() if client_info.scope else ["agent"]
+    redirect_uris = json.dumps(
+        [str(u) for u in (client_info.redirect_uris or [])]
+    )
+    metadata = client_info.model_dump_json()
     now = _now_iso()
-    scopes_list = list(scopes)
     db = await _connect()
     try:
         await db.execute(
             """
-            INSERT INTO api_clients
-                (client_id, name, description, scopes, status, created_at, last_used_at)
-            VALUES (?, ?, ?, ?, 'active', ?, NULL)
+            INSERT OR REPLACE INTO api_clients
+                (client_id, name, description, scopes, status,
+                 created_at, last_used_at, redirect_uris, client_metadata)
+            VALUES (?, ?, NULL, ?, 'active', ?, NULL, ?, ?)
             """,
-            (client_id, name, description, json.dumps(scopes_list), now),
-        )
-        await db.execute(
-            """
-            INSERT INTO client_secrets
-                (secret_id, client_id, secret_hash, secret_prefix,
-                 created_at, expires_at, revoked_at)
-            VALUES (?, ?, ?, ?, ?, NULL, NULL)
-            """,
-            (secret_id, client_id, secret_hash, secret_prefix, now),
+            (client_id, name, json.dumps(scopes_list), now, redirect_uris, metadata),
         )
         await db.commit()
     finally:
         await db.close()
-    return CreatedClientSecret(
-        client_id=client_id,
-        client_name=name,
-        secret_id=secret_id,
-        bearer_token=bearer_token,
-        secret_prefix=secret_prefix,
-        scopes=tuple(scopes_list),
-        created_at=now,
-    )
 
 
-async def get_client_secret_by_id(secret_id: str) -> dict[str, Any] | None:
-    """Look up a stored client_secrets row joined to its api_clients parent.
-
-    Returns ``None`` when the secret_id is unknown. The returned dict
-    intentionally exposes ``secret_hash`` so callers can run
-    ``password_hash.verify`` themselves (handy in tests). For the
-    request hot path, prefer ``authenticate_bearer_token``.
-    """
+async def get_oauth_client(client_id: str) -> OAuthClientInformationFull | None:
+    """Load a registered client. Returns None if unknown or disabled."""
     db = await _connect()
     try:
         cursor = await db.execute(
-            """
-            SELECT
-                c.client_id        AS client_id,
-                c.name             AS client_name,
-                c.scopes           AS scopes,
-                c.status           AS status,
-                c.last_used_at     AS last_used_at,
-                s.secret_id        AS secret_id,
-                s.secret_hash      AS secret_hash,
-                s.secret_prefix    AS secret_prefix,
-                s.created_at       AS created_at,
-                s.expires_at       AS expires_at,
-                s.revoked_at       AS revoked_at
-            FROM client_secrets s
-            JOIN api_clients c ON c.client_id = s.client_id
-            WHERE s.secret_id = ?
-            """,
-            (secret_id,),
-        )
-        row = await cursor.fetchone()
-        await cursor.close()
-        if row is None:
-            return None
-        columns = [
-            "client_id",
-            "client_name",
-            "scopes",
-            "status",
-            "last_used_at",
-            "secret_id",
-            "secret_hash",
-            "secret_prefix",
-            "created_at",
-            "expires_at",
-            "revoked_at",
-        ]
-        record = dict(zip(columns, row, strict=True))
-    finally:
-        await db.close()
-    record["scopes"] = json.loads(record["scopes"]) if record["scopes"] else []
-    return record
-
-
-async def revoke_client_secret(secret_id: str) -> None:
-    """Stamp ``revoked_at`` on a client_secrets row. Idempotent.
-
-    A revoked secret can never be reactivated -- rotation means inserting
-    a new client_secrets row. ``authenticate_bearer_token`` rejects any
-    secret with ``revoked_at`` set. ``COALESCE`` preserves the original
-    revoke timestamp on a re-revoke.
-    """
-    db = await _connect()
-    try:
-        await db.execute(
-            """
-            UPDATE client_secrets
-            SET revoked_at = COALESCE(revoked_at, ?)
-            WHERE secret_id = ?
-            """,
-            (_now_iso(), secret_id),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-
-async def disable_client(client_id: str) -> None:
-    """Flip an api_clients row to ``status='disabled'``. Idempotent.
-
-    Disabled clients fail authentication even if their secret is still
-    technically valid. Task 5 will expose this via the CLI.
-    """
-    db = await _connect()
-    try:
-        await db.execute(
-            """
-            UPDATE api_clients
-            SET status = 'disabled'
-            WHERE client_id = ?
-            """,
-            (client_id,),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-
-async def enable_client(client_id: str) -> None:
-    """Flip an api_clients row back to ``status='active'``. Idempotent."""
-    db = await _connect()
-    try:
-        await db.execute(
-            """
-            UPDATE api_clients
-            SET status = 'active'
-            WHERE client_id = ?
-            """,
-            (client_id,),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-
-async def create_client_secret(client_id: str) -> CreatedClientSecret:
-    """Mint a new bearer secret for an existing client.
-
-    Used both for first-time additional secrets and for rotation: the
-    overlap window is a CLI concern (operators can keep both secrets live
-    until clients flip over, then call ``revoke_client_secret`` on the
-    old one). Raises ``LookupError`` if the client doesn't exist.
-    """
-    db = await _connect()
-    try:
-        cursor = await db.execute(
-            "SELECT name, scopes, status FROM api_clients WHERE client_id = ?",
+            "SELECT status, client_metadata FROM api_clients WHERE client_id = ?",
             (client_id,),
         )
         row = await cursor.fetchone()
         await cursor.close()
-        if row is None:
-            raise LookupError(f"Unknown client_id: {client_id}")
-        client_name, scopes_json, _status = row
-
-        secret_id = str(uuid4())
-        bearer_token, secret_prefix, secret_hash = mint_client_secret(secret_id)
-        now = _now_iso()
-        await db.execute(
-            """
-            INSERT INTO client_secrets
-                (secret_id, client_id, secret_hash, secret_prefix,
-                 created_at, expires_at, revoked_at)
-            VALUES (?, ?, ?, ?, ?, NULL, NULL)
-            """,
-            (secret_id, client_id, secret_hash, secret_prefix, now),
-        )
-        await db.commit()
     finally:
         await db.close()
-
-    scopes_list = json.loads(scopes_json) if scopes_json else []
-    return CreatedClientSecret(
-        client_id=client_id,
-        client_name=client_name,
-        secret_id=secret_id,
-        bearer_token=bearer_token,
-        secret_prefix=secret_prefix,
-        scopes=tuple(scopes_list),
-        created_at=now,
-    )
-
-
-# Rotation is the same store-level op as creating an additional secret. The
-# difference is operator intent + the CLI workflow around revoking the old
-# secret after a handoff window. Keeping a thin alias avoids duplicating SQL.
-rotate_client_secret = create_client_secret
+    if row is None:
+        return None
+    status, metadata_json = row
+    if status == "disabled":
+        return None
+    return OAuthClientInformationFull.model_validate_json(metadata_json)
 
 
 async def list_api_clients() -> list[dict[str, Any]]:
-    """Return all api_clients with a count of currently-live secrets.
-
-    Live = ``revoked_at IS NULL`` and (``expires_at IS NULL`` OR in the
-    future). Never exposes ``secret_hash``.
-    """
-    now = _now_iso()
+    """Return all api_clients rows for CLI display."""
     db = await _connect()
     try:
         cursor = await db.execute(
             """
-            SELECT
-                c.client_id,
-                c.name,
-                c.description,
-                c.scopes,
-                c.status,
-                c.created_at,
-                c.last_used_at,
-                (
-                    SELECT COUNT(*) FROM client_secrets s
-                    WHERE s.client_id = c.client_id
-                      AND s.revoked_at IS NULL
-                      AND (s.expires_at IS NULL OR s.expires_at > ?)
-                ) AS live_secret_count
-            FROM api_clients c
-            ORDER BY c.created_at ASC
-            """,
-            (now,),
+            SELECT client_id, name, description, scopes, status, created_at, last_used_at
+            FROM api_clients
+            ORDER BY created_at ASC
+            """
         )
         rows = await cursor.fetchall()
         await cursor.close()
     finally:
         await db.close()
-
-    columns = [
-        "client_id",
-        "name",
-        "description",
-        "scopes",
-        "status",
-        "created_at",
-        "last_used_at",
-        "live_secret_count",
-    ]
+    columns = ["client_id", "name", "description", "scopes", "status", "created_at", "last_used_at"]
     out: list[dict[str, Any]] = []
     for row in rows:
         record = dict(zip(columns, row, strict=True))
@@ -410,41 +178,36 @@ async def list_api_clients() -> list[dict[str, Any]]:
     return out
 
 
-async def list_client_secrets(client_id: str) -> list[dict[str, Any]]:
-    """Return non-sensitive metadata for every secret on a client.
-
-    Never returns ``secret_hash`` -- this is for operator inspection.
-    """
+async def disable_client(client_id: str) -> None:
+    """Set status='disabled'. Idempotent."""
     db = await _connect()
     try:
-        cursor = await db.execute(
-            """
-            SELECT secret_id, secret_prefix, created_at, expires_at, revoked_at
-            FROM client_secrets
-            WHERE client_id = ?
-            ORDER BY created_at ASC
-            """,
+        await db.execute(
+            "UPDATE api_clients SET status = 'disabled' WHERE client_id = ?",
             (client_id,),
         )
-        rows = await cursor.fetchall()
-        await cursor.close()
+        await db.commit()
     finally:
         await db.close()
 
-    columns = ["secret_id", "secret_prefix", "created_at", "expires_at", "revoked_at"]
-    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+async def enable_client(client_id: str) -> None:
+    """Set status='active'. Idempotent."""
+    db = await _connect()
+    try:
+        await db.execute(
+            "UPDATE api_clients SET status = 'active' WHERE client_id = ?",
+            (client_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
 
 
-async def _touch_last_used(client_id: str, now_iso: str) -> None:
-    """Update ``api_clients.last_used_at`` only when the configured interval has lapsed.
-
-    Writing on every authenticated request would generate pointless write
-    traffic. The ``last_used_at`` field is for debugging / rotation
-    hygiene, not for billing -- "fresh enough" is fine. ISO-8601 strings
-    are lexicographically sortable, so we can compare them with string
-    literal ``<`` and avoid datetime parsing in SQL.
-    """
-    interval_seconds = settings.auth_update_last_used_interval_seconds
+async def _touch_last_used(client_id: str) -> None:
+    """Update last_used_at at most once per configured interval."""
+    interval = settings.auth_update_last_used_interval_seconds
+    now_iso = _now_iso()
     db = await _connect()
     try:
         cursor = await db.execute(
@@ -455,15 +218,14 @@ async def _touch_last_used(client_id: str, now_iso: str) -> None:
         await cursor.close()
         if row is None:
             return
-        last_used_at = row[0]
-        if last_used_at is not None:
+        last = row[0]
+        if last is not None:
             try:
-                last_dt = datetime.fromisoformat(last_used_at)
+                last_dt = datetime.fromisoformat(last)
                 now_dt = datetime.fromisoformat(now_iso)
-                if (now_dt - last_dt).total_seconds() < interval_seconds:
+                if (now_dt - last_dt).total_seconds() < interval:
                     return
             except ValueError:
-                # Corrupt timestamp -- overwrite it rather than silently skip.
                 pass
         await db.execute(
             "UPDATE api_clients SET last_used_at = ? WHERE client_id = ?",
@@ -474,39 +236,179 @@ async def _touch_last_used(client_id: str, now_iso: str) -> None:
         await db.close()
 
 
-async def authenticate_bearer_token(bearer_token: str) -> AuthContext | None:
-    """Verify a bearer token and return the authenticated context.
+# ── Authorization code store ─────────────────────────────────────────────────
 
-    Returns ``None`` for any failure mode -- bad shape, unknown secret_id,
-    Argon2 mismatch, revoked secret, expired secret, or disabled parent
-    client. Callers should not branch on the failure reason; that
-    information is reserved for audit logs added in Task 4.
-    """
-    parsed = parse_bearer_token(bearer_token)
-    if parsed is None:
-        return None
-    secret_id, _material = parsed
+async def store_authorization_code(
+    *,
+    code: str,
+    client_id: str,
+    redirect_uri: str,
+    redirect_uri_provided_explicitly: bool,
+    scopes: list[str],
+    code_challenge: str,
+    expires_at: float,
+) -> None:
+    db = await _connect()
+    try:
+        await db.execute(
+            """
+            INSERT INTO authorization_codes
+                (code, client_id, redirect_uri, redirect_uri_provided_explicitly,
+                 scopes, code_challenge, expires_at, used_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+            """,
+            (
+                code, client_id, redirect_uri,
+                1 if redirect_uri_provided_explicitly else 0,
+                json.dumps(scopes), code_challenge, expires_at,
+            ),
+        )
+        await db.commit()
+    finally:
+        await db.close()
 
-    record = await get_client_secret_by_id(secret_id)
-    if record is None:
-        return None
-    if record.get("revoked_at") is not None:
-        return None
-    if record.get("status") != "active":
-        return None
-    expires_at = record.get("expires_at")
-    if expires_at is not None and expires_at <= _now_iso():
-        return None
-    if not password_hash.verify(bearer_token, record["secret_hash"]):
-        return None
 
-    await _touch_last_used(record["client_id"], _now_iso())
+async def load_authorization_code_record(code: str) -> dict[str, Any] | None:
+    """Return the auth code row if unused and not expired, else None."""
+    now = time.time()
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT code, client_id, redirect_uri, redirect_uri_provided_explicitly,
+                   scopes, code_challenge, expires_at
+            FROM authorization_codes
+            WHERE code = ? AND used_at IS NULL AND expires_at > ?
+            """,
+            (code, now),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+    finally:
+        await db.close()
+    if row is None:
+        return None
+    columns = [
+        "code", "client_id", "redirect_uri", "redirect_uri_provided_explicitly",
+        "scopes", "code_challenge", "expires_at",
+    ]
+    record = dict(zip(columns, row, strict=True))
+    record["scopes"] = json.loads(record["scopes"])
+    record["redirect_uri_provided_explicitly"] = bool(record["redirect_uri_provided_explicitly"])
+    # Add used_at so callers can check it; always None for live codes
+    record["used_at"] = None
+    return record
 
-    scopes = record.get("scopes") or []
-    return AuthContext(
-        client_id=record["client_id"],
-        client_name=record["client_name"],
-        secret_id=record["secret_id"],
-        scopes=frozenset(scopes),
-        is_loopback_bypass=False,
-    )
+
+async def mark_code_used(code: str) -> None:
+    """Stamp used_at. Call inside the same logical transaction as token minting."""
+    db = await _connect()
+    try:
+        await db.execute(
+            "UPDATE authorization_codes SET used_at = ? WHERE code = ?",
+            (time.time(), code),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+# ── OAuth token store ────────────────────────────────────────────────────────
+
+async def store_oauth_token(
+    *,
+    token_id: str,
+    client_id: str,
+    client_name: str,
+    access_token: str,
+    refresh_token: str | None,
+    scopes: list[str],
+    expires_at: float | None,
+) -> None:
+    db = await _connect()
+    try:
+        await db.execute(
+            """
+            INSERT INTO oauth_tokens
+                (token_id, client_id, client_name, access_token, refresh_token,
+                 scopes, expires_at, revoked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+            """,
+            (token_id, client_id, client_name, access_token, refresh_token,
+             json.dumps(scopes), expires_at),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def load_oauth_token_by_access(access_token: str) -> dict[str, Any] | None:
+    """Return token row if live (not revoked, not expired), else None."""
+    now = time.time()
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT token_id, client_id, client_name, access_token, refresh_token,
+                   scopes, expires_at
+            FROM oauth_tokens
+            WHERE access_token = ?
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            (access_token, now),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+    finally:
+        await db.close()
+    if row is None:
+        return None
+    columns = ["token_id", "client_id", "client_name", "access_token",
+               "refresh_token", "scopes", "expires_at"]
+    record = dict(zip(columns, row, strict=True))
+    record["scopes"] = json.loads(record["scopes"])
+    await _touch_last_used(record["client_id"])
+    return record
+
+
+async def load_oauth_token_by_refresh(refresh_token: str) -> dict[str, Any] | None:
+    """Return token row matching the refresh token if live, else None."""
+    now = time.time()
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT token_id, client_id, client_name, access_token, refresh_token,
+                   scopes, expires_at
+            FROM oauth_tokens
+            WHERE refresh_token = ?
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            (refresh_token, now),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+    finally:
+        await db.close()
+    if row is None:
+        return None
+    columns = ["token_id", "client_id", "client_name", "access_token",
+               "refresh_token", "scopes", "expires_at"]
+    record = dict(zip(columns, row, strict=True))
+    record["scopes"] = json.loads(record["scopes"])
+    return record
+
+
+async def revoke_oauth_token_by_id(token_id: str) -> None:
+    """Stamp revoked_at. Idempotent. Revokes both access and refresh tokens."""
+    db = await _connect()
+    try:
+        await db.execute(
+            "UPDATE oauth_tokens SET revoked_at = ? WHERE token_id = ?",
+            (time.time(), token_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
