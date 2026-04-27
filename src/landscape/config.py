@@ -70,7 +70,8 @@ class Settings(BaseSettings):
 
     # Off by default: the loopback bypass is dev-only and the startup guard in
     # landscape.main refuses to launch when it's enabled with a non-loopback
-    # bind host. Opt in via LANDSCAPE_ALLOW_UNAUTHENTICATED_LOOPBACK=true.
+    # bind host. Opt in via ALLOW_UNAUTHENTICATED_LOOPBACK=true (no LANDSCAPE_
+    # prefix -- the project's pydantic-settings is unprefixed by convention).
     allow_unauthenticated_loopback: bool = False
     # Bind host the API server listens on. The startup guard reads this when
     # the bypass is enabled to decide whether the combination is safe.
@@ -78,7 +79,8 @@ class Settings(BaseSettings):
     auth_update_last_used_interval_seconds: int = 300
     # Local SQLite file backing the api-client / bearer-secret tables. Default
     # is XDG-ish under the user's home so a fresh checkout doesn't write into
-    # the repo. Override via LANDSCAPE_AUTH_DB_PATH; tests point this at a
+    # the repo. Override via AUTH_DB_PATH (e.g. docker-compose pins this to
+    # /var/lib/landscape/auth.db on a named volume); tests point it at a
     # tmp_path-backed file for isolation.
     auth_db_path: str = "~/.config/landscape/auth.db"
 
