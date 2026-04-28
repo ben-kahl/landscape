@@ -415,9 +415,11 @@ async def merge_entity(
                           e.created_by = $created_by,
                           e.session_id = $session_id,
                           e.turn_id = $turn_id,
-                          e.subtype = $subtype
+                          e.subtype = $subtype,
+                          e.id = randomUUID()
             ON MATCH SET e.access_count = coalesce(e.access_count, 0) + 1,
-                         e.last_accessed = $now
+                         e.last_accessed = $now,
+                         e.id = coalesce(e.id, randomUUID())
             RETURN elementId(e) AS eid
             """,
             name=name,
@@ -449,9 +451,41 @@ async def merge_entity(
     return eid
 
 
+async def _resolve_entity_app_id(entity_ref: str) -> str:
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (e:Entity)
+            WHERE e.id = $entity_ref OR elementId(e) = $entity_ref
+            WITH e, coalesce(e.id, randomUUID()) AS entity_id
+            SET e.id = entity_id
+            RETURN entity_id AS entity_id
+            LIMIT 1
+            """,
+            entity_ref=entity_ref,
+        )
+        record = await result.single()
+        if record is None:
+            raise ValueError(f"Unknown entity reference: {entity_ref!r}")
+        return record["entity_id"]
+
+
+async def _resolve_entity_app_ids(entity_refs: list[str]) -> list[str]:
+    if not entity_refs:
+        return []
+    resolved: list[str] = []
+    for entity_ref in entity_refs:
+        entity_id = await _resolve_entity_app_id(entity_ref)
+        if entity_id not in resolved:
+            resolved.append(entity_id)
+    return resolved
+
+
 async def ensure_memory_graph_schema() -> None:
     driver = get_driver()
     statements = [
+        "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (n:Entity) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT alias_id_unique IF NOT EXISTS FOR (n:Alias) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT assertion_id_unique IF NOT EXISTS FOR (n:Assertion) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT memory_fact_id_unique IF NOT EXISTS FOR (n:MemoryFact) REQUIRE n.id IS UNIQUE",
@@ -467,12 +501,13 @@ async def merge_alias(
     source_doc: str,
     confidence: float,
 ) -> str:
+    canonical_entity_id = await _resolve_entity_app_id(canonical_entity_id)
     aid = alias_id(canonical_entity_id, alias_text)
     driver = get_driver()
     async with driver.session() as session:
         await session.run(
             """
-            MATCH (canonical:Entity) WHERE elementId(canonical) = $entity_id
+            MATCH (canonical:Entity {id: $entity_id})
             MERGE (a:Alias {id: $alias_id})
             ON CREATE SET a.name = $alias_text,
                           a.normalized_name = toLower(trim($alias_text))
@@ -544,6 +579,12 @@ async def create_memory_fact_version(
     confidence: float,
     assertion_id: str,
 ) -> str:
+    subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
+    object_entity_id = (
+        await _resolve_entity_app_id(object_entity_id)
+        if object_entity_id is not None
+        else None
+    )
     family_cfg = FAMILY_REGISTRY[family]
     fkey = fact_key(family_cfg, subject_entity_id, object_entity_id, subtype)
     skey = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
@@ -552,8 +593,8 @@ async def create_memory_fact_version(
     async with driver.session() as session:
         await session.run(
             """
-            MATCH (subject:Entity) WHERE elementId(subject) = $subject_entity_id
-            OPTIONAL MATCH (object:Entity) WHERE elementId(object) = $object_entity_id
+            MATCH (subject:Entity {id: $subject_entity_id})
+            OPTIONAL MATCH (object:Entity {id: $object_entity_id})
             MERGE (fact:MemoryFact {id: $fact_id})
             ON CREATE SET fact.family = $family,
                           fact.fact_key = $fact_key,
@@ -604,6 +645,8 @@ async def materialize_memory_rel(memory_fact_id: str) -> None:
                     r.current = fact.current,
                     r.confidence_agg = fact.confidence_agg,
                     r.subtype = fact.subtype,
+                    r.subject_entity_id = subject.id,
+                    r.object_entity_id = object.id,
                     r.updated_at = $now
             )
             SET fact.updated_at = $now
@@ -622,6 +665,12 @@ async def supersede_single_current_fact(
     confidence: float,
     assertion_id: str,
 ) -> str:
+    subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
+    object_entity_id = (
+        await _resolve_entity_app_id(object_entity_id)
+        if object_entity_id is not None
+        else None
+    )
     family_cfg = FAMILY_REGISTRY[family]
     if not family_cfg.single_current:
         raise ValueError(f"family {family!r} is not single_current")
@@ -689,10 +738,10 @@ async def get_memory_fact_explanation(memory_fact_id: str) -> dict[str, Any] | N
                    fact.subtype AS subtype,
                    fact.support_count AS support_count,
                    fact.confidence_agg AS confidence_agg,
-                   elementId(subject) AS subject_entity_id,
+                   subject.id AS subject_entity_id,
                    subject.name AS subject_name,
                    subject.type AS subject_type,
-                   elementId(object) AS object_entity_id,
+                   object.id AS object_entity_id,
                    object.name AS object_name,
                    object.type AS object_type,
                    rel.current AS memory_rel_current
@@ -1339,13 +1388,16 @@ async def bfs_expand_memory_rel(
 ) -> list[dict[str, Any]]:
     if not seed_entity_ids:
         return []
+    seed_ids = await _resolve_entity_app_ids(seed_entity_ids)
+    if not seed_ids:
+        return []
     query = f"""
-    MATCH (seed:Entity) WHERE elementId(seed) IN $seed_ids
+    MATCH (seed:Entity) WHERE seed.id IN $seed_ids
     MATCH path = shortestPath((seed)-[rels:MEMORY_REL*1..{max_hops}]-(target:Entity))
-    WHERE elementId(seed) <> elementId(target) AND ALL(r IN rels WHERE r.current = true)
+    WHERE seed.id <> target.id AND ALL(r IN rels WHERE r.current = true)
     RETURN
-      elementId(seed) AS seed_id,
-      elementId(target) AS target_id,
+      seed.id AS seed_id,
+      target.id AS target_id,
       target.name AS target_name,
       target.type AS target_type,
       length(path) AS distance,
@@ -1354,7 +1406,7 @@ async def bfs_expand_memory_rel(
     """
     driver = get_driver()
     async with driver.session() as session:
-        result = await session.run(query, seed_ids=seed_entity_ids)
+        result = await session.run(query, seed_ids=seed_ids)
         return [dict(record) async for record in result]
 
 
