@@ -41,6 +41,10 @@ def _new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _is_public_client(client: OAuthClientInformationFull) -> bool:
+    return client.token_endpoint_auth_method == "none" or not client.client_secret
+
+
 class LandscapeOAuthProvider(
     OAuthAuthorizationServerProvider[
         LandscapeAuthorizationCode,
@@ -140,7 +144,18 @@ class LandscapeOAuthProvider(
     ) -> LandscapeRefreshToken | None:
         row = await auth_store.load_oauth_token_by_refresh(refresh_token)
         if row is None:
-            return None
+            if not _is_public_client(client):
+                return None
+            stale_row = await auth_store.load_oauth_token_record_by_refresh(refresh_token)
+            if stale_row is None or stale_row["client_id"] != client.client_id:
+                return None
+            if stale_row["revoked_at"] is None:
+                return None
+            row = await auth_store.load_latest_live_oauth_token_by_client_id(
+                client.client_id
+            )
+            if row is None:
+                return None
         return LandscapeRefreshToken(
             token=row["refresh_token"],   # SDK field name is 'token'
             token_id=row["token_id"],
@@ -155,24 +170,36 @@ class LandscapeOAuthProvider(
         refresh_token: LandscapeRefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        """Rotate: revoke old tokens, mint new pair."""
-        await auth_store.revoke_oauth_token_by_id(refresh_token.token_id)
-
+        """Refresh access tokens, preserving refresh tokens for public clients."""
         effective_scopes = scopes if scopes else refresh_token.scopes
-        token_id = _new_token()
         access_token = _new_token()
-        new_refresh_token = _new_token()
         client_name = client.client_name or client.client_id
 
-        await auth_store.store_oauth_token(
-            token_id=token_id,
-            client_id=client.client_id,
-            client_name=client_name,
-            access_token=access_token,
-            refresh_token=new_refresh_token,
-            scopes=effective_scopes,
-            expires_at=None,
-        )
+        if _is_public_client(client):
+            replaced = await auth_store.replace_access_token(
+                token_id=refresh_token.token_id,
+                client_name=client_name,
+                access_token=access_token,
+                scopes=effective_scopes,
+                expires_at=None,
+            )
+            if not replaced:
+                raise ValueError("refresh token no longer live")
+            new_refresh_token = refresh_token.token
+        else:
+            await auth_store.revoke_oauth_token_by_id(refresh_token.token_id)
+
+            token_id = _new_token()
+            new_refresh_token = _new_token()
+            await auth_store.store_oauth_token(
+                token_id=token_id,
+                client_id=client.client_id,
+                client_name=client_name,
+                access_token=access_token,
+                refresh_token=new_refresh_token,
+                scopes=effective_scopes,
+                expires_at=None,
+            )
         return OAuthToken(
             access_token=access_token,
             token_type="Bearer",

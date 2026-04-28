@@ -247,3 +247,35 @@ async def test_refresh_token_issues_new_access_token(client, auth_db):
     new_data = refresh_resp.json()
     assert new_data["access_token"] != old_access
     assert await auth_store.load_oauth_token_by_access(old_access) is None
+
+
+async def test_refresh_token_can_be_reused_across_restart_for_public_client(client, auth_db):
+    token_data = await _full_pkce_flow(client)
+    original_refresh = token_data["refresh_token"]
+    client_id = token_data["client_id"]
+
+    first_refresh = await client.post(
+        "/token",
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": original_refresh,
+            "client_id": client_id,
+        },
+    )
+    assert first_refresh.status_code == 200
+    first_data = first_refresh.json()
+
+    second_refresh = await client.post(
+        "/token",
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": original_refresh,
+            "client_id": client_id,
+        },
+    )
+    assert second_refresh.status_code == 200
+    second_data = second_refresh.json()
+
+    assert first_data["access_token"] != second_data["access_token"]
+    assert first_data["refresh_token"] == original_refresh
+    assert second_data["refresh_token"] == original_refresh
