@@ -63,7 +63,8 @@ def fake_pipeline(monkeypatch):
     """Stub pipeline/retrieval so route handlers don't need a real backend."""
     from landscape.pipeline import IngestResult
 
-    async def fake_ingest(text, title, source_type="text", session_id=None, turn_id=None, debug=False):
+    async def fake_ingest(text, title, source_type="text", 
+                          session_id=None, turn_id=None, debug=False):
         return IngestResult(
             doc_id="doc-1", already_existed=False,
             entities_created=0, entities_reinforced=0,

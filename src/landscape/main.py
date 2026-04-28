@@ -3,9 +3,8 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from starlette.middleware.authentication import AuthenticationMiddleware
-
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
+from starlette.middleware.authentication import AuthenticationMiddleware
 
 from landscape.api.ingest import router as ingest_router
 from landscape.api.query import router as query_router

@@ -7,7 +7,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
-import time
 from pathlib import Path
 
 import pytest
@@ -184,9 +183,14 @@ async def test_exchange_refresh_token_issues_new_access_token(provider, register
     code_str = parse_qs(urlparse(redirect_url).query)["code"][0]
     auth_code = await provider.load_authorization_code(registered_client, code_str)
     first_token = await provider.exchange_authorization_code(registered_client, auth_code)
-    refresh_token_obj = await provider.load_refresh_token(registered_client, first_token.refresh_token)
+    refresh_token_obj = await provider.load_refresh_token(
+        registered_client, 
+        first_token.refresh_token
+    )
 
-    new_token = await provider.exchange_refresh_token(registered_client, refresh_token_obj, ["agent"])
+    new_token = await provider.exchange_refresh_token(
+        registered_client, refresh_token_obj, ["agent"]
+    )
     assert new_token.access_token != first_token.access_token
     old = await provider.load_access_token(first_token.access_token)
     assert old is None

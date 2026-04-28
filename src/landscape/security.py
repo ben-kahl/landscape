@@ -17,7 +17,6 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 
 from landscape.auth import AuthContext

@@ -3,14 +3,20 @@ from __future__ import annotations
 
 import secrets
 import time
-from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from mcp.server.auth.provider import (
-    AuthorizationCode as SDKAuthorizationCode,
     AccessToken as SDKAccessToken,
-    RefreshToken as SDKRefreshToken,
+)
+from mcp.server.auth.provider import (
+    AuthorizationCode as SDKAuthorizationCode,
+)
+from mcp.server.auth.provider import (
     AuthorizationParams,
     OAuthAuthorizationServerProvider,
+)
+from mcp.server.auth.provider import (
+    RefreshToken as SDKRefreshToken,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyUrl

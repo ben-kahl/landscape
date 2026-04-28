@@ -91,8 +91,8 @@ async def qdrant_client():
 
 @pytest_asyncio.fixture
 async def http_client(request, monkeypatch):
-    from landscape.main import app
     from landscape.auth import AuthContext
+    from landscape.main import app
     from landscape.security import resolve_request_auth
 
     # The shared client targets API plumbing, not auth. Override the FastAPI

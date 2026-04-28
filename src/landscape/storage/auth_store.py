@@ -31,7 +31,6 @@ from mcp.shared.auth import OAuthClientInformationFull
 
 from landscape.config import settings
 
-
 SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS api_clients (

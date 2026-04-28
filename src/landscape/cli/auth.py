@@ -35,11 +35,13 @@ async def _ensure_schema() -> None:
 
 
 async def handle_list_clients(_args: argparse.Namespace) -> int:
-    from landscape.config import settings
     from pathlib import Path
+
+    from landscape.config import settings
     db_path = Path(settings.auth_db_path).expanduser().resolve()
     print(f"# auth_db: {db_path}")
-    print("# For Docker deployments run: docker exec <container> python3 -m landscape.cli auth list-clients")
+    print("# For Docker deployments run: docker exec <container> python3 -m " \
+        "landscape.cli auth list-clients")
     print()
     await _ensure_schema()
     clients = await auth_store.list_api_clients()
