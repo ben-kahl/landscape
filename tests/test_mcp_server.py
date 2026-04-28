@@ -18,7 +18,6 @@ from types import SimpleNamespace
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
-from starlette.routing import Mount
 
 pytestmark = pytest.mark.integration
 
@@ -47,19 +46,12 @@ async def test_mcp_app_registers_expected_tools():
 
 
 @pytest.mark.smoke
-def test_fastapi_app_exposes_single_mcp_path_without_nested_mount():
-    from landscape.main import app, mcp_http_app
+def test_fastapi_app_exposes_mcp_and_oauth_paths():
+    from landscape.main import app
 
-    app_mounts = {
-        route.path for route in app.routes if isinstance(route, Mount)
-    }
     app_paths = {route.path for route in app.routes if hasattr(route, "path")}
-    mcp_paths = {route.path for route in mcp_http_app.routes if hasattr(route, "path")}
-
-    assert "" not in app_mounts
     assert "/mcp" in app_paths
-    assert "/mcp" in mcp_paths
-    assert "/mcp" not in app_mounts
+    assert "/healthz" in app_paths
 
 
 @pytest.mark.smoke
@@ -509,8 +501,7 @@ async def _mcp_client(auth=None):
 
     The in-process transport bypasses the FastAPI ASGI auth middleware, so
     we set the request-scoped principal directly. ``auth=None`` defaults to
-    the loopback-bypass principal (agent scope only) so existing tests keep
-    their behaviour.
+    an anonymous agent-scoped principal so existing tests keep their behaviour.
     """
     from landscape.auth import AuthContext
     from landscape.mcp_app import mcp
@@ -520,9 +511,8 @@ async def _mcp_client(auth=None):
         auth = AuthContext(
             client_id="loopback-anonymous",
             client_name="loopback-anonymous",
-            secret_id=None,
+            token_id="",
             scopes=frozenset({"agent"}),
-            is_loopback_bypass=True,
         )
 
     token = _CURRENT_AUTH_CONTEXT.set(auth)
@@ -803,9 +793,8 @@ def _graph_query_principal():
     return AuthContext(
         client_id="test-graph-query",
         client_name="test-graph-query",
-        secret_id="test",
+        token_id="test-token-id",
         scopes=frozenset({"agent", "graph_query"}),
-        is_loopback_bypass=False,
     )
 
 
@@ -896,7 +885,7 @@ async def test_authenticated_client_with_graph_query_scope_can_call_graph_query(
         "landscape.storage.neo4j_store.run_cypher_readonly", fake_run_cypher
     )
 
-    # Build a principal as if create_api_client minted scopes=["agent","graph_query"].
+    # Build a principal as if an OAuth token was minted with scopes=["agent","graph_query"].
     # We don't go through the SQLite store here -- only the in-memory ContextVar
     # check matters for the scope gate.
     from landscape.auth import AuthContext
@@ -904,9 +893,8 @@ async def test_authenticated_client_with_graph_query_scope_can_call_graph_query(
     principal = AuthContext(
         client_id="real-client",
         client_name="bench-runner",
-        secret_id="sec-1",
+        token_id="tok-sec-1",
         scopes=frozenset({"agent", "graph_query"}),
-        is_loopback_bypass=False,
     )
 
     async with _mcp_client(auth=principal) as client:

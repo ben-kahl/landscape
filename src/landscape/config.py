@@ -68,14 +68,7 @@ class Settings(BaseSettings):
     decay_lambda: float = math.log(2) / (7 * 86400)
     reinforcement_cap: float = 2.0
 
-    # Off by default: the loopback bypass is dev-only and the startup guard in
-    # landscape.main refuses to launch when it's enabled with a non-loopback
-    # bind host. Opt in via ALLOW_UNAUTHENTICATED_LOOPBACK=true (no LANDSCAPE_
-    # prefix -- the project's pydantic-settings is unprefixed by convention).
-    allow_unauthenticated_loopback: bool = False
-    # Bind host the API server listens on. The startup guard reads this when
-    # the bypass is enabled to decide whether the combination is safe.
-    api_host: str = "127.0.0.1"
+    mcp_issuer_url: str = "http://127.0.0.1:8000"
     auth_update_last_used_interval_seconds: int = 300
     # Local SQLite file backing the api-client / bearer-secret tables. Default
     # is XDG-ish under the user's home so a fresh checkout doesn't write into

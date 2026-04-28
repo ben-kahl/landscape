@@ -3,35 +3,41 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
+from starlette.middleware.authentication import AuthenticationMiddleware
 
 from landscape.api.ingest import router as ingest_router
 from landscape.api.query import router as query_router
-from landscape.config import settings
 from landscape.embeddings import encoder
 from landscape.mcp_app import mcp
-from landscape.security import mcp_auth_middleware
+from landscape.security import mcp_oauth_scope_middleware
 from landscape.storage import auth_store, neo4j_store, qdrant_store
 
 logger = logging.getLogger(__name__)
 
-_LOOPBACK_BIND_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", ""})
-
-
-def _enforce_loopback_bypass_safety(host: str, bypass_enabled: bool) -> None:
-    """Refuse to start when the dev-only loopback bypass is paired with a
-    non-loopback bind host. Pure helper so tests can drive it directly."""
-    if not bypass_enabled:
-        return
-    if host in _LOOPBACK_BIND_HOSTS:
-        return
-    raise RuntimeError(
-        "Refusing to start: allow_unauthenticated_loopback=True is dev-only "
-        f"and incompatible with non-loopback bind host '{host}'. "
-        "Set LANDSCAPE_ALLOW_UNAUTHENTICATED_LOOPBACK=false or bind to 127.0.0.1."
-    )
-
-
 mcp_http_app = mcp.streamable_http_app()
+
+
+def _find_streamable_app(http_app):
+    """Return the StreamableHTTPASGIApp that owns the session_manager.
+
+    With OAuth enabled FastMCP adds OAuth middleware routes ahead of /mcp, and
+    wraps the /mcp endpoint in RequireAuthMiddleware, so routes[0] no longer
+    points directly at the StreamableHTTPASGIApp. Search by path and walk one
+    level of middleware instead of using a hardcoded index.
+    """
+    for route in http_app.routes:
+        if getattr(route, "path", None) != "/mcp":
+            continue
+        ep = getattr(route, "endpoint", None)
+        if ep is None:
+            continue
+        if hasattr(ep, "session_manager"):
+            return ep
+        inner = getattr(ep, "app", None)
+        if inner is not None and hasattr(inner, "session_manager"):
+            return inner
+    raise RuntimeError("Cannot locate StreamableHTTPASGIApp in MCP routes")
 
 
 def _refresh_mcp_http_session_manager() -> None:
@@ -43,8 +49,8 @@ def _refresh_mcp_http_session_manager() -> None:
     """
     mcp._session_manager = None
     fresh_mcp_http_app = mcp.streamable_http_app()
-    mcp_http_app.routes[0].endpoint.session_manager = (
-        fresh_mcp_http_app.routes[0].endpoint.session_manager
+    _find_streamable_app(mcp_http_app).session_manager = (
+        _find_streamable_app(fresh_mcp_http_app).session_manager
     )
 
 
@@ -54,19 +60,10 @@ def _should_start_mcp_http_session_manager() -> bool:
 
 
 async def _startup_storage() -> None:
-    _enforce_loopback_bypass_safety(
-        settings.api_host, settings.allow_unauthenticated_loopback
-    )
     encoder.load_model()
     await auth_store.ensure_schema()
     await qdrant_store.init_collection()
     await qdrant_store.init_chunks_collection()
-    if settings.allow_unauthenticated_loopback:
-        logger.warning(
-            "TRANSITIONAL SECURITY BYPASS ENABLED: localhost requests may "
-            "access agent scope without credentials. Disable "
-            "allow_unauthenticated_loopback for remote/cloud deployments."
-        )
 
 
 async def _shutdown_storage() -> None:
@@ -105,11 +102,21 @@ async def healthz():
     return {"status": "ok"}
 
 
+# FastMCP's streamable_http_app() wraps its Starlette app with
+# AuthenticationMiddleware so scope["user"] is set before RequireAuthMiddleware
+# checks it. By extracting routes and appending them to FastAPI we lose that
+# outer middleware layer. Re-add it here so bearer validation populates
+# scope["user"] for every request, including /mcp.
+if mcp._token_verifier is not None:
+    app.add_middleware(AuthenticationMiddleware, backend=BearerAuthBackend(mcp._token_verifier))
+
+
+_mcp_path = mcp.settings.streamable_http_path  # "/mcp"
+
 for _mcp_route in mcp_http_app.routes:
-    # Wrap each MCP transport route's dispatched ASGI app so per-request auth
-    # resolution populates the request-scoped principal before any tool runs.
-    # We leave `endpoint` alone so `_refresh_mcp_http_session_manager` can
-    # still hot-swap the underlying StreamableHTTPASGIApp's session_manager.
-    if hasattr(_mcp_route, "app"):
-        _mcp_route.app = mcp_auth_middleware(_mcp_route.app)
+    # Only wrap the /mcp transport route with our ContextVar middleware.
+    # OAuth protocol routes (/register, /authorize, /token, /revoke) don't
+    # need it and wrapping them is unnecessary overhead.
+    if getattr(_mcp_route, "path", None) == _mcp_path and hasattr(_mcp_route, "app"):
+        _mcp_route.app = mcp_oauth_scope_middleware(_mcp_route.app)
     app.router.routes.append(_mcp_route)

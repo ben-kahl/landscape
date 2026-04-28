@@ -20,7 +20,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "  landscape ingest-dir ./docs --glob '*.md'\n"
             "  landscape query 'Who leads the project using PostgreSQL?'\n"
             "  landscape status --verbose\n"
-            "  landscape auth create-client --name claude --scope agent\n"
+            "  landscape auth list-clients    (shows OAuth clients that have connected)\n"
+            "  landscape auth disable-client --client-id <id>\n"
             "\nRun `landscape <command> --help` for command-specific options."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

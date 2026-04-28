@@ -188,59 +188,65 @@ Retrieval logs under `logs/retrieval/` now hash `query_text` and `session_id`
 by default. Raw values are only written when a caller explicitly enables
 request-level debug logging with `debug=true`.
 
-### Authentication and the loopback bypass
+### Authentication
 
-`/query`, `/ingest`, and `/mcp` all resolve a caller principal before any
-work runs. `/healthz` stays public.
+`/query`, `/ingest`, and `/mcp` all require a valid bearer token. `/healthz`
+stays public.
 
-**Bootstrap.** Auth credentials are minted on the local machine via the CLI
-(no unauthenticated admin HTTP endpoint exists). Create the first client:
+Landscape uses **OAuth 2.1 Authorization Code + PKCE** (RFC 6749 + RFC 7636).
+Clients self-register via dynamic registration — no manual token minting
+required. MCP clients like Claude Code and Codex handle the full OAuth flow
+automatically when pointed at the server URL.
 
-```bash
-landscape auth create-client --name claude --scope agent --scope graph_query
+**Connecting Claude Code or Codex.** Add the MCP server URL to your client
+config:
+
+```
+http://localhost:8000/mcp
 ```
 
-The bearer token is printed once. If it's lost, rotate it:
+On first connection the client opens the browser to complete the OAuth flow,
+obtains an access token, and stores it locally. Subsequent connections reuse
+the token until it expires, then refresh automatically.
+
+**Scopes.** Two scopes are available:
+
+- `agent` — memory tools: `search`, `remember`, `add_entity`, `add_relation`,
+  `status`, `conversation_history`, `capture_turn`
+- `graph_query` — raw read-only Cypher via the `/query` endpoint
+
+Clients default to `agent` scope. Request `graph_query` explicitly if needed.
+
+**Inspecting and revoking clients.** CLI commands read the local SQLite auth DB
+directly — no network calls:
 
 ```bash
-landscape auth rotate-secret --client-id <client-id>
+# Show all registered OAuth clients and their status
+landscape auth list-clients
+
+# Prevent a client from obtaining new tokens (access + refresh both invalidated)
+landscape auth disable-client --client-id <client-id>
+
+# Re-enable a previously disabled client
+landscape auth enable-client --client-id <client-id>
 ```
-
-Other commands: `list-clients`, `list-secrets`, `create-secret`,
-`revoke-secret`, `disable-client`, `enable-client`. All read and write the
-local SQLite auth DB directly -- no network calls.
-
-**Loopback development mode (opt-in).** Set
-`ALLOW_UNAUTHENTICATED_LOOPBACK=true` to allow requests from
-`127.0.0.1`, `::1`, or `localhost` to omit credentials. The synthesized
-"loopback-anonymous" principal is granted only the `agent` scope --
-enough to call `search`, `remember`, `add_entity`, `add_relation`,
-`status`, `conversation_history`, and `capture_turn`. It is **not** granted
-`graph_query`, so raw Cypher requires a real client even on localhost.
-
-The bypass is **off by default**. The server also refuses to start when
-the bypass is enabled and the API bind host is not a loopback address --
-so you can't accidentally expose `0.0.0.0:8000` with auth disabled. The
-bind host comes from `API_HOST` (default `127.0.0.1`); the guard accepts
-`127.0.0.1`, `::1`, `localhost`, and empty string. Inside docker-compose
-the API binds to `0.0.0.0` for host reachability, so the bypass is
-effectively unavailable there -- mint a bearer token instead.
 
 **Where the auth DB lives.** Defaults to `~/.config/landscape/auth.db`.
 Override with `AUTH_DB_PATH`. Under docker-compose the path is pinned to
 `/var/lib/landscape/auth.db` on a named volume (`landscape_auth_data`)
-so credentials survive container rebuilds.
+so registered clients survive container rebuilds.
 
-A startup log line marks this mode as transitional:
-`TRANSITIONAL SECURITY BYPASS ENABLED: localhost requests may access
-agent scope without credentials`. Treat it as a developer-laptop convenience,
-not a production auth mode.
+**Remote / cloud deployment.** Set `MCP_ISSUER_URL` to the public HTTPS URL
+of your deployment:
 
-**Remote / cloud deployment.** Leave the bypass at its default (`false`).
-Every request -- loopback or not -- must present a valid bearer token,
-presented as `Authorization: Bearer lsk_<secret_id>_<material>`. Clients
-with the `graph_query` scope can run read-only Cypher; clients with
-`agent` only get the standard memory tools.
+```bash
+MCP_ISSUER_URL=https://landscape.example.com
+```
+
+The issuer URL is embedded in OAuth discovery metadata (`/.well-known/oauth-authorization-server`),
+so clients resolve the correct token and registration endpoints automatically.
+HTTPS is required for remote deployments — the OAuth spec prohibits non-loopback
+HTTP redirect URIs without TLS.
 
 ## Use Landscape as MCP memory
 

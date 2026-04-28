@@ -9,6 +9,7 @@ x-app-base: &app-base
     - .env
   environment:
     AUTH_DB_PATH: /var/lib/landscape/auth.db
+    MCP_ISSUER_URL: "http://localhost:8000"
   extra_hosts:
     - "host.docker.internal:host-gateway"
   depends_on:

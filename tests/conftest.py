@@ -91,24 +91,34 @@ async def qdrant_client():
 
 @pytest_asyncio.fixture
 async def http_client(request, monkeypatch):
-    from landscape.config import settings
+    from landscape.auth import AuthContext
     from landscape.main import app
+    from landscape.security import resolve_request_auth
 
-    # The shared client targets API plumbing, not auth. Enable the loopback
-    # bypass so the (now-default-off) bearer requirement doesn't reject these
-    # 127.0.0.1 ASGI requests. Tests that exercise auth specifically use
-    # their own fixtures in test_api_security.py.
-    monkeypatch.setattr(settings, "allow_unauthenticated_loopback", True)
+    # The shared client targets API plumbing, not auth. Override the FastAPI
+    # dependency so tests that aren't specifically testing auth don't need to
+    # run the full PKCE flow. Tests that exercise auth use their own fixtures
+    # in test_api_security.py and test_oauth_flow.py.
+    _test_auth = AuthContext(
+        client_id="test-client",
+        client_name="test",
+        token_id="test-token",
+        scopes=frozenset({"agent", "graph_query"}),
+    )
+    app.dependency_overrides[resolve_request_auth] = lambda: _test_auth
 
     is_ci_safe = request.node.get_closest_marker("unit") or request.node.get_closest_marker("smoke")
-    if is_ci_safe:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            yield client
-    else:
-        async with app.router.lifespan_context(app):
+    try:
+        if is_ci_safe:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 yield client
+        else:
+            async with app.router.lifespan_context(app):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    yield client
+    finally:
+        app.dependency_overrides.pop(resolve_request_auth, None)
