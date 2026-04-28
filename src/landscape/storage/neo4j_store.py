@@ -5,6 +5,14 @@ from typing import Any
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from landscape.config import settings
+from landscape.memory_graph import (
+    AssertionPayload,
+    FAMILY_REGISTRY,
+    alias_id,
+    assertion_id,
+    fact_key,
+    slot_key,
+)
 
 _driver: AsyncDriver | None = None
 
@@ -439,6 +447,260 @@ async def merge_entity(
             )
 
     return eid
+
+
+async def ensure_memory_graph_schema() -> None:
+    driver = get_driver()
+    statements = [
+        "CREATE CONSTRAINT alias_id_unique IF NOT EXISTS FOR (n:Alias) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT assertion_id_unique IF NOT EXISTS FOR (n:Assertion) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT memory_fact_id_unique IF NOT EXISTS FOR (n:MemoryFact) REQUIRE n.id IS UNIQUE",
+    ]
+    async with driver.session() as session:
+        for stmt in statements:
+            await session.run(stmt)
+
+
+async def merge_alias(
+    canonical_entity_id: str,
+    alias_text: str,
+    source_doc: str,
+    confidence: float,
+) -> str:
+    aid = alias_id(canonical_entity_id, alias_text)
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (canonical:Entity) WHERE elementId(canonical) = $entity_id
+            MERGE (a:Alias {id: $alias_id})
+            ON CREATE SET a.name = $alias_text,
+                          a.normalized_name = toLower(trim($alias_text))
+            MERGE (a)-[r:SAME_AS]->(canonical)
+            ON CREATE SET r.confidence = $confidence,
+                          r.source_doc = $source_doc
+            """,
+            entity_id=canonical_entity_id,
+            alias_id=aid,
+            alias_text=alias_text,
+            confidence=confidence,
+            source_doc=source_doc,
+        )
+    return aid
+
+
+async def merge_assertion(payload: AssertionPayload) -> str:
+    aid = assertion_id(
+        source_kind=payload.source_kind,
+        source_id=payload.source_id,
+        raw_subject_text=payload.raw_subject_text,
+        raw_relation_text=payload.raw_relation_text,
+        raw_object_text=payload.raw_object_text,
+        subtype=payload.subtype,
+        qualifier_payload={
+            "quantity_value": payload.quantity_value,
+            "quantity_unit": payload.quantity_unit,
+            "quantity_kind": payload.quantity_kind,
+            "time_scope": payload.time_scope,
+        },
+        chunk_refs=payload.chunk_refs,
+    )
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MERGE (a:Assertion {id: $assertion_id})
+            ON CREATE SET a.source_kind = $source_kind,
+                          a.source_id = $source_id,
+                          a.raw_subject_text = $raw_subject_text,
+                          a.raw_relation_text = $raw_relation_text,
+                          a.raw_object_text = $raw_object_text,
+                          a.family_candidate = $family_candidate,
+                          a.confidence = $confidence,
+                          a.subtype = $subtype,
+                          a.status = 'active',
+                          a.created_at = $now
+            """,
+            assertion_id=aid,
+            source_kind=payload.source_kind,
+            source_id=payload.source_id,
+            raw_subject_text=payload.raw_subject_text,
+            raw_relation_text=payload.raw_relation_text,
+            raw_object_text=payload.raw_object_text,
+            family_candidate=payload.family_candidate,
+            confidence=payload.confidence,
+            subtype=payload.subtype,
+            now=datetime.now(UTC).isoformat(),
+        )
+    return aid
+
+
+async def create_memory_fact_version(
+    *,
+    family: str,
+    subject_entity_id: str,
+    object_entity_id: str | None,
+    subtype: str | None,
+    confidence: float,
+    assertion_id: str,
+) -> str:
+    family_cfg = FAMILY_REGISTRY[family]
+    fkey = fact_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+    skey = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+    fact_id = f"fact:{hashlib.sha256(f'{fkey}:{assertion_id}'.encode()).hexdigest()[:20]}"
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (subject:Entity) WHERE elementId(subject) = $subject_entity_id
+            OPTIONAL MATCH (object:Entity) WHERE elementId(object) = $object_entity_id
+            MERGE (fact:MemoryFact {id: $fact_id})
+            ON CREATE SET fact.family = $family,
+                          fact.fact_key = $fact_key,
+                          fact.slot_key = $slot_key,
+                          fact.subtype = $subtype,
+                          fact.current = true,
+                          fact.support_count = 1,
+                          fact.confidence_agg = $confidence,
+                          fact.normalization_policy = 'v1_family_rules',
+                          fact.created_at = $now,
+                          fact.updated_at = $now,
+                          fact.subject_entity_id = $subject_entity_id,
+                          fact.object_entity_id = $object_entity_id,
+                          fact.assertion_id = $assertion_id
+            MERGE (subject)-[:AS_SUBJECT]->(fact)
+            FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
+                MERGE (fact)-[:AS_OBJECT]->(object)
+            )
+            WITH fact
+            MATCH (a:Assertion {id: $assertion_id})
+            MERGE (a)-[:SUPPORTS]->(fact)
+            """,
+            fact_id=fact_id,
+            family=family,
+            fact_key=fkey,
+            slot_key=skey,
+            subtype=subtype,
+            confidence=confidence,
+            now=datetime.now(UTC).isoformat(),
+            subject_entity_id=subject_entity_id,
+            object_entity_id=object_entity_id,
+            assertion_id=assertion_id,
+        )
+    return fact_id
+
+
+async def materialize_memory_rel(memory_fact_id: str) -> None:
+    now = datetime.now(UTC).isoformat()
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (subject:Entity)-[:AS_SUBJECT]->(fact:MemoryFact {id: $fact_id})
+            OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
+            FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
+                MERGE (subject)-[r:MEMORY_REL {memory_fact_id: $fact_id}]->(object)
+                SET r.family = fact.family,
+                    r.current = fact.current,
+                    r.confidence_agg = fact.confidence_agg,
+                    r.subtype = fact.subtype,
+                    r.updated_at = $now
+            )
+            SET fact.updated_at = $now
+            """,
+            fact_id=memory_fact_id,
+            now=now,
+        )
+
+
+async def supersede_single_current_fact(
+    *,
+    family: str,
+    subject_entity_id: str,
+    object_entity_id: str | None,
+    subtype: str | None,
+    confidence: float,
+    assertion_id: str,
+) -> str:
+    family_cfg = FAMILY_REGISTRY[family]
+    if not family_cfg.single_current:
+        raise ValueError(f"family {family!r} is not single_current")
+    skey = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+    driver = get_driver()
+    now = datetime.now(UTC).isoformat()
+    old_fact_id: str | None = None
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (old:MemoryFact {family: $family, slot_key: $slot_key, current: true})
+            RETURN old.id AS old_fact_id
+            LIMIT 1
+            """,
+            family=family,
+            slot_key=skey,
+        )
+        record = await result.single()
+        if record is not None:
+            old_fact_id = record["old_fact_id"]
+
+    new_fact_id = await create_memory_fact_version(
+        family=family,
+        subject_entity_id=subject_entity_id,
+        object_entity_id=object_entity_id,
+        subtype=subtype,
+        confidence=confidence,
+        assertion_id=assertion_id,
+    )
+
+    if old_fact_id is not None:
+        async with driver.session() as session:
+            await session.run(
+                """
+                MATCH (old:MemoryFact {id: $old_fact_id})
+                SET old.current = false,
+                    old.updated_at = $now
+                WITH old
+                OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: $old_fact_id}]-()
+                SET r.current = false,
+                    r.updated_at = $now
+                """,
+                old_fact_id=old_fact_id,
+                now=now,
+            )
+
+    await materialize_memory_rel(new_fact_id)
+    return new_fact_id
+
+
+async def get_memory_fact_explanation(memory_fact_id: str) -> dict[str, Any] | None:
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (fact:MemoryFact {id: $fact_id})
+            OPTIONAL MATCH (subject:Entity)-[:AS_SUBJECT]->(fact)
+            OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
+            OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: $fact_id}]->(object)
+            RETURN fact.id AS fact_id,
+                   fact.family AS family,
+                   fact.current AS current,
+                   fact.fact_key AS fact_key,
+                   fact.slot_key AS slot_key,
+                   fact.subtype AS subtype,
+                   fact.support_count AS support_count,
+                   fact.confidence_agg AS confidence_agg,
+                   elementId(subject) AS subject_entity_id,
+                   subject.name AS subject_name,
+                   subject.type AS subject_type,
+                   elementId(object) AS object_entity_id,
+                   object.name AS object_name,
+                   object.type AS object_type,
+                   rel.current AS memory_rel_current
+            """,
+            fact_id=memory_fact_id,
+        )
+        record = await result.single()
+        return dict(record) if record is not None else None
 
 
 async def link_entity_to_doc(
@@ -1068,6 +1330,31 @@ async def bfs_expand(
     """
     async with driver.session() as session:
         result = await session.run(query, seed_ids=seed_element_ids)
+        return [dict(record) async for record in result]
+
+
+async def bfs_expand_memory_rel(
+    seed_entity_ids: list[str],
+    max_hops: int,
+) -> list[dict[str, Any]]:
+    if not seed_entity_ids:
+        return []
+    query = f"""
+    MATCH (seed:Entity) WHERE elementId(seed) IN $seed_ids
+    MATCH path = shortestPath((seed)-[rels:MEMORY_REL*1..{max_hops}]-(target:Entity))
+    WHERE elementId(seed) <> elementId(target) AND ALL(r IN rels WHERE r.current = true)
+    RETURN
+      elementId(seed) AS seed_id,
+      elementId(target) AS target_id,
+      target.name AS target_name,
+      target.type AS target_type,
+      length(path) AS distance,
+      [r IN rels | r.memory_fact_id] AS memory_fact_ids,
+      [r IN rels | r.family] AS edge_families
+    """
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(query, seed_ids=seed_entity_ids)
         return [dict(record) async for record in result]
 
 
