@@ -15,8 +15,10 @@ from __future__ import annotations
 from contextvars import ContextVar
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, Security
+from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 
 from landscape.auth import AuthContext
 from landscape.storage import auth_store
@@ -30,7 +32,6 @@ _CURRENT_AUTH_CONTEXT: ContextVar[AuthContext | None] = ContextVar(
 
 
 async def resolve_request_auth(
-    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ) -> AuthContext:
     """FastAPI dependency: validate OAuth bearer, return AuthContext or 401."""
@@ -90,8 +91,6 @@ def mcp_oauth_scope_middleware(asgi_app):
 
     Non-HTTP scopes (lifespan, websocket) pass through untouched.
     """
-    from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
-
     async def _wrapped(scope, receive, send):
         if scope.get("type") != "http":
             await asgi_app(scope, receive, send)
