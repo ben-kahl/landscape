@@ -16,6 +16,28 @@ logger = logging.getLogger(__name__)
 mcp_http_app = mcp.streamable_http_app()
 
 
+def _find_streamable_app(http_app):
+    """Return the StreamableHTTPASGIApp that owns the session_manager.
+
+    With OAuth enabled FastMCP adds OAuth middleware routes ahead of /mcp, and
+    wraps the /mcp endpoint in RequireAuthMiddleware, so routes[0] no longer
+    points directly at the StreamableHTTPASGIApp. Search by path and walk one
+    level of middleware instead of using a hardcoded index.
+    """
+    for route in http_app.routes:
+        if getattr(route, "path", None) != "/mcp":
+            continue
+        ep = getattr(route, "endpoint", None)
+        if ep is None:
+            continue
+        if hasattr(ep, "session_manager"):
+            return ep
+        inner = getattr(ep, "app", None)
+        if inner is not None and hasattr(inner, "session_manager"):
+            return inner
+    raise RuntimeError("Cannot locate StreamableHTTPASGIApp in MCP routes")
+
+
 def _refresh_mcp_http_session_manager() -> None:
     """Refresh the mounted MCP session manager after a completed lifespan.
 
@@ -25,8 +47,8 @@ def _refresh_mcp_http_session_manager() -> None:
     """
     mcp._session_manager = None
     fresh_mcp_http_app = mcp.streamable_http_app()
-    mcp_http_app.routes[0].endpoint.session_manager = (
-        fresh_mcp_http_app.routes[0].endpoint.session_manager
+    _find_streamable_app(mcp_http_app).session_manager = (
+        _find_streamable_app(fresh_mcp_http_app).session_manager
     )
 
 
