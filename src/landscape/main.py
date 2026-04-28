@@ -3,6 +3,9 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.authentication import AuthenticationMiddleware
+
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 
 from landscape.api.ingest import router as ingest_router
 from landscape.api.query import router as query_router
@@ -100,11 +103,21 @@ async def healthz():
     return {"status": "ok"}
 
 
+# FastMCP's streamable_http_app() wraps its Starlette app with
+# AuthenticationMiddleware so scope["user"] is set before RequireAuthMiddleware
+# checks it. By extracting routes and appending them to FastAPI we lose that
+# outer middleware layer. Re-add it here so bearer validation populates
+# scope["user"] for every request, including /mcp.
+if mcp._token_verifier is not None:
+    app.add_middleware(AuthenticationMiddleware, backend=BearerAuthBackend(mcp._token_verifier))
+
+
+_mcp_path = mcp.settings.streamable_http_path  # "/mcp"
+
 for _mcp_route in mcp_http_app.routes:
-    # Wrap each MCP transport route's dispatched ASGI app so per-request auth
-    # resolution populates the request-scoped principal before any tool runs.
-    # We leave `endpoint` alone so `_refresh_mcp_http_session_manager` can
-    # still hot-swap the underlying StreamableHTTPASGIApp's session_manager.
-    if hasattr(_mcp_route, "app"):
+    # Only wrap the /mcp transport route with our ContextVar middleware.
+    # OAuth protocol routes (/register, /authorize, /token, /revoke) don't
+    # need it and wrapping them is unnecessary overhead.
+    if getattr(_mcp_route, "path", None) == _mcp_path and hasattr(_mcp_route, "app"):
         _mcp_route.app = mcp_oauth_scope_middleware(_mcp_route.app)
     app.router.routes.append(_mcp_route)
