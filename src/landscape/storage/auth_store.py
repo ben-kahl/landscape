@@ -307,15 +307,16 @@ async def load_authorization_code_record(code: str) -> dict[str, Any] | None:
     return record
 
 
-async def mark_code_used(code: str) -> None:
-    """Stamp used_at. Call immediately before minting the token; these are separate commits."""
+async def mark_code_used(code: str) -> bool:
+    """Stamp used_at only if not already used. Returns True on first use, False if already used."""
     db = await _connect()
     try:
-        await db.execute(
-            "UPDATE authorization_codes SET used_at = ? WHERE code = ?",
+        cursor = await db.execute(
+            "UPDATE authorization_codes SET used_at = ? WHERE code = ? AND used_at IS NULL",
             (time.time(), code),
         )
         await db.commit()
+        return cursor.rowcount > 0
     finally:
         await db.close()
 

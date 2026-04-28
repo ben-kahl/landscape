@@ -8,11 +8,12 @@ from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
 from mcp.server.auth.provider import (
     AuthorizationCode as SDKAuthorizationCode,
     AccessToken as SDKAccessToken,
+    RefreshToken as SDKRefreshToken,
     AuthorizationParams,
     OAuthAuthorizationServerProvider,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
-from pydantic import AnyUrl, BaseModel
+from pydantic import AnyUrl
 
 from landscape.storage import auth_store
 
@@ -26,12 +27,8 @@ class LandscapeAccessToken(SDKAccessToken):
     client_name: str
 
 
-class LandscapeRefreshToken(BaseModel):
+class LandscapeRefreshToken(SDKRefreshToken):
     token_id: str
-    client_id: str
-    refresh_token: str
-    scopes: list[str]
-    expires_at: float | None = None
 
 
 def _new_token() -> str:
@@ -98,6 +95,7 @@ class LandscapeOAuthProvider(
             scopes=row["scopes"],
             code_challenge=row["code_challenge"],
             expires_at=row["expires_at"],
+            resource=None,
         )
 
     async def exchange_authorization_code(
@@ -106,7 +104,9 @@ class LandscapeOAuthProvider(
         authorization_code: LandscapeAuthorizationCode,
     ) -> OAuthToken:
         """PKCE is verified by the SDK's TokenHandler before this is called."""
-        await auth_store.mark_code_used(authorization_code.code)
+        marked = await auth_store.mark_code_used(authorization_code.code)
+        if not marked:
+            raise ValueError("authorization code already used")
 
         token_id = _new_token()
         access_token = _new_token()
@@ -136,9 +136,9 @@ class LandscapeOAuthProvider(
         if row is None:
             return None
         return LandscapeRefreshToken(
+            token=row["refresh_token"],   # SDK field name is 'token'
             token_id=row["token_id"],
             client_id=row["client_id"],
-            refresh_token=row["refresh_token"],
             scopes=row["scopes"],
             expires_at=row["expires_at"],
         )
