@@ -17,6 +17,9 @@ FAMILY_REGISTRY: dict[str, FamilyConfig] = {
     "REPORTS_TO": FamilyConfig("REPORTS_TO", traversable=True, object_kind="entity", single_current=True),
     "WORKS_ON": FamilyConfig("WORKS_ON", traversable=True, object_kind="entity", single_current=False),
     "MAINTAINS": FamilyConfig("MAINTAINS", traversable=True, object_kind="entity", single_current=False),
+    # Transitional redesign families: the registry treats these as first-class,
+    # but current extraction normalization still maps raw OWNS -> LEADS and
+    # raw DEPENDS_ON -> USES. Task 2+ will consume the family registry directly.
     "OWNS": FamilyConfig("OWNS", traversable=True, object_kind="entity", single_current=False),
     "USES": FamilyConfig("USES", traversable=True, object_kind="entity", single_current=False),
     "DEPENDS_ON": FamilyConfig("DEPENDS_ON", traversable=True, object_kind="entity", single_current=False),

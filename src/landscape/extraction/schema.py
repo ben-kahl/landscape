@@ -8,6 +8,12 @@ from pydantic import BaseModel
 # synonym drift (e.g. WORKS_FOR / EMPLOYED_BY / CURRENTLY_WORKS_AT all
 # describing the same semantic relation) — see the "Known limitations"
 # section in CLAUDE.md for the broader problem and the path forward.
+#
+# Transitional note: OWNS and DEPENDS_ON are first-class in the redesign
+# family registry, but the current extraction pipeline still normalizes raw
+# OWNS -> LEADS and raw DEPENDS_ON -> USES. That mismatch is intentional for
+# now and will be removed when the family registry becomes the write-path
+# source of truth.
 RELATION_VOCAB: frozenset[str] = frozenset(
     {
         # Original v1

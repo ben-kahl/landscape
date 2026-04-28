@@ -58,3 +58,8 @@ def test_slot_and_fact_keys_are_family_specific():
     assert slot_key(works_for, "ent-a", "ent-b", None) == "WORKS_FOR:ent-a"
     assert fact_key(uses, "ent-a", "ent-b", None) == "USES:ent-a:ent-b"
     assert slot_key(uses, "ent-a", "ent-b", None) == "USES:ent-a:ent-b"
+
+
+def test_created_fact_key_uses_subtype_identity():
+    created = FAMILY_REGISTRY["CREATED"]
+    assert fact_key(created, "ent-a", None, "diagram") == "CREATED:ent-a:diagram"
