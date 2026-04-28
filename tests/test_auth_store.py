@@ -38,6 +38,60 @@ async def test_ensure_schema_creates_all_tables(auth_db: Path):
     assert {"api_clients", "authorization_codes", "oauth_tokens"} <= tables
 
 
+async def test_ensure_schema_upgrades_legacy_api_clients_table(tmp_path: Path, monkeypatch):
+    import aiosqlite
+    from mcp.shared.auth import OAuthClientInformationFull
+    from pydantic import AnyUrl
+
+    db_path = tmp_path / "legacy-auth.db"
+    monkeypatch.setattr(settings, "auth_db_path", str(db_path))
+
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """
+            CREATE TABLE api_clients (
+                client_id    TEXT PRIMARY KEY,
+                name         TEXT NOT NULL,
+                description  TEXT,
+                scopes       TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'active',
+                created_at   TEXT NOT NULL,
+                last_used_at TEXT
+            )
+            """
+        )
+        await db.execute(
+            """
+            INSERT INTO api_clients
+                (client_id, name, description, scopes, status, created_at, last_used_at)
+            VALUES (?, ?, NULL, ?, 'active', ?, NULL)
+            """,
+            ("legacy-client", "Legacy Client", '["agent"]', "2026-01-01T00:00:00+00:00"),
+        )
+        await db.commit()
+
+    await auth_store.ensure_schema()
+
+    client_info = OAuthClientInformationFull(
+        client_id="test-client-id",
+        client_name="test-client",
+        redirect_uris=[AnyUrl("http://localhost:8080/callback")],
+        scope="agent",
+        grant_types=["authorization_code", "refresh_token"],
+        response_types=["code"],
+    )
+    await auth_store.store_oauth_client(client_info)
+    loaded = await auth_store.get_oauth_client("test-client-id")
+
+    assert loaded is not None
+    assert loaded.client_id == "test-client-id"
+
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("PRAGMA table_info(api_clients)")
+        columns = {row[1] for row in await cursor.fetchall()}
+    assert {"redirect_uris", "client_metadata"} <= columns
+
+
 # ── OAuth client store ───────────────────────────────────────────────────────
 
 async def test_store_and_get_oauth_client_round_trips(auth_db: Path):
