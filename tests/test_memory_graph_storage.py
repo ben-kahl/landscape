@@ -47,6 +47,50 @@ async def test_merge_assertion_is_idempotent(neo4j_driver):
 
 
 @pytest.mark.asyncio
+async def test_create_memory_fact_accepts_element_id_and_links_real_assertion(neo4j_driver):
+    await neo4j_store.ensure_memory_graph_schema()
+    alice = await neo4j_store.merge_entity("Alice", "Person", "doc-a", 0.9)
+    acme = await neo4j_store.merge_entity("Acme", "Organization", "doc-a", 0.9)
+    alice_id = await _entity_app_id(neo4j_driver, alice)
+    acme_id = await _entity_app_id(neo4j_driver, acme)
+    assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="doc-a",
+            raw_subject_text="Alice",
+            raw_relation_text="works at",
+            raw_object_text="Acme",
+            confidence=0.9,
+            family_candidate="WORKS_FOR",
+        )
+    )
+    first = await neo4j_store.create_memory_fact_version(
+        family="WORKS_FOR",
+        subject_entity_id=alice,
+        object_entity_id=acme,
+        subtype=None,
+        confidence=0.9,
+        assertion_id=assertion,
+    )
+    explanation = await neo4j_store.get_memory_fact_explanation(first)
+    assert explanation is not None
+    assert explanation["subject_entity_id"] == alice_id
+    assert explanation["object_entity_id"] == acme_id
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (a:Assertion {id: $assertion_id})-[:SUPPORTS]->(f:MemoryFact {id: $fact_id})
+            RETURN count(f) AS count
+            """,
+            assertion_id=assertion,
+            fact_id=first,
+        )
+        record = await result.single()
+        assert record is not None
+        assert record["count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_superseding_single_current_fact_replaces_memory_rel(neo4j_driver):
     alice = await neo4j_store.merge_entity("Alice", "Person", "doc-a", 0.9)
     acme = await neo4j_store.merge_entity("Acme", "Organization", "doc-a", 0.9)
@@ -54,13 +98,35 @@ async def test_superseding_single_current_fact_replaces_memory_rel(neo4j_driver)
     alice_id = await _entity_app_id(neo4j_driver, alice)
     acme_id = await _entity_app_id(neo4j_driver, acme)
     beacon_id = await _entity_app_id(neo4j_driver, beacon)
+    first_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="doc-a",
+            raw_subject_text="Alice",
+            raw_relation_text="works at",
+            raw_object_text="Acme",
+            confidence=0.9,
+            family_candidate="WORKS_FOR",
+        )
+    )
+    second_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="doc-b",
+            raw_subject_text="Alice",
+            raw_relation_text="works at",
+            raw_object_text="Beacon",
+            confidence=0.95,
+            family_candidate="WORKS_FOR",
+        )
+    )
     first = await neo4j_store.create_memory_fact_version(
         family="WORKS_FOR",
         subject_entity_id=alice_id,
         object_entity_id=acme_id,
         subtype=None,
         confidence=0.9,
-        assertion_id="assertion:1",
+        assertion_id=first_assertion,
     )
     await neo4j_store.materialize_memory_rel(first)
     family_cfg = FAMILY_REGISTRY["WORKS_FOR"]
@@ -71,7 +137,7 @@ async def test_superseding_single_current_fact_replaces_memory_rel(neo4j_driver)
         object_entity_id=beacon_id,
         subtype=None,
         confidence=0.95,
-        assertion_id="assertion:2",
+        assertion_id=second_assertion,
     )
     explanation = await neo4j_store.get_memory_fact_explanation(second)
     assert explanation["family"] == "WORKS_FOR"
@@ -111,6 +177,12 @@ async def test_superseding_single_current_fact_replaces_memory_rel(neo4j_driver)
         current_count = await current_count_result.single()
         assert current_count is not None
         assert current_count["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_bfs_expand_memory_rel_validates_max_hops(neo4j_driver):
+    with pytest.raises(ValueError):
+        await neo4j_store.bfs_expand_memory_rel(["entity:missing"], max_hops=0)
 
 
 @pytest.mark.asyncio

@@ -482,6 +482,10 @@ async def _resolve_entity_app_ids(entity_refs: list[str]) -> list[str]:
     return resolved
 
 
+def _memory_slot_lock_id(slot: str) -> str:
+    return f"slot-lock:{slot}"
+
+
 async def ensure_memory_graph_schema() -> None:
     driver = get_driver()
     statements = [
@@ -489,6 +493,7 @@ async def ensure_memory_graph_schema() -> None:
         "CREATE CONSTRAINT alias_id_unique IF NOT EXISTS FOR (n:Alias) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT assertion_id_unique IF NOT EXISTS FOR (n:Assertion) REQUIRE n.id IS UNIQUE",
         "CREATE CONSTRAINT memory_fact_id_unique IF NOT EXISTS FOR (n:MemoryFact) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT memory_slot_lock_id_unique IF NOT EXISTS FOR (n:MemorySlotLock) REQUIRE n.id IS UNIQUE",
     ]
     async with driver.session() as session:
         for stmt in statements:
@@ -570,6 +575,64 @@ async def merge_assertion(payload: AssertionPayload) -> str:
     return aid
 
 
+async def _create_memory_fact_version_in_tx(
+    tx,
+    *,
+    family: str,
+    subject_entity_id: str,
+    object_entity_id: str | None,
+    subtype: str | None,
+    confidence: float,
+    assertion_id: str,
+    now: str,
+) -> str:
+    family_cfg = FAMILY_REGISTRY[family]
+    fkey = fact_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+    skey = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+    fact_id = f"fact:{hashlib.sha256(f'{fkey}:{assertion_id}'.encode()).hexdigest()[:20]}"
+    result = await tx.run(
+        """
+        MATCH (subject:Entity {id: $subject_entity_id})
+        MATCH (a:Assertion {id: $assertion_id})
+        OPTIONAL MATCH (object:Entity {id: $object_entity_id})
+        MERGE (fact:MemoryFact {id: $fact_id})
+        ON CREATE SET fact.family = $family,
+                      fact.fact_key = $fact_key,
+                      fact.slot_key = $slot_key,
+                      fact.subtype = $subtype,
+                      fact.current = true,
+                      fact.support_count = 1,
+                      fact.confidence_agg = $confidence,
+                      fact.normalization_policy = 'v1_family_rules',
+                      fact.created_at = $now,
+                      fact.updated_at = $now,
+                      fact.subject_entity_id = $subject_entity_id,
+                      fact.object_entity_id = $object_entity_id,
+                      fact.assertion_id = $assertion_id
+        MERGE (subject)-[:AS_SUBJECT]->(fact)
+        FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
+            MERGE (fact)-[:AS_OBJECT]->(object)
+        )
+        MERGE (a)-[:SUPPORTS]->(fact)
+        RETURN fact.id AS fact_id
+        """,
+        fact_id=fact_id,
+        family=family,
+        fact_key=fkey,
+        slot_key=skey,
+        subtype=subtype,
+        confidence=confidence,
+        now=now,
+        subject_entity_id=subject_entity_id,
+        object_entity_id=object_entity_id,
+        assertion_id=assertion_id,
+    )
+    record = await result.single()
+    if record is None:
+        raise ValueError(f"missing assertion or subject for fact {fact_id!r}")
+    return record["fact_id"]
+
+
 async def create_memory_fact_version(
     *,
     family: str,
@@ -585,50 +648,25 @@ async def create_memory_fact_version(
         if object_entity_id is not None
         else None
     )
-    family_cfg = FAMILY_REGISTRY[family]
-    fkey = fact_key(family_cfg, subject_entity_id, object_entity_id, subtype)
-    skey = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
-    fact_id = f"fact:{hashlib.sha256(f'{fkey}:{assertion_id}'.encode()).hexdigest()[:20]}"
     driver = get_driver()
     async with driver.session() as session:
-        await session.run(
-            """
-            MATCH (subject:Entity {id: $subject_entity_id})
-            OPTIONAL MATCH (object:Entity {id: $object_entity_id})
-            MERGE (fact:MemoryFact {id: $fact_id})
-            ON CREATE SET fact.family = $family,
-                          fact.fact_key = $fact_key,
-                          fact.slot_key = $slot_key,
-                          fact.subtype = $subtype,
-                          fact.current = true,
-                          fact.support_count = 1,
-                          fact.confidence_agg = $confidence,
-                          fact.normalization_policy = 'v1_family_rules',
-                          fact.created_at = $now,
-                          fact.updated_at = $now,
-                          fact.subject_entity_id = $subject_entity_id,
-                          fact.object_entity_id = $object_entity_id,
-                          fact.assertion_id = $assertion_id
-            MERGE (subject)-[:AS_SUBJECT]->(fact)
-            FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
-                MERGE (fact)-[:AS_OBJECT]->(object)
+        tx = await session.begin_transaction()
+        try:
+            fact_id = await _create_memory_fact_version_in_tx(
+                tx,
+                family=family,
+                subject_entity_id=subject_entity_id,
+                object_entity_id=object_entity_id,
+                subtype=subtype,
+                confidence=confidence,
+                assertion_id=assertion_id,
+                now=datetime.now(UTC).isoformat(),
             )
-            WITH fact
-            MATCH (a:Assertion {id: $assertion_id})
-            MERGE (a)-[:SUPPORTS]->(fact)
-            """,
-            fact_id=fact_id,
-            family=family,
-            fact_key=fkey,
-            slot_key=skey,
-            subtype=subtype,
-            confidence=confidence,
-            now=datetime.now(UTC).isoformat(),
-            subject_entity_id=subject_entity_id,
-            object_entity_id=object_entity_id,
-            assertion_id=assertion_id,
-        )
-    return fact_id
+            await tx.commit()
+            return fact_id
+        except Exception:
+            await tx.rollback()
+            raise
 
 
 async def materialize_memory_rel(memory_fact_id: str) -> None:
@@ -677,48 +715,81 @@ async def supersede_single_current_fact(
     skey = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
     driver = get_driver()
     now = datetime.now(UTC).isoformat()
-    old_fact_id: str | None = None
     async with driver.session() as session:
-        result = await session.run(
-            """
-            MATCH (old:MemoryFact {family: $family, slot_key: $slot_key, current: true})
-            RETURN old.id AS old_fact_id
-            LIMIT 1
-            """,
-            family=family,
-            slot_key=skey,
-        )
-        record = await result.single()
-        if record is not None:
-            old_fact_id = record["old_fact_id"]
-
-    new_fact_id = await create_memory_fact_version(
-        family=family,
-        subject_entity_id=subject_entity_id,
-        object_entity_id=object_entity_id,
-        subtype=subtype,
-        confidence=confidence,
-        assertion_id=assertion_id,
-    )
-
-    if old_fact_id is not None:
-        async with driver.session() as session:
-            await session.run(
+        tx = await session.begin_transaction()
+        try:
+            await tx.run(
                 """
-                MATCH (old:MemoryFact {id: $old_fact_id})
-                SET old.current = false,
-                    old.updated_at = $now
-                WITH old
-                OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: $old_fact_id}]-()
-                SET r.current = false,
-                    r.updated_at = $now
+                MERGE (slot:MemorySlotLock {id: $lock_id})
+                ON CREATE SET slot.created_at = $now
+                SET slot.updated_at = $now
                 """,
-                old_fact_id=old_fact_id,
+                lock_id=_memory_slot_lock_id(skey),
+                now=now,
+            )
+            result = await tx.run(
+                """
+                MATCH (old:MemoryFact {family: $family, slot_key: $slot_key, current: true})
+                RETURN old.id AS old_fact_id
+                LIMIT 1
+                """,
+                family=family,
+                slot_key=skey,
+            )
+            record = await result.single()
+            old_fact_id = record["old_fact_id"] if record is not None else None
+
+            new_fact_id = await _create_memory_fact_version_in_tx(
+                tx,
+                family=family,
+                subject_entity_id=subject_entity_id,
+                object_entity_id=object_entity_id,
+                subtype=subtype,
+                confidence=confidence,
+                assertion_id=assertion_id,
                 now=now,
             )
 
-    await materialize_memory_rel(new_fact_id)
-    return new_fact_id
+            if old_fact_id is not None:
+                await tx.run(
+                    """
+                    MATCH (old:MemoryFact {id: $old_fact_id})
+                    SET old.current = false,
+                        old.updated_at = $now
+                    WITH old
+                    OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: $old_fact_id}]-()
+                    SET r.current = false,
+                        r.updated_at = $now
+                    """,
+                    old_fact_id=old_fact_id,
+                    now=now,
+                )
+
+            await tx.run(
+                """
+                MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(fact:MemoryFact {id: $fact_id})
+                OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
+                FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
+                    MERGE (subject)-[r:MEMORY_REL {memory_fact_id: $fact_id}]->(object)
+                    SET r.family = fact.family,
+                        r.current = fact.current,
+                        r.confidence_agg = fact.confidence_agg,
+                        r.subtype = fact.subtype,
+                        r.subject_entity_id = subject.id,
+                        r.object_entity_id = object.id,
+                        r.updated_at = $now
+                )
+                SET fact.updated_at = $now
+                """,
+                fact_id=new_fact_id,
+                subject_entity_id=subject_entity_id,
+                now=now,
+            )
+            await tx.commit()
+            return new_fact_id
+        except Exception:
+            await tx.rollback()
+            raise
 
 
 async def get_memory_fact_explanation(memory_fact_id: str) -> dict[str, Any] | None:
@@ -1388,6 +1459,8 @@ async def bfs_expand_memory_rel(
 ) -> list[dict[str, Any]]:
     if not seed_entity_ids:
         return []
+    if max_hops < 1 or max_hops > 5:
+        raise ValueError(f"max_hops must be 1..5, got {max_hops}")
     seed_ids = await _resolve_entity_app_ids(seed_entity_ids)
     if not seed_ids:
         return []
