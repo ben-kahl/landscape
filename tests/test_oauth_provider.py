@@ -194,3 +194,47 @@ async def test_exchange_refresh_token_issues_new_access_token(provider, register
     assert new_token.access_token != first_token.access_token
     old = await provider.load_access_token(first_token.access_token)
     assert old is None
+
+
+async def test_load_refresh_token_resolves_stale_public_client_token_to_current_live_token(
+    provider,
+    auth_db,
+):
+    public_client = OAuthClientInformationFull(
+        client_id="public-client",
+        client_name="Public Client",
+        redirect_uris=[AnyUrl("http://localhost:8080/callback")],
+        scope="agent graph_query",
+        grant_types=["authorization_code", "refresh_token"],
+        response_types=["code"],
+        token_endpoint_auth_method="none",
+    )
+    await auth_store.store_oauth_client(public_client)
+    await auth_store.store_oauth_token(
+        token_id="old-token-id",
+        client_id=public_client.client_id,
+        client_name=public_client.client_name,
+        access_token="old-access-token",
+        refresh_token="stale-old-refresh-token",
+        scopes=["agent"],
+        expires_at=None,
+    )
+    await auth_store.revoke_oauth_token_by_id("old-token-id")
+    await auth_store.store_oauth_token(
+        token_id="new-token-id",
+        client_id=public_client.client_id,
+        client_name=public_client.client_name,
+        access_token="new-access-token",
+        refresh_token="current-live-refresh-token",
+        scopes=["agent"],
+        expires_at=None,
+    )
+
+    resolved = await provider.load_refresh_token(
+        public_client,
+        "stale-old-refresh-token",
+    )
+
+    assert resolved is not None
+    assert resolved.token_id == "new-token-id"
+    assert resolved.token == "current-live-refresh-token"

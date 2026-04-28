@@ -428,6 +428,74 @@ async def load_oauth_token_by_refresh(refresh_token: str) -> dict[str, Any] | No
     return record
 
 
+async def load_oauth_token_record_by_refresh(refresh_token: str) -> dict[str, Any] | None:
+    """Return the token row matching the refresh token, regardless of revocation."""
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT token_id, client_id, client_name, access_token, refresh_token,
+                   scopes, expires_at, revoked_at
+            FROM oauth_tokens
+            WHERE refresh_token = ?
+            """,
+            (refresh_token,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+    finally:
+        await db.close()
+    if row is None:
+        return None
+    columns = [
+        "token_id",
+        "client_id",
+        "client_name",
+        "access_token",
+        "refresh_token",
+        "scopes",
+        "expires_at",
+        "revoked_at",
+    ]
+    record = dict(zip(columns, row, strict=True))
+    record["scopes"] = json.loads(record["scopes"])
+    return record
+
+
+async def load_latest_live_oauth_token_by_client_id(
+    client_id: str,
+) -> dict[str, Any] | None:
+    """Return the most recently stored live refresh-token row for a client."""
+    now = time.time()
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            """
+            SELECT token_id, client_id, client_name, access_token, refresh_token,
+                   scopes, expires_at
+            FROM oauth_tokens
+            WHERE client_id = ?
+              AND refresh_token IS NOT NULL
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (client_id, now),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+    finally:
+        await db.close()
+    if row is None:
+        return None
+    columns = ["token_id", "client_id", "client_name", "access_token",
+               "refresh_token", "scopes", "expires_at"]
+    record = dict(zip(columns, row, strict=True))
+    record["scopes"] = json.loads(record["scopes"])
+    return record
+
+
 async def revoke_oauth_token_by_id(token_id: str) -> None:
     """Stamp revoked_at. Idempotent. Revokes both access and refresh tokens."""
     db = await _connect()
@@ -437,5 +505,33 @@ async def revoke_oauth_token_by_id(token_id: str) -> None:
             (time.time(), token_id),
         )
         await db.commit()
+    finally:
+        await db.close()
+
+
+async def replace_access_token(
+    *,
+    token_id: str,
+    client_name: str,
+    access_token: str,
+    scopes: list[str],
+    expires_at: float | None,
+) -> bool:
+    """Replace the live access token in place while preserving the refresh token."""
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            """
+            UPDATE oauth_tokens
+            SET client_name = ?,
+                access_token = ?,
+                scopes = ?,
+                expires_at = ?
+            WHERE token_id = ? AND revoked_at IS NULL
+            """,
+            (client_name, access_token, json.dumps(scopes), expires_at, token_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
     finally:
         await db.close()
