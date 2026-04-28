@@ -75,6 +75,11 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_token)",
 )
 
+API_CLIENT_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("redirect_uris", "TEXT"),
+    ("client_metadata", "TEXT"),
+)
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -94,12 +99,27 @@ async def _connect() -> aiosqlite.Connection:
     return db
 
 
+async def _ensure_api_clients_columns(db: aiosqlite.Connection) -> None:
+    """Upgrade legacy api_clients tables in place when new OAuth columns land."""
+    cursor = await db.execute("PRAGMA table_info(api_clients)")
+    rows = await cursor.fetchall()
+    await cursor.close()
+    existing_columns = {row[1] for row in rows}
+    for column_name, column_type in API_CLIENT_COLUMN_MIGRATIONS:
+        if column_name in existing_columns:
+            continue
+        await db.execute(
+            f"ALTER TABLE api_clients ADD COLUMN {column_name} {column_type}"
+        )
+
+
 async def ensure_schema() -> None:
     """Apply all DDL statements. Idempotent (CREATE IF NOT EXISTS)."""
     db = await _connect()
     try:
         for statement in SCHEMA_STATEMENTS:
             await db.execute(statement)
+        await _ensure_api_clients_columns(db)
         await db.commit()
     finally:
         await db.close()
