@@ -12,13 +12,32 @@ import logging
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.fastmcp import FastMCP
+from pydantic import AnyHttpUrl
 
+from landscape.config import settings
 from landscape.security import require_current_scope
+from landscape.storage.oauth_provider import LandscapeOAuthProvider
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("landscape")
+_oauth_provider = LandscapeOAuthProvider()
+
+mcp = FastMCP(
+    "landscape",
+    auth_server_provider=_oauth_provider,
+    auth=AuthSettings(
+        issuer_url=AnyHttpUrl(settings.mcp_issuer_url),
+        resource_server_url=AnyHttpUrl(settings.mcp_issuer_url),
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=["agent", "graph_query"],
+            default_scopes=["agent"],
+        ),
+        revocation_options=RevocationOptions(enabled=True),
+    ),
+)
 _AUTO_INGEST_SEEN_FINGERPRINTS: set[str] = set()
 _EXPLICIT_MEMORY_TURN_KEYS: set[tuple[str, str]] = set()
 
