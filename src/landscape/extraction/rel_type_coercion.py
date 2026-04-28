@@ -132,6 +132,22 @@ CANONICAL_DESCRIPTORS: dict[str, str] = {
         "LIVES_IN — home address, residence, lives at, currently resides in, "
         "household location"
     ),
+    "WORKS_ON": (
+        "WORKS_ON — works on a project, assigned to task, involved in work, "
+        "contributing to initiative"
+    ),
+    "MAINTAINS": (
+        "MAINTAINS — maintains system, supports infrastructure, looks after, "
+        "operates and keeps running"
+    ),
+    "OWNS": (
+        "OWNS — owns asset, owns company, owns property, has ownership of, "
+        "holds title to"
+    ),
+    "DEPENDS_ON": (
+        "DEPENDS_ON — depends on technology, relies on, built on, powered by, "
+        "uses as a dependency"
+    ),
 }
 
 

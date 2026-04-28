@@ -176,9 +176,11 @@ def normalize_relation_type(rel_type: str) -> str:
     if not rel_type:
         return "RELATED_TO"
     upper = rel_type.strip().upper().replace(" ", "_")
+    if upper in RELATION_SYNONYMS:
+        return RELATION_SYNONYMS[upper]
     if upper in RELATION_VOCAB:
         return upper
-    return RELATION_SYNONYMS.get(upper, upper)
+    return upper
 
 
 class ExtractedEntity(BaseModel):
