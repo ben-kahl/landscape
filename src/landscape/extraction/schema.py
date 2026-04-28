@@ -30,6 +30,10 @@ RELATION_VOCAB: frozenset[str] = frozenset(
         "DISCUSSED",
         "HAPPENED_ON",
         "LIVES_IN",
+        "WORKS_ON",
+        "MAINTAINS",
+        "OWNS",
+        "DEPENDS_ON",
     }
 )
 
