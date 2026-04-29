@@ -85,10 +85,10 @@ async def _alice_works_for_edges(neo4j_driver) -> list[dict]:
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (p:Entity)-[r:RELATES_TO {type: 'WORKS_FOR'}]->(o:Entity)
+            MATCH (p:Entity)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity)
             WHERE toLower(p.name) CONTAINS 'alice'
             RETURN o.name AS org,
-                   r.valid_until IS NULL AS live,
+                   r.current AS live,
                    r.subtype AS subtype
             """,
         )
@@ -99,11 +99,11 @@ async def _alice_has_title_edges(neo4j_driver) -> list[dict]:
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (p:Entity)-[r:RELATES_TO {type: 'HAS_TITLE'}]->(o:Entity)
+            MATCH (p:Entity)-[r:MEMORY_REL {family: 'HAS_TITLE'}]->(o:Entity)
             WHERE toLower(p.name) CONTAINS 'alice'
             RETURN o.name AS org,
                    r.subtype AS subtype,
-                   r.valid_until IS NULL AS live
+                   r.current AS live
             """,
         )
         return [dict(row) async for row in result]

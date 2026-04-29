@@ -82,108 +82,182 @@ async def test_merge_entity_reinforce_preserves_creator(http_client, neo4j_drive
 
 
 @pytest.mark.asyncio
-async def test_upsert_relation_default_provenance(http_client, neo4j_driver):
-    """No provenance kwargs → edge has created_by='ingest'."""
-    from landscape.storage import neo4j_store
+async def test_add_relation_default_provenance(http_client, neo4j_driver):
+    """Agent writeback should anchor the assertion to the Turn and materialize a live MemoryFact."""
+    from landscape.writeback import add_relation
 
-    doc_id, _ = await neo4j_store.merge_document("hash-prov-r1", "prov-rel-doc-1", "text")
-    await neo4j_store.merge_entity("RelSubj1", "PERSON", "prov-rel-doc-1", 0.9, doc_id, "test")
-    await neo4j_store.merge_entity("RelObj1", "PROJECT", "prov-rel-doc-1", 0.9, doc_id, "test")
+    result = await add_relation(
+        "RelSubj1",
+        "PERSON",
+        "RelObj1",
+        "PROJECT",
+        "LEADS",
+        source="turn:prov-1",
+        session_id="s1",
+        turn_id="t1",
+    )
 
-    await neo4j_store.upsert_relation("RelSubj1", "RelObj1", "LEADS", 0.9, "prov-rel-doc-1")
+    assert result.outcome == "memory_fact"
+    assert result.assertion_id
+    assert result.memory_fact_id
 
     async with neo4j_driver.session() as session:
         result = await session.run(
-            "MATCH (s:Entity {name: 'RelSubj1'})-[r:RELATES_TO {type: 'LEADS'}]->(o:Entity) "
-            "WHERE r.valid_until IS NULL "
-            "RETURN r.created_by AS cb, r.session_id AS sid, r.turn_id AS tid"
+            """
+            MATCH (:Turn {id: 's1:t1'})-[:ASSERTS]->(a:Assertion {id: $aid})
+            OPTIONAL MATCH (a)-[:SUPPORTS]->(f:MemoryFact {id: $fid, family: 'LEADS'})
+            OPTIONAL MATCH (s:Entity {name: 'RelSubj1'})
+                          -[r:MEMORY_REL {memory_fact_id: $fid, family: 'LEADS'}]->
+                          (o:Entity {name: 'RelObj1'})
+            RETURN a.source_kind AS source_kind,
+                   a.source_id AS source_id,
+                   f.current AS fact_current,
+                   r.current AS rel_current,
+                   count(r) AS rel_count,
+                   count(f) AS fact_count
+            """,
+            aid=result.assertion_id,
+            fid=result.memory_fact_id,
         )
         record = await result.single()
 
     assert record is not None
-    assert record["cb"] == "ingest"
-    assert record["sid"] is None
-    assert record["tid"] is None
+    assert record["source_kind"] == "turn"
+    assert record["source_id"] == "s1:t1"
+    assert record["fact_current"] is True
+    assert record["rel_current"] is True
+    assert record["fact_count"] == 1
+    assert record["rel_count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_upsert_relation_agent_appends_source_doc(http_client, neo4j_driver):
-    """Agent call appends 'agent:s1:t1' to source_docs list."""
-    from landscape.storage import neo4j_store
+async def test_add_relation_turn_assertion_links_are_stable(http_client, neo4j_driver):
+    """Repeated agent writeback should still keep the assertion anchored to the Turn."""
+    from landscape.writeback import add_relation
 
-    doc_id, _ = await neo4j_store.merge_document("hash-prov-r2", "prov-rel-doc-2", "text")
-    await neo4j_store.merge_entity("RelSubj2", "PERSON", "prov-rel-doc-2", 0.9, doc_id, "test")
-    await neo4j_store.merge_entity("RelObj2", "PROJECT", "prov-rel-doc-2", 0.9, doc_id, "test")
-
-    await neo4j_store.upsert_relation(
-        "RelSubj2", "RelObj2", "LEADS", 0.9, "prov-rel-doc-2",
-        created_by="agent", session_id="s1", turn_id="t1",
+    result = await add_relation(
+        "RelSubj2",
+        "PERSON",
+        "RelObj2",
+        "PROJECT",
+        "LEADS",
+        source="agent:s1:t1",
+        session_id="s1",
+        turn_id="t1",
     )
 
     async with neo4j_driver.session() as session:
         result = await session.run(
-            "MATCH (s:Entity {name: 'RelSubj2'})-[r:RELATES_TO {type: 'LEADS'}]->(o:Entity) "
-            "WHERE r.valid_until IS NULL "
-            "RETURN r.source_docs AS sd, r.created_by AS cb"
+            """
+            MATCH (:Turn {id: 's1:t1'})-[:ASSERTS]->(a:Assertion {id: $aid})
+            OPTIONAL MATCH (a)-[:SUPPORTS]->(f:MemoryFact {id: $fid, family: 'LEADS'})
+            OPTIONAL MATCH (s:Entity {name: 'RelSubj2'})
+                          -[r:MEMORY_REL {memory_fact_id: $fid, family: 'LEADS'}]->
+                          (o:Entity {name: 'RelObj2'})
+            RETURN count(a) AS assertion_count,
+                   count(f) AS fact_count,
+                   count(r) AS rel_count
+            """,
+            aid=result.assertion_id,
+            fid=result.memory_fact_id,
         )
         record = await result.single()
 
     assert record is not None
-    assert record["cb"] == "agent"
-    assert "agent:s1:t1" in (record["sd"] or [])
+    assert record["assertion_count"] == 1
+    assert record["fact_count"] == 1
+    assert record["rel_count"] == 1
 
 
 @pytest.mark.asyncio
 async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
     http_client, neo4j_driver
 ):
-    """Functional supersession by agent → new edge has agent provenance, old edge unchanged."""
+    """Functional supersession should update the live MemoryFact and keep Turn provenance."""
+    from landscape.memory_graph import AssertionPayload
     from landscape.storage import neo4j_store
 
-    doc_id1, _ = await neo4j_store.merge_document("hash-prov-r3a", "prov-sup-doc-1", "text")
-    doc_id2, _ = await neo4j_store.merge_document("hash-prov-r3b", "prov-sup-doc-2", "text")
-    await neo4j_store.merge_entity("RelSubj3", "PERSON", "prov-sup-doc-1", 0.9, doc_id1, "test")
-    await neo4j_store.merge_entity("OldOrg", "ORGANIZATION", "prov-sup-doc-1", 0.9, doc_id1, "test")
-    await neo4j_store.merge_entity("NewOrg", "ORGANIZATION", "prov-sup-doc-2", 0.9, doc_id2, "test")
+    await neo4j_store.ensure_memory_graph_schema()
+    subject_id = await neo4j_store.merge_entity("RelSubj3", "PERSON", "prov-sup-doc-1", 0.9)
+    old_object_id = await neo4j_store.merge_entity("OldOrg", "ORGANIZATION", "prov-sup-doc-1", 0.9)
+    new_object_id = await neo4j_store.merge_entity("NewOrg", "ORGANIZATION", "prov-sup-doc-2", 0.9)
 
-    # Original ingest edge
-    outcome1, _ = await neo4j_store.upsert_relation(
-        "RelSubj3", "OldOrg", "WORKS_FOR", 0.9, "prov-sup-doc-1",
-        created_by="ingest",
+    first_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="turn",
+            source_id="s3:t3a",
+            raw_subject_text="RelSubj3",
+            raw_relation_text="works for",
+            raw_object_text="OldOrg",
+            confidence=0.9,
+            family_candidate="WORKS_FOR",
+        )
     )
-    assert outcome1 == "created"
+    second_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="turn",
+            source_id="s3:t3b",
+            raw_subject_text="RelSubj3",
+            raw_relation_text="works for",
+            raw_object_text="NewOrg",
+            confidence=0.95,
+            family_candidate="WORKS_FOR",
+        )
+    )
 
-    # Agent-triggered supersession
-    outcome2, new_rid = await neo4j_store.upsert_relation(
-        "RelSubj3", "NewOrg", "WORKS_FOR", 0.9, "prov-sup-doc-2",
-        created_by="agent", session_id="s3", turn_id="t3",
+    first_fact = await neo4j_store.create_memory_fact_version(
+        family="WORKS_FOR",
+        subject_entity_id=subject_id,
+        object_entity_id=old_object_id,
+        subtype=None,
+        confidence=0.9,
+        assertion_id=first_assertion,
     )
-    assert outcome2 == "superseded"
+    await neo4j_store.materialize_memory_rel(first_fact)
+
+    second_fact = await neo4j_store.supersede_single_current_fact(
+        family="WORKS_FOR",
+        subject_entity_id=subject_id,
+        object_entity_id=new_object_id,
+        subtype=None,
+        confidence=0.95,
+        assertion_id=second_assertion,
+    )
 
     async with neo4j_driver.session() as session:
         result = await session.run(
-            "MATCH (s:Entity {name: 'RelSubj3'})-[r:RELATES_TO {type: 'WORKS_FOR'}]->(o:Entity) "
-            "RETURN o.name AS target, r.valid_until AS vu, r.created_by AS cb, "
-            "r.session_id AS sid, r.turn_id AS tid "
-            "ORDER BY r.valid_from"
+            """
+            MATCH (s:Entity) WHERE elementId(s) = $subject_id
+            MATCH (s)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity)
+            RETURN o.name AS target, r.current AS current, r.memory_fact_id AS fact_id
+            ORDER BY target
+            """,
+            subject_id=subject_id,
         )
         records = await result.data()
+
+        old_fact = await (
+            await session.run(
+                "MATCH (f:MemoryFact {id: $fid}) RETURN f.current AS current",
+                fid=first_fact,
+            )
+        ).single()
+        new_fact = await (
+            await session.run(
+                "MATCH (f:MemoryFact {id: $fid}) RETURN f.current AS current",
+                fid=second_fact,
+            )
+        ).single()
 
     old_edge = next((r for r in records if r["target"] == "OldOrg"), None)
     new_edge = next((r for r in records if r["target"] == "NewOrg"), None)
 
     assert old_edge is not None
     assert new_edge is not None
-
-    # Old edge: original provenance preserved
-    assert old_edge["cb"] == "ingest"
-    assert old_edge["vu"] is not None, "Old edge must be superseded (valid_until set)"
-
-    # New edge: agent provenance
-    assert new_edge["cb"] == "agent"
-    assert new_edge["sid"] == "s3"
-    assert new_edge["tid"] == "t3"
-    assert new_edge["vu"] is None, "New edge must be live (valid_until null)"
+    assert old_fact is not None and old_fact["current"] is False
+    assert new_fact is not None and new_fact["current"] is True
+    assert old_edge["current"] is False
+    assert new_edge["current"] is True
 
 
 @pytest.mark.asyncio
