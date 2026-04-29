@@ -16,6 +16,7 @@ one stabilizes against LLM extraction drift.
 Assertions are lenient on entity name variants ('Alice' vs 'Alice Chen') the
 way test_killer_demo handles Maya/Maya Chen.
 """
+import asyncio
 import pathlib
 
 import pytest
@@ -37,6 +38,38 @@ EMPLOYMENT_DOCS = (
 )
 
 
+async def _wait_for_qdrant_collection_absent(
+    qdrant_client, collection_name: str, *, timeout_s: float = 10.0
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while True:
+        existing = await qdrant_client.get_collections()
+        names = {c.name for c in existing.collections}
+        if collection_name not in names:
+            return
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(
+                f"Timed out waiting for {collection_name!r} to be deleted; still present"
+            )
+        await asyncio.sleep(0.1)
+
+
+async def _wait_for_qdrant_collection_present(
+    qdrant_client, collection_name: str, *, timeout_s: float = 10.0
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while True:
+        existing = await qdrant_client.get_collections()
+        names = {c.name for c in existing.collections}
+        if collection_name in names:
+            return
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(
+                f"Timed out waiting for {collection_name!r} to exist; current collections={sorted(names)}"
+            )
+        await asyncio.sleep(0.1)
+
+
 async def _wipe_all(neo4j_driver, qdrant_client) -> None:
     from landscape.storage import qdrant_store
 
@@ -47,9 +80,14 @@ async def _wipe_all(neo4j_driver, qdrant_client) -> None:
         existing = await qdrant_client.get_collections()
         if coll in {c.name for c in existing.collections}:
             await qdrant_client.delete_collection(coll)
+            await _wait_for_qdrant_collection_absent(qdrant_client, coll)
 
     await qdrant_store.init_collection()
+    await _wait_for_qdrant_collection_present(qdrant_client, qdrant_store.COLLECTION)
     await qdrant_store.init_chunks_collection()
+    await _wait_for_qdrant_collection_present(
+        qdrant_client, qdrant_store.CHUNKS_COLLECTION
+    )
 
 
 @pytest_asyncio.fixture

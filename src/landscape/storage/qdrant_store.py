@@ -1,6 +1,8 @@
+import asyncio
 import uuid
 
 from qdrant_client import AsyncQdrantClient
+from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -37,26 +39,49 @@ async def close_client() -> None:
         _client = None
 
 
-async def init_collection() -> None:
+async def _wait_for_collection_ready(
+    client: AsyncQdrantClient,
+    collection_name: str,
+    *,
+    timeout_s: float = 10.0,
+    poll_interval_s: float = 0.1,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    last_exc: Exception | None = None
+    while True:
+        try:
+            await client.get_collection(collection_name)
+            return
+        except Exception as exc:  # pragma: no cover - exercised through init callers
+            last_exc = exc
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(
+                f"Timed out waiting for Qdrant collection {collection_name!r} to become ready"
+            ) from last_exc
+        await asyncio.sleep(poll_interval_s)
+
+
+async def _ensure_collection(
+    collection_name: str,
+) -> None:
     client = get_client()
-    existing = await client.get_collections()
-    names = {c.name for c in existing.collections}
-    if COLLECTION not in names:
+    try:
         await client.create_collection(
-            collection_name=COLLECTION,
+            collection_name=collection_name,
             vectors_config=VectorParams(size=_dims(), distance=Distance.COSINE),
         )
+    except UnexpectedResponse as exc:
+        if exc.status_code != 409:
+            raise
+    await _wait_for_collection_ready(client, collection_name)
+
+
+async def init_collection() -> None:
+    await _ensure_collection(COLLECTION)
 
 
 async def init_chunks_collection() -> None:
-    client = get_client()
-    existing = await client.get_collections()
-    names = {c.name for c in existing.collections}
-    if CHUNKS_COLLECTION not in names:
-        await client.create_collection(
-            collection_name=CHUNKS_COLLECTION,
-            vectors_config=VectorParams(size=_dims(), distance=Distance.COSINE),
-        )
+    await _ensure_collection(CHUNKS_COLLECTION)
 
 
 async def upsert_entity(
