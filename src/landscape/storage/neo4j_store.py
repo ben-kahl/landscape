@@ -633,6 +633,29 @@ async def _create_memory_fact_version_in_tx(
     return record["fact_id"]
 
 
+async def _materialize_memory_rel_in_tx(tx, memory_fact_id: str, now: str) -> None:
+    await tx.run(
+        """
+        MATCH (subject:Entity)-[:AS_SUBJECT]->(fact:MemoryFact {id: $fact_id})
+        OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
+        FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
+            MERGE (subject)-[r:MEMORY_REL {memory_fact_id: $fact_id}]->(object)
+            SET r.family = fact.family,
+                r.current = true,
+                r.confidence_agg = fact.confidence_agg,
+                r.subtype = fact.subtype,
+                r.subject_entity_id = subject.id,
+                r.object_entity_id = object.id,
+                r.updated_at = $now
+        )
+        SET fact.current = true,
+            fact.updated_at = $now
+        """,
+        fact_id=memory_fact_id,
+        now=now,
+    )
+
+
 async def create_memory_fact_version(
     *,
     family: str,
@@ -673,25 +696,13 @@ async def materialize_memory_rel(memory_fact_id: str) -> None:
     now = datetime.now(UTC).isoformat()
     driver = get_driver()
     async with driver.session() as session:
-        await session.run(
-            """
-            MATCH (subject:Entity)-[:AS_SUBJECT]->(fact:MemoryFact {id: $fact_id})
-            OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
-            FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
-                MERGE (subject)-[r:MEMORY_REL {memory_fact_id: $fact_id}]->(object)
-                SET r.family = fact.family,
-                    r.current = fact.current,
-                    r.confidence_agg = fact.confidence_agg,
-                    r.subtype = fact.subtype,
-                    r.subject_entity_id = subject.id,
-                    r.object_entity_id = object.id,
-                    r.updated_at = $now
-            )
-            SET fact.updated_at = $now
-            """,
-            fact_id=memory_fact_id,
-            now=now,
-        )
+        tx = await session.begin_transaction()
+        try:
+            await _materialize_memory_rel_in_tx(tx, memory_fact_id, now)
+            await tx.commit()
+        except Exception:
+            await tx.rollback()
+            raise
 
 
 async def supersede_single_current_fact(
@@ -750,6 +761,11 @@ async def supersede_single_current_fact(
                 now=now,
             )
 
+            if old_fact_id == new_fact_id:
+                await _materialize_memory_rel_in_tx(tx, new_fact_id, now)
+                await tx.commit()
+                return new_fact_id
+
             if old_fact_id is not None:
                 await tx.run(
                     """
@@ -765,26 +781,7 @@ async def supersede_single_current_fact(
                     now=now,
                 )
 
-            await tx.run(
-                """
-                MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(fact:MemoryFact {id: $fact_id})
-                OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
-                FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
-                    MERGE (subject)-[r:MEMORY_REL {memory_fact_id: $fact_id}]->(object)
-                    SET r.family = fact.family,
-                        r.current = fact.current,
-                        r.confidence_agg = fact.confidence_agg,
-                        r.subtype = fact.subtype,
-                        r.subject_entity_id = subject.id,
-                        r.object_entity_id = object.id,
-                        r.updated_at = $now
-                )
-                SET fact.updated_at = $now
-                """,
-                fact_id=new_fact_id,
-                subject_entity_id=subject_entity_id,
-                now=now,
-            )
+            await _materialize_memory_rel_in_tx(tx, new_fact_id, now)
             await tx.commit()
             return new_fact_id
         except Exception:

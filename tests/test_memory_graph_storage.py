@@ -180,6 +180,84 @@ async def test_superseding_single_current_fact_replaces_memory_rel(neo4j_driver)
 
 
 @pytest.mark.asyncio
+async def test_superseding_single_current_fact_is_idempotent_on_retry(neo4j_driver):
+    alice = await neo4j_store.merge_entity("Alice", "Person", "doc-a", 0.9)
+    acme = await neo4j_store.merge_entity("Acme", "Organization", "doc-a", 0.9)
+    beacon = await neo4j_store.merge_entity("Beacon", "Organization", "doc-b", 0.9)
+    alice_id = await _entity_app_id(neo4j_driver, alice)
+    acme_id = await _entity_app_id(neo4j_driver, acme)
+    beacon_id = await _entity_app_id(neo4j_driver, beacon)
+    first_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="doc-a",
+            raw_subject_text="Alice",
+            raw_relation_text="works at",
+            raw_object_text="Acme",
+            confidence=0.9,
+            family_candidate="WORKS_FOR",
+        )
+    )
+    second_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="doc-b",
+            raw_subject_text="Alice",
+            raw_relation_text="works at",
+            raw_object_text="Beacon",
+            confidence=0.95,
+            family_candidate="WORKS_FOR",
+        )
+    )
+    first = await neo4j_store.create_memory_fact_version(
+        family="WORKS_FOR",
+        subject_entity_id=alice_id,
+        object_entity_id=acme_id,
+        subtype=None,
+        confidence=0.9,
+        assertion_id=first_assertion,
+    )
+    await neo4j_store.materialize_memory_rel(first)
+    second = await neo4j_store.supersede_single_current_fact(
+        family="WORKS_FOR",
+        subject_entity_id=alice_id,
+        object_entity_id=beacon_id,
+        subtype=None,
+        confidence=0.95,
+        assertion_id=second_assertion,
+    )
+    retry = await neo4j_store.supersede_single_current_fact(
+        family="WORKS_FOR",
+        subject_entity_id=alice_id,
+        object_entity_id=beacon_id,
+        subtype=None,
+        confidence=0.95,
+        assertion_id=second_assertion,
+    )
+    assert retry == second
+    explanation = await neo4j_store.get_memory_fact_explanation(retry)
+    assert explanation is not None
+    assert explanation["current"] is True
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (f:MemoryFact {slot_key: $slot_key, current: true})
+            RETURN count(f) AS count
+            """,
+            slot_key=slot_key(FAMILY_REGISTRY["WORKS_FOR"], alice_id, beacon_id, None),
+        )
+        record = await result.single()
+        assert record is not None
+        assert record["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_bfs_expand_memory_rel_empty_input_returns_empty(neo4j_driver):
+    rows = await neo4j_store.bfs_expand_memory_rel([], max_hops=2)
+    assert rows == []
+
+
+@pytest.mark.asyncio
 async def test_bfs_expand_memory_rel_validates_max_hops(neo4j_driver):
     with pytest.raises(ValueError):
         await neo4j_store.bfs_expand_memory_rel(["entity:missing"], max_hops=0)
@@ -187,5 +265,61 @@ async def test_bfs_expand_memory_rel_validates_max_hops(neo4j_driver):
 
 @pytest.mark.asyncio
 async def test_bfs_expand_memory_rel_uses_current_edges_only(neo4j_driver):
-    rows = await neo4j_store.bfs_expand_memory_rel([], max_hops=2)
-    assert rows == []
+    alice = await neo4j_store.merge_entity("Alice", "Person", "doc-a", 0.9)
+    acme = await neo4j_store.merge_entity("Acme", "Organization", "doc-a", 0.9)
+    beacon = await neo4j_store.merge_entity("Beacon", "Organization", "doc-b", 0.9)
+    alice_id = await _entity_app_id(neo4j_driver, alice)
+    acme_id = await _entity_app_id(neo4j_driver, acme)
+    beacon_id = await _entity_app_id(neo4j_driver, beacon)
+    current_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="doc-a",
+            raw_subject_text="Alice",
+            raw_relation_text="works at",
+            raw_object_text="Acme",
+            confidence=0.9,
+            family_candidate="WORKS_FOR",
+        )
+    )
+    stale_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="doc-b",
+            raw_subject_text="Alice",
+            raw_relation_text="works at",
+            raw_object_text="Beacon",
+            confidence=0.95,
+            family_candidate="WORKS_FOR",
+        )
+    )
+    current_fact = await neo4j_store.create_memory_fact_version(
+        family="WORKS_FOR",
+        subject_entity_id=alice_id,
+        object_entity_id=acme_id,
+        subtype=None,
+        confidence=0.9,
+        assertion_id=current_assertion,
+    )
+    await neo4j_store.materialize_memory_rel(current_fact)
+    current_fact = await neo4j_store.supersede_single_current_fact(
+        family="WORKS_FOR",
+        subject_entity_id=alice_id,
+        object_entity_id=beacon_id,
+        subtype=None,
+        confidence=0.95,
+        assertion_id=stale_assertion,
+    )
+    rows = await neo4j_store.bfs_expand_memory_rel([alice], max_hops=1)
+    assert rows == [
+        {
+            "seed_id": alice_id,
+            "target_id": beacon_id,
+            "target_name": "Beacon",
+            "target_type": "Organization",
+            "distance": 1,
+            "memory_fact_ids": [current_fact],
+            "edge_families": ["WORKS_FOR"],
+        }
+    ]
+    assert all(row["target_id"] != acme_id for row in rows)
