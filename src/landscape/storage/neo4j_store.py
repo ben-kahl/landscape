@@ -558,6 +558,10 @@ async def merge_assertion(payload: AssertionPayload) -> str:
                           a.family_candidate = $family_candidate,
                           a.confidence = $confidence,
                           a.subtype = $subtype,
+                          a.quantity_value = $quantity_value,
+                          a.quantity_unit = $quantity_unit,
+                          a.quantity_kind = $quantity_kind,
+                          a.time_scope = $time_scope,
                           a.status = 'active',
                           a.created_at = $now
             """,
@@ -570,6 +574,10 @@ async def merge_assertion(payload: AssertionPayload) -> str:
             family_candidate=payload.family_candidate,
             confidence=payload.confidence,
             subtype=payload.subtype,
+            quantity_value=payload.quantity_value,
+            quantity_unit=payload.quantity_unit,
+            quantity_kind=payload.quantity_kind,
+            time_scope=payload.time_scope,
             now=datetime.now(UTC).isoformat(),
         )
     return aid
@@ -834,6 +842,7 @@ async def upsert_memory_fact_from_assertion(
         confidence=confidence,
         assertion_id=assertion_id,
     )
+    await materialize_memory_rel(fact_id)
     return fact_id, "reinforced" if existing_record is not None else "created"
 
 

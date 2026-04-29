@@ -270,6 +270,10 @@ async def ingest(
             canonical_rel_type, _coerce_score = coerce_rel_type(relation.relation_type)
             subject_entity_id = resolved_entity_ids.get(relation.subject.strip().lower())
             object_entity_id = resolved_entity_ids.get(relation.object.strip().lower())
+            raw_upper = (relation.relation_type or "").strip().upper().replace(" ", "_")
+            subtype_source = relation.subtype or (
+                raw_upper if raw_upper and raw_upper != canonical_rel_type else None
+            )
             payload = AssertionPayload(
                 source_kind="document",
                 source_id=doc_id,
@@ -278,7 +282,7 @@ async def ingest(
                 raw_object_text=relation.object,
                 confidence=relation.confidence,
                 family_candidate=canonical_rel_type,
-                subtype=normalize_subtype(relation.subtype),
+                subtype=normalize_subtype(subtype_source),
                 quantity_value=relation.quantity_value,
                 quantity_unit=relation.quantity_unit,
                 quantity_kind=relation.quantity_kind,

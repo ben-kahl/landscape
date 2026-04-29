@@ -159,6 +159,108 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+async def test_ingest_promotes_additive_family_into_memory_rel(http_client, neo4j_driver):
+    from landscape import pipeline
+    from landscape.extraction.chunker import Chunk
+    from landscape.extraction.schema import Extraction, ExtractedEntity, ExtractedRelation
+
+    title = "memory-rel-additive-integration"
+    subject_name = "Alice Example"
+    object_name = "Project Atlas Example"
+
+    async with neo4j_driver.session() as session:
+        await session.run("MATCH (d:Document {title: $title}) DETACH DELETE d", title=title)
+        await session.run("MATCH (e:Entity {name: $name}) DETACH DELETE e", name=subject_name)
+        await session.run("MATCH (e:Entity {name: $name}) DETACH DELETE e", name=object_name)
+
+    async def fake_resolve_entity(name, entity_type, vector, source_doc):
+        return None, True, None
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
+
+    async def noop_upsert(**kwargs):
+        return None
+
+    monkeypatch.setattr(
+        pipeline.encoder,
+        "embed_documents",
+        lambda texts: [[0.1, 0.2] for _ in texts],
+    )
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", noop_upsert)
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", noop_upsert)
+    monkeypatch.setattr(pipeline, "chunk_text", lambda text: [Chunk(index=0, text=text)])
+    monkeypatch.setattr(
+        pipeline.llm,
+        "extract",
+        lambda text: Extraction(
+            entities=[
+                ExtractedEntity(name=subject_name, type="PERSON", confidence=0.95),
+                ExtractedEntity(name=object_name, type="PROJECT", confidence=0.95),
+            ],
+            relations=[
+                ExtractedRelation(
+                    subject=subject_name,
+                    object=object_name,
+                    relation_type="owns",
+                    confidence=0.91,
+                    quantity_value=1,
+                    quantity_unit="instance",
+                    quantity_kind="count",
+                    time_scope="current",
+                )
+            ],
+        ),
+    )
+
+    try:
+        response = await http_client.post(
+            "/ingest",
+            json={"text": f"{subject_name} owns {object_name}.", "title": title},
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["relations_created"] == 1
+    assert body["relations_reinforced"] == 0
+    assert body["relations_superseded"] == 0
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (d:Document {title: $title})-[:ASSERTS]->(a:Assertion)
+                  -[:SUBJECT_ENTITY]->(s:Entity {name: $subject}),
+                  (a)-[:OBJECT_ENTITY]->(o:Entity {name: $object}),
+                  (a)-[:SUPPORTS]->(f:MemoryFact {current: true}),
+                  (s)-[r:MEMORY_REL {current: true}]->(o)
+            RETURN a.subtype AS subtype,
+                   a.quantity_value AS quantity_value,
+                   a.quantity_unit AS quantity_unit,
+                   a.quantity_kind AS quantity_kind,
+                   a.time_scope AS time_scope,
+                   count(r) AS memory_rel_count,
+                   count(f) AS fact_count
+            """,
+            title=title,
+            subject=subject_name,
+            object=object_name,
+        )
+        record = await result.single()
+
+    assert record is not None
+    assert record["subtype"] == "owns"
+    assert record["quantity_value"] == 1
+    assert record["quantity_unit"] == "instance"
+    assert record["quantity_kind"] == "count"
+    assert record["time_scope"] == "current"
+    assert record["memory_rel_count"] == 1
+    assert record["fact_count"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
 async def test_ingest_idempotent(http_client):
     # First ingest
     r1 = await http_client.post("/ingest", json={"text": TEST_DOC, "title": TEST_TITLE})

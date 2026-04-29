@@ -151,9 +151,8 @@ async def ingest_conversation_turn(
         )
 
     try:
-        normalized_text = normalized
         result = await ingest(
-            normalized_text,
+            turn.text,
             title,
             session_id=turn.session_id,
             turn_id=turn.turn_id,
