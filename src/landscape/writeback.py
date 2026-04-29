@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 
 from landscape.embeddings import encoder
 from landscape.extraction.schema import normalize_relation_type
+from landscape.extraction.schema import normalize_subtype
 from landscape.extraction.entity_type_coercion import coerce_entity_type
 from landscape.memory_graph.models import AssertionPayload
 from landscape.memory_graph.service import persist_assertion_and_maybe_promote
@@ -260,6 +261,12 @@ async def add_relation(
 
     turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
 
+    canonical_rel_type = normalize_relation_type(rel_type)
+    raw_upper = (rel_type or "").strip().upper().replace(" ", "_")
+    subtype_source = subtype or (
+        raw_upper if raw_upper and raw_upper != canonical_rel_type else None
+    )
+
     payload = AssertionPayload(
         source_kind="turn",
         source_id=f"{session_id}:{turn_id}",
@@ -267,8 +274,8 @@ async def add_relation(
         raw_relation_text=rel_type,
         raw_object_text=object_,
         confidence=confidence,
-        family_candidate=normalize_relation_type(rel_type),
-        subtype=None,
+        family_candidate=canonical_rel_type,
+        subtype=normalize_subtype(subtype_source),
     )
     persistence = await persist_assertion_and_maybe_promote(
         payload,

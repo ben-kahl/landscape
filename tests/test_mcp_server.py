@@ -793,6 +793,39 @@ async def test_add_relation_supersedes_functional_edge(http_client):
         assert d2["memory_fact_id"] != d1["memory_fact_id"]
 
 
+@pytest.mark.asyncio
+async def test_add_relation_threads_subtype_through_mcp(http_client):
+    """add_relation should preserve subtype in the stored assertion."""
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "add_relation",
+            {
+                "subject": "Dana",
+                "subject_type": "Person",
+                "object": "Acme",
+                "object_type": "Organization",
+                "rel_type": "WORKS_FOR",
+                "subtype": "temporary contractor",
+                "source": "agent:test-session:3c",
+                "session_id": "test-session",
+                "turn_id": "t3c",
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+    assert data["assertion_id"]
+    assert data["memory_fact_id"]
+
+    from landscape.storage import neo4j_store
+
+    rows = await neo4j_store.run_cypher_readonly(
+        "MATCH (a:Assertion {id: $assertion_id}) RETURN a.subtype AS subtype",
+        {"assertion_id": data["assertion_id"]},
+    )
+    assert rows[0]["subtype"] == "temporary_contractor"
+
+
 def _graph_query_principal():
     from landscape.auth import AuthContext
 

@@ -769,11 +769,27 @@ async def test_add_relation_creates_assertion_and_memory_fact(http_client):
 
 @pytest.mark.asyncio
 async def test_alias_writeback_creates_alias_not_stub_entity(http_client):
-    from landscape.writeback import add_entity
+    from landscape.embeddings import encoder
     from landscape.storage import neo4j_store
+    from landscape.writeback import add_entity
 
-    canonical = await add_entity("Robert", "Person", source="wb-doc", confidence=0.9, session_id="s1", turn_id="t1")
-    await neo4j_store.merge_alias(canonical.entity_id, "Bob", "wb-doc", 0.9)
+    robert_id = await _seed_entity_with_vector(
+        "Robert",
+        "Person",
+        vector=encoder.encode("Bob (Person)"),
+    )
+
+    result = await add_entity(
+        "Bob",
+        "Person",
+        source="wb-doc",
+        confidence=0.9,
+        session_id="s1",
+        turn_id="t1",
+    )
+
+    assert result.resolved_to_existing is True
+    assert result.entity_id == robert_id
 
     rows = await neo4j_store.run_cypher_readonly(
         "MATCH (a:Alias)-[:SAME_AS]->(:Entity {name: 'Robert'}) RETURN count(a) AS count"
