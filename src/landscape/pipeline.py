@@ -12,6 +12,8 @@ from landscape.extraction.chunker import chunk_text
 from landscape.extraction.entity_type_coercion import coerce_entity_type
 from landscape.extraction.rel_type_coercion import coerce_rel_type
 from landscape.extraction.schema import normalize_subtype
+from landscape.memory_graph.models import AssertionPayload
+from landscape.memory_graph.service import persist_assertion_and_maybe_promote
 from landscape.observability import IngestLogContext, create_ingest_log_context
 from landscape.storage import neo4j_store, qdrant_store
 
@@ -95,6 +97,7 @@ async def ingest(
         # Step 2: chunk + embed chunks (batched)
         stage_started_at = log.set_stage("chunking_completed")
         chunks = chunk_text(text)
+        chunk_ids: list[str] = []
         log.emit(
             "chunking_completed",
             chunk_count=len(chunks),
@@ -102,7 +105,6 @@ async def ingest(
         )
         chunks_created = 0
         if chunks:
-            chunk_ids: list[str] = []
             for chunk in chunks:
                 chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
                 chunk_ids.append(
@@ -248,42 +250,42 @@ async def ingest(
             duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
         )
 
-        # Step 5: relation upsert with supersession
+        # Step 5: assertion persistence + fact promotion
         stage_started_at = log.set_stage("relation_upserts_completed")
         relations_created = 0
         relations_reinforced = 0
         relations_superseded = 0
         for relation in extraction.relations:
             canonical_rel_type, _coerce_score = coerce_rel_type(relation.relation_type)
-            # If coercion changed the rel type, preserve the LLM's original
-            # phrasing as the subtype — captures nuance even when the LLM didn't
-            # produce an explicit subtype field. Explicit subtype (step 3 schema)
-            # still wins when present.
-            raw_upper = (relation.relation_type or "").strip().upper().replace(" ", "_")
-            subtype_source = relation.subtype or (
-                raw_upper if raw_upper and raw_upper != canonical_rel_type else None
-            )
-            canonical_subtype = normalize_subtype(subtype_source)
-            outcome, _ = await neo4j_store.upsert_relation(
-                subject_name=relation.subject,
-                object_name=relation.object,
-                relation_type=canonical_rel_type,
+            payload = AssertionPayload(
+                source_kind="document",
+                source_id=doc_id,
+                raw_subject_text=relation.subject,
+                raw_relation_text=relation.relation_type,
+                raw_object_text=relation.object,
                 confidence=relation.confidence,
-                source_doc=title,
-                session_id=session_id,
-                turn_id=turn_id,
-                subtype=canonical_subtype,
+                family_candidate=canonical_rel_type,
+                subtype=normalize_subtype(relation.subtype),
                 quantity_value=relation.quantity_value,
                 quantity_unit=relation.quantity_unit,
                 quantity_kind=relation.quantity_kind,
                 time_scope=relation.time_scope,
+                chunk_refs=[(cid, None, None) for cid in chunk_ids],
             )
-            if outcome == "created":
+            subject_entity_id = await resolver.resolve_existing_entity_id(relation.subject)
+            object_entity_id = await resolver.resolve_existing_entity_id(relation.object)
+            _, fact_id = await persist_assertion_and_maybe_promote(
+                payload,
+                source_node_id=doc_id,
+                source_kind="document",
+                subject_entity_id=subject_entity_id,
+                object_entity_id=object_entity_id,
+                chunk_ids=chunk_ids,
+            )
+            if fact_id is None:
                 relations_created += 1
-            elif outcome == "reinforced":
+            else:
                 relations_reinforced += 1
-            elif outcome == "superseded":
-                relations_superseded += 1
         log.emit(
             "relation_upserts_completed",
             relations_created=relations_created,

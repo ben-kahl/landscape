@@ -144,6 +144,49 @@ async def test_ingest_conversation_turn_skips_duplicate_in_same_process(monkeypa
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_ingest_conversation_turn_strips_text_before_pipeline(monkeypatch):
+    from landscape.conversation_ingestion import ConversationTurn, ingest_conversation_turn
+    from landscape.pipeline import IngestResult
+
+    captured = {}
+
+    async def fake_ingest(
+        text: str,
+        title: str,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+        debug: bool = False,
+        log_context=None,
+    ):
+        captured["text"] = text
+        return IngestResult(
+            doc_id=f"doc:{title}",
+            already_existed=False,
+            entities_created=1,
+            entities_reinforced=0,
+            relations_created=0,
+            relations_reinforced=0,
+            relations_superseded=0,
+            chunks_created=1,
+        )
+
+    monkeypatch.setattr("landscape.conversation_ingestion.ingest", fake_ingest)
+
+    result = await ingest_conversation_turn(
+        ConversationTurn(
+            session_id="conv-8",
+            turn_id="t1",
+            role="user",
+            text="  Alice joined Beacon Labs.  ",
+        )
+    )
+
+    assert result.skipped is False
+    assert captured["text"] == "Alice joined Beacon Labs."
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_ingest_conversation_turn_marks_seen_only_after_success(monkeypatch):
     from landscape.conversation_ingestion import ConversationTurn
     from landscape.pipeline import IngestResult

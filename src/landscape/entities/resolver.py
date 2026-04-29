@@ -53,3 +53,23 @@ async def resolve_entity(
         await neo4j_store.add_alias(canonical_id, name, source_doc, best.score)
 
     return (canonical_id, False, best.score)
+
+
+async def resolve_existing_entity_id(name: str) -> str | None:
+    driver = neo4j_store.get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (e:Entity)
+            WHERE e.name = $name OR $name IN coalesce(e.aliases, [])
+            RETURN elementId(e) AS eid
+            ORDER BY CASE WHEN coalesce(e.canonical, false) THEN 0 ELSE 1 END,
+                     CASE WHEN e.name = $name THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            name=name,
+        )
+        record = await result.single()
+        if record is None:
+            return None
+        return record["eid"]

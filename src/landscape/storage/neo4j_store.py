@@ -575,6 +575,83 @@ async def merge_assertion(payload: AssertionPayload) -> str:
     return aid
 
 
+async def link_source_to_assertion(
+    source_kind: str,
+    source_node_id: str,
+    assertion_id: str,
+) -> None:
+    driver = get_driver()
+    async with driver.session() as session:
+        if source_kind == "document":
+            await session.run(
+                """
+                MATCH (source:Document) WHERE elementId(source) = $source_node_id
+                MATCH (a:Assertion {id: $assertion_id})
+                MERGE (source)-[:ASSERTS]->(a)
+                """,
+                source_node_id=source_node_id,
+                assertion_id=assertion_id,
+            )
+            return
+        if source_kind == "turn":
+            await session.run(
+                """
+                MATCH (source:Turn) WHERE elementId(source) = $source_node_id
+                MATCH (a:Assertion {id: $assertion_id})
+                MERGE (source)-[:ASSERTS]->(a)
+                """,
+                source_node_id=source_node_id,
+                assertion_id=assertion_id,
+            )
+            return
+        raise ValueError(f"unsupported source_kind: {source_kind!r}")
+
+
+async def link_assertion_to_chunk(assertion_id: str, chunk_id: str) -> None:
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (a:Assertion {id: $assertion_id})
+            MATCH (c:Chunk)
+            WHERE c.chunk_id = $chunk_id OR elementId(c) = $chunk_id
+            MERGE (a)-[:MENTIONS_CHUNK]->(c)
+            """,
+            assertion_id=assertion_id,
+            chunk_id=chunk_id,
+        )
+
+
+async def link_assertion_subject(assertion_id: str, subject_entity_id: str) -> None:
+    subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (a:Assertion {id: $assertion_id})
+            MATCH (e:Entity {id: $entity_id})
+            MERGE (a)-[:SUBJECT_ENTITY]->(e)
+            """,
+            assertion_id=assertion_id,
+            entity_id=subject_entity_id,
+        )
+
+
+async def link_assertion_object(assertion_id: str, object_entity_id: str) -> None:
+    object_entity_id = await _resolve_entity_app_id(object_entity_id)
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (a:Assertion {id: $assertion_id})
+            MATCH (e:Entity {id: $entity_id})
+            MERGE (a)-[:OBJECT_ENTITY]->(e)
+            """,
+            assertion_id=assertion_id,
+            entity_id=object_entity_id,
+        )
+
+
 async def _create_memory_fact_version_in_tx(
     tx,
     *,
@@ -690,6 +767,35 @@ async def create_memory_fact_version(
         except Exception:
             await tx.rollback()
             raise
+
+
+async def upsert_memory_fact_from_assertion(
+    *,
+    family: str,
+    subject_entity_id: str,
+    object_entity_id: str | None,
+    subtype: str | None,
+    confidence: float,
+    assertion_id: str,
+) -> str:
+    family_cfg = FAMILY_REGISTRY[family]
+    if family_cfg.single_current:
+        return await supersede_single_current_fact(
+            family=family,
+            subject_entity_id=subject_entity_id,
+            object_entity_id=object_entity_id,
+            subtype=subtype,
+            confidence=confidence,
+            assertion_id=assertion_id,
+        )
+    return await create_memory_fact_version(
+        family=family,
+        subject_entity_id=subject_entity_id,
+        object_entity_id=object_entity_id,
+        subtype=subtype,
+        confidence=confidence,
+        assertion_id=assertion_id,
+    )
 
 
 async def materialize_memory_rel(memory_fact_id: str) -> None:

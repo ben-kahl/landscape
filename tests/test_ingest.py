@@ -113,10 +113,8 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
 
         result = await session.run(
             """
-            MATCH (e:Entity)-[:EXTRACTED_FROM]->(d:Document {title: $title})
-            WITH collect(e) AS entities
-            MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
-            WHERE a IN entities AND b IN entities AND r.valid_until IS NULL
+            MATCH (d:Document {title: $title})-[:ASSERTS]->(a:Assertion)
+                  -[:SUPPORTS]->(f:MemoryFact {current: true})
             RETURN count(*) AS cnt
             """,
             title=TEST_TITLE,
@@ -205,17 +203,42 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     async def fake_upsert_entity(**kwargs):
         return None
 
-    async def fake_upsert_relation(**kwargs):
-        captured_relation_kwargs.update(kwargs)
-        return "created", "rel-1"
+    async def fake_resolve_existing_entity_id(name):
+        return f"{name}-id"
+
+    async def fake_persist_assertion_and_maybe_promote(
+        payload,
+        *,
+        source_node_id,
+        source_kind,
+        subject_entity_id,
+        object_entity_id,
+        chunk_ids,
+    ):
+        captured_relation_kwargs.update(
+            {
+                "payload": payload,
+                "source_node_id": source_node_id,
+                "source_kind": source_kind,
+                "subject_entity_id": subject_entity_id,
+                "object_entity_id": object_entity_id,
+                "chunk_ids": chunk_ids,
+            }
+        )
+        return "assertion-1", "fact-1"
 
     monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
     monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", fake_upsert_chunk)
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
+    monkeypatch.setattr(pipeline.resolver, "resolve_existing_entity_id", fake_resolve_existing_entity_id)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
-    monkeypatch.setattr(pipeline.neo4j_store, "upsert_relation", fake_upsert_relation)
+    monkeypatch.setattr(
+        pipeline,
+        "persist_assertion_and_maybe_promote",
+        fake_persist_assertion_and_maybe_promote,
+    )
     monkeypatch.setattr(pipeline, "coerce_rel_type", lambda rel_type: (rel_type, 1.0))
     monkeypatch.setattr(
         pipeline.encoder,
@@ -248,10 +271,12 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
 
     await pipeline.ingest("Eric watched Netflix.", "quantity-pipeline")
 
-    assert captured_relation_kwargs["quantity_value"] == 10
-    assert captured_relation_kwargs["quantity_unit"] == "hour"
-    assert captured_relation_kwargs["quantity_kind"] == "duration"
-    assert captured_relation_kwargs["time_scope"] == "last_month"
+    assert captured_relation_kwargs["payload"].quantity_value == 10
+    assert captured_relation_kwargs["payload"].quantity_unit == "hour"
+    assert captured_relation_kwargs["payload"].quantity_kind == "duration"
+    assert captured_relation_kwargs["payload"].time_scope == "last_month"
+    assert captured_relation_kwargs["subject_entity_id"] == "Eric-id"
+    assert captured_relation_kwargs["object_entity_id"] == "Netflix-id"
 
 
 @pytest.mark.asyncio
@@ -279,16 +304,32 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
     async def fake_upsert_entity(**kwargs):
         return None
 
-    async def fake_upsert_relation(**kwargs):
-        return "created", "rel-1"
+    async def fake_resolve_existing_entity_id(name):
+        return f"{name}-id"
+
+    async def fake_persist_assertion_and_maybe_promote(
+        payload,
+        *,
+        source_node_id,
+        source_kind,
+        subject_entity_id,
+        object_entity_id,
+        chunk_ids,
+    ):
+        return "assertion-1", "fact-1"
 
     monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
     monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", fake_upsert_chunk)
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
+    monkeypatch.setattr(pipeline.resolver, "resolve_existing_entity_id", fake_resolve_existing_entity_id)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
-    monkeypatch.setattr(pipeline.neo4j_store, "upsert_relation", fake_upsert_relation)
+    monkeypatch.setattr(
+        pipeline,
+        "persist_assertion_and_maybe_promote",
+        fake_persist_assertion_and_maybe_promote,
+    )
     monkeypatch.setattr(pipeline, "coerce_rel_type", lambda rel_type: (rel_type, 1.0))
     monkeypatch.setattr(pipeline, "chunk_text", lambda text: [Chunk(index=0, text="chunk one")])
     monkeypatch.setattr(
@@ -358,16 +399,32 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
     async def fake_upsert_entity(**kwargs):
         return None
 
-    async def fake_upsert_relation(**kwargs):
-        return "created", "rel-2"
+    async def fake_resolve_existing_entity_id(name):
+        return f"{name}-id"
+
+    async def fake_persist_assertion_and_maybe_promote(
+        payload,
+        *,
+        source_node_id,
+        source_kind,
+        subject_entity_id,
+        object_entity_id,
+        chunk_ids,
+    ):
+        return "assertion-2", "fact-2"
 
     monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
     monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", fake_upsert_chunk)
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
+    monkeypatch.setattr(pipeline.resolver, "resolve_existing_entity_id", fake_resolve_existing_entity_id)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
-    monkeypatch.setattr(pipeline.neo4j_store, "upsert_relation", fake_upsert_relation)
+    monkeypatch.setattr(
+        pipeline,
+        "persist_assertion_and_maybe_promote",
+        fake_persist_assertion_and_maybe_promote,
+    )
     monkeypatch.setattr(pipeline, "coerce_rel_type", lambda rel_type: (rel_type, 1.0))
     monkeypatch.setattr(pipeline, "chunk_text", lambda text: [Chunk(index=0, text="chunk two")])
     monkeypatch.setattr(
@@ -436,9 +493,29 @@ async def test_ingest_logs_failure_with_failed_stage(monkeypatch, caplog):
     async def boom_upsert_chunk(**kwargs):
         raise RuntimeError("chunk upsert exploded")
 
+    async def fake_resolve_existing_entity_id(name):
+        return f"{name}-id"
+
+    async def fake_persist_assertion_and_maybe_promote(
+        payload,
+        *,
+        source_node_id,
+        source_kind,
+        subject_entity_id,
+        object_entity_id,
+        chunk_ids,
+    ):
+        return "assertion-3", "fact-3"
+
     monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
     monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", boom_upsert_chunk)
+    monkeypatch.setattr(pipeline.resolver, "resolve_existing_entity_id", fake_resolve_existing_entity_id)
+    monkeypatch.setattr(
+        pipeline,
+        "persist_assertion_and_maybe_promote",
+        fake_persist_assertion_and_maybe_promote,
+    )
     monkeypatch.setattr(pipeline, "chunk_text", lambda text: [Chunk(index=0, text="chunk three")])
     monkeypatch.setattr(
         pipeline.encoder,
