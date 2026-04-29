@@ -129,8 +129,9 @@ path directly.
 Supersession is modeled at the `MemoryFact` layer, not on raw assertions.
 `Assertion` records remain immutable source evidence. When a newer extraction
 conflicts with an existing current fact, Landscape creates a new versioned
-`MemoryFact`, marks the prior version superseded, and only projects the current
-version into `MEMORY_REL` for traversal.
+`MemoryFact`, marks the prior version superseded, and keeps historical
+`MEMORY_REL` edges with `current = false` while traversal only follows the
+current edges.
 
 This keeps provenance intact while ensuring retrieval only walks live facts.
 Non-conflicting facts remain additive, and superseded versions stay available

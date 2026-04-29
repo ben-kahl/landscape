@@ -135,7 +135,7 @@ async def test_add_relation_turn_assertion_links_are_stable(http_client, neo4j_d
     """Repeated agent writeback should still keep the assertion anchored to the Turn."""
     from landscape.writeback import add_relation
 
-    result = await add_relation(
+    first = await add_relation(
         "RelSubj2",
         "PERSON",
         "RelObj2",
@@ -145,6 +145,19 @@ async def test_add_relation_turn_assertion_links_are_stable(http_client, neo4j_d
         session_id="s1",
         turn_id="t1",
     )
+    second = await add_relation(
+        "RelSubj2",
+        "PERSON",
+        "RelObj2",
+        "PROJECT",
+        "LEADS",
+        source="agent:s1:t1",
+        session_id="s1",
+        turn_id="t1",
+    )
+
+    assert first.assertion_id == second.assertion_id
+    assert first.memory_fact_id == second.memory_fact_id
 
     async with neo4j_driver.session() as session:
         result = await session.run(
@@ -156,10 +169,12 @@ async def test_add_relation_turn_assertion_links_are_stable(http_client, neo4j_d
                           (o:Entity {name: 'RelObj2'})
             RETURN count(a) AS assertion_count,
                    count(f) AS fact_count,
-                   count(r) AS rel_count
+                   count(r) AS rel_count,
+                   max(f.current) AS fact_current,
+                   max(r.current) AS rel_current
             """,
-            aid=result.assertion_id,
-            fid=result.memory_fact_id,
+            aid=first.assertion_id,
+            fid=first.memory_fact_id,
         )
         record = await result.single()
 
@@ -167,6 +182,8 @@ async def test_add_relation_turn_assertion_links_are_stable(http_client, neo4j_d
     assert record["assertion_count"] == 1
     assert record["fact_count"] == 1
     assert record["rel_count"] == 1
+    assert record["fact_current"] is True
+    assert record["rel_current"] is True
 
 
 @pytest.mark.asyncio
@@ -174,90 +191,162 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
     http_client, neo4j_driver
 ):
     """Functional supersession should update the live MemoryFact and keep Turn provenance."""
-    from landscape.memory_graph import AssertionPayload
-    from landscape.storage import neo4j_store
+    from datetime import UTC, datetime
 
-    await neo4j_store.ensure_memory_graph_schema()
-    subject_id = await neo4j_store.merge_entity("RelSubj3", "PERSON", "prov-sup-doc-1", 0.9)
-    old_object_id = await neo4j_store.merge_entity("OldOrg", "ORGANIZATION", "prov-sup-doc-1", 0.9)
-    new_object_id = await neo4j_store.merge_entity("NewOrg", "ORGANIZATION", "prov-sup-doc-2", 0.9)
+    from landscape.embeddings import encoder
+    from landscape.storage import neo4j_store, qdrant_store
+    from landscape.writeback import add_relation
+    old_org_name = "AtlasAnalytics"
+    new_org_name = "BeaconDynamics"
 
-    first_assertion = await neo4j_store.merge_assertion(
-        AssertionPayload(
-            source_kind="turn",
-            source_id="s3:t3a",
-            raw_subject_text="RelSubj3",
-            raw_relation_text="works for",
-            raw_object_text="OldOrg",
-            confidence=0.9,
-            family_candidate="WORKS_FOR",
-        )
+    subject_doc_id, _ = await neo4j_store.merge_document(
+        "hash-prov-sup-1", "prov-sup-doc-1", "text"
     )
-    second_assertion = await neo4j_store.merge_assertion(
-        AssertionPayload(
-            source_kind="turn",
-            source_id="s3:t3b",
-            raw_subject_text="RelSubj3",
-            raw_relation_text="works for",
-            raw_object_text="NewOrg",
-            confidence=0.95,
-            family_candidate="WORKS_FOR",
-        )
+    old_doc_id, _ = await neo4j_store.merge_document(
+        "hash-prov-sup-2", "prov-sup-doc-2", "text"
+    )
+    new_doc_id, _ = await neo4j_store.merge_document(
+        "hash-prov-sup-3", "prov-sup-doc-3", "text"
     )
 
-    first_fact = await neo4j_store.create_memory_fact_version(
-        family="WORKS_FOR",
-        subject_entity_id=subject_id,
-        object_entity_id=old_object_id,
-        subtype=None,
+    subject_id = await neo4j_store.merge_entity(
+        "RelSubj3",
+        "PERSON",
+        "prov-sup-doc-1",
+        0.9,
+        subject_doc_id,
+        "test",
+    )
+    old_object_id = await neo4j_store.merge_entity(
+        old_org_name,
+        "ORGANIZATION",
+        "prov-sup-doc-2",
+        0.9,
+        old_doc_id,
+        "test",
+    )
+    new_object_id = await neo4j_store.merge_entity(
+        new_org_name,
+        "ORGANIZATION",
+        "prov-sup-doc-3",
+        0.9,
+        new_doc_id,
+        "test",
+    )
+
+    await qdrant_store.upsert_entity(
+        neo4j_element_id=subject_id,
+        name="RelSubj3",
+        entity_type="PERSON",
+        source_doc="prov-sup-doc-1",
+        timestamp=datetime.now(UTC).isoformat(),
+        vector=encoder.encode("RelSubj3 (PERSON)"),
+    )
+    await qdrant_store.upsert_entity(
+        neo4j_element_id=old_object_id,
+        name=old_org_name,
+        entity_type="ORGANIZATION",
+        source_doc="prov-sup-doc-2",
+        timestamp=datetime.now(UTC).isoformat(),
+        vector=encoder.encode(f"{old_org_name} (ORGANIZATION)"),
+    )
+    await qdrant_store.upsert_entity(
+        neo4j_element_id=new_object_id,
+        name=new_org_name,
+        entity_type="ORGANIZATION",
+        source_doc="prov-sup-doc-3",
+        timestamp=datetime.now(UTC).isoformat(),
+        vector=encoder.encode(f"{new_org_name} (ORGANIZATION)"),
+    )
+
+    first = await add_relation(
+        "RelSubj3",
+        "PERSON",
+        old_org_name,
+        "ORGANIZATION",
+        "WORKS_FOR",
+        source="agent:s3:t3a",
+        session_id="s3",
+        turn_id="t3a",
         confidence=0.9,
-        assertion_id=first_assertion,
     )
-    await neo4j_store.materialize_memory_rel(first_fact)
-
-    second_fact = await neo4j_store.supersede_single_current_fact(
-        family="WORKS_FOR",
-        subject_entity_id=subject_id,
-        object_entity_id=new_object_id,
-        subtype=None,
+    second = await add_relation(
+        "RelSubj3",
+        "PERSON",
+        new_org_name,
+        "ORGANIZATION",
+        "WORKS_FOR",
+        source="agent:s3:t3b",
+        session_id="s3",
+        turn_id="t3b",
         confidence=0.95,
-        assertion_id=second_assertion,
     )
 
     async with neo4j_driver.session() as session:
+        turn_rec = await (
+            await session.run(
+                """
+            MATCH (:Turn {id: $turn_id})-[:ASSERTS]->(a:Assertion {id: $assertion_id})
+            OPTIONAL MATCH (a)-[:SUBJECT_ENTITY]->(subject:Entity)
+            OPTIONAL MATCH (a)-[:OBJECT_ENTITY]->(object:Entity)
+                RETURN count(a) AS assertion_count,
+                       max(a.source_kind) AS source_kind,
+                       max(a.source_id) AS source_id,
+                       max(subject.name) AS subject_name,
+                       max(object.name) AS object_name
+                """,
+                turn_id="s3:t3b",
+                assertion_id=second.assertion_id,
+            )
+        ).single()
+        old_fact_rec = await (
+            await session.run(
+                """
+                MATCH (f:MemoryFact {id: $fid})
+                OPTIONAL MATCH (s:Entity)-[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]->(o:Entity)
+                RETURN f.current AS fact_current,
+                       o.name AS target,
+                       r.current AS rel_current
+                """,
+                fid=first.memory_fact_id,
+            )
+        ).single()
+        new_fact_rec = await (
+            await session.run(
+                """
+                MATCH (f:MemoryFact {id: $fid})
+                OPTIONAL MATCH (s:Entity)-[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]->(o:Entity)
+                RETURN f.current AS fact_current,
+                       o.name AS target,
+                       r.current AS rel_current
+                """,
+                fid=second.memory_fact_id,
+            )
+        ).single()
         result = await session.run(
             """
-            MATCH (s:Entity) WHERE elementId(s) = $subject_id
-            MATCH (s)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity)
-            RETURN o.name AS target, r.current AS current, r.memory_fact_id AS fact_id
-            ORDER BY target
+            MATCH (f:MemoryFact {id: $fid})
+            RETURN f.current AS current
             """,
-            subject_id=subject_id,
+            fid=first.memory_fact_id,
         )
-        records = await result.data()
+        old_fact = await result.single()
 
-        old_fact = await (
-            await session.run(
-                "MATCH (f:MemoryFact {id: $fid}) RETURN f.current AS current",
-                fid=first_fact,
-            )
-        ).single()
-        new_fact = await (
-            await session.run(
-                "MATCH (f:MemoryFact {id: $fid}) RETURN f.current AS current",
-                fid=second_fact,
-            )
-        ).single()
-
-    old_edge = next((r for r in records if r["target"] == "OldOrg"), None)
-    new_edge = next((r for r in records if r["target"] == "NewOrg"), None)
-
-    assert old_edge is not None
-    assert new_edge is not None
+    assert turn_rec is not None
+    assert turn_rec["assertion_count"] == 1
+    assert turn_rec["source_kind"] == "turn"
+    assert turn_rec["source_id"] == "s3:t3b"
+    assert turn_rec["subject_name"] == "RelSubj3"
+    assert turn_rec["object_name"] == new_org_name
+    assert old_fact_rec is not None
+    assert new_fact_rec is not None
+    assert old_fact_rec["target"] == old_org_name
+    assert new_fact_rec["target"] == new_org_name
+    assert old_fact_rec["fact_current"] is False
+    assert new_fact_rec["fact_current"] is True
+    assert old_fact_rec["rel_current"] is False
+    assert new_fact_rec["rel_current"] is True
     assert old_fact is not None and old_fact["current"] is False
-    assert new_fact is not None and new_fact["current"] is True
-    assert old_edge["current"] is False
-    assert new_edge["current"] is True
 
 
 @pytest.mark.asyncio
