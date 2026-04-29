@@ -593,6 +593,7 @@ async def test_search_threads_debug_flag_to_retrieve(monkeypatch):
         session_id=None,
         since=None,
         debug=False,
+        include_historical=False,
         log_context=None,
     ):
         calls.append(
@@ -604,6 +605,7 @@ async def test_search_threads_debug_flag_to_retrieve(monkeypatch):
                 "reinforce": reinforce,
                 "session_id": session_id,
                 "debug": debug,
+                "include_historical": include_historical,
             }
         )
         return RetrievalResult(
@@ -632,6 +634,7 @@ async def test_search_threads_debug_flag_to_retrieve(monkeypatch):
             "reinforce": True,
             "session_id": None,
             "debug": True,
+            "include_historical": False,
         }
     ]
 
