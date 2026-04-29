@@ -96,7 +96,9 @@ async def test_add_relation_creates_endpoints_if_missing(http_client, neo4j_driv
         turn_id="t3",
     )
 
-    assert result.outcome in ("created", "reinforced", "superseded")
+    assert result.outcome == "memory_fact"
+    assert result.assertion_id
+    assert result.memory_fact_id
     assert result.subject_id
     assert result.object_id
 
@@ -112,19 +114,18 @@ async def test_add_relation_creates_endpoints_if_missing(http_client, neo4j_driv
                 "MATCH (e:Entity {name: 'Themyscira Corp'}) RETURN e.created_by AS cb"
             )
         ).single()
-        edge_rec = await (
+        fact_rec = await (
             await session.run(
-                "MATCH (s:Entity {name: 'Diana Prince'})-[r:RELATES_TO]->"
-                "(o:Entity {name: 'Themyscira Corp'}) "
-                "WHERE r.valid_until IS NULL "
-                "RETURN r.created_by AS cb, r.session_id AS sid"
+                "MATCH (:Assertion {id: $aid})-[:SUPPORTS]->"
+                "(f:MemoryFact {family: 'WORKS_FOR'}) "
+                "RETURN count(f) AS cnt",
+                aid=result.assertion_id,
             )
         ).single()
 
     assert subj_rec is not None and subj_rec["cb"] == "agent"
     assert obj_rec is not None and obj_rec["cb"] == "agent"
-    assert edge_rec is not None and edge_rec["cb"] == "agent"
-    assert edge_rec["sid"] == "s3"
+    assert fact_rec["cnt"] == 1
 
 
 @pytest.mark.asyncio
@@ -143,70 +144,76 @@ async def test_add_relation_normalizes_rel_type(http_client, neo4j_driver):
         turn_id="t1",
     )
 
-    assert result.outcome in ("created", "reinforced", "superseded")
+    assert result.outcome == "memory_fact"
+    assert result.assertion_id
+    assert result.memory_fact_id
 
     async with neo4j_driver.session() as session:
-        edge_rec = await (
+        fact_rec = await (
             await session.run(
-                "MATCH (:Entity {name: 'Clark Kent'})-[r:RELATES_TO]->"
-                "(:Entity {name: 'Daily Planet'}) "
-                "WHERE r.valid_until IS NULL "
-                "RETURN r.type AS rel_type"
+                "MATCH (:Assertion {id: $aid})-[:SUPPORTS]->"
+                "(f:MemoryFact {family: 'WORKS_FOR'}) "
+                "RETURN count(f) AS cnt",
+                aid=result.assertion_id,
             )
         ).single()
 
-    assert edge_rec is not None
-    assert edge_rec["rel_type"] == "WORKS_FOR"
+    assert fact_rec["cnt"] == 1
 
 
 @pytest.mark.asyncio
 async def test_add_relation_supersedes_when_functional(http_client, neo4j_driver):
     """Functional rel (WORKS_FOR): second add_relation with different object supersedes."""
-    from landscape.storage import neo4j_store
     from landscape.writeback import add_relation
 
-    # Pre-create entities and the original edge via neo4j_store directly
-    doc_id, _ = await neo4j_store.merge_document("hash-wb-sup", "wb-sup-doc", "text")
-    await neo4j_store.merge_entity("Alice", "Person", "wb-sup-doc", 0.9, doc_id, "test")
-    await neo4j_store.merge_entity("Acme", "Organization", "wb-sup-doc", 0.9, doc_id, "test")
-    outcome1, _ = await neo4j_store.upsert_relation(
-        "Alice", "Acme", "WORKS_FOR", 0.9, "wb-sup-doc"
+    # First write creates the current fact.
+    first = await add_relation(
+        "Alice",
+        "Person",
+        "Acme",
+        "Organization",
+        "WORKS_FOR",
+        source="agent:test:5a",
+        session_id="s5",
+        turn_id="t5a",
     )
-    assert outcome1 == "created"
+    assert first.outcome == "memory_fact"
 
-    # Agent says Alice now works for Beacon — should supersede the old edge
+    # Agent says Alice now works for Beacon — should supersede the old fact.
     result = await add_relation(
         "Alice",
         "Person",
         "Beacon",
         "Organization",
         "WORKS_FOR",
-        source="agent:test:5",
+        source="agent:test:5b",
         session_id="s5",
-        turn_id="t5",
+        turn_id="t5b",
     )
 
-    assert result.outcome == "superseded"
-    assert result.relation_id
+    assert result.outcome == "memory_fact"
+    assert result.assertion_id
+    assert result.memory_fact_id
 
     async with neo4j_driver.session() as session:
-        edges = await (
+        facts = await (
             await session.run(
-                "MATCH (s:Entity {name: 'Alice'})-[r:RELATES_TO {type: 'WORKS_FOR'}]->(o:Entity) "
-                "RETURN o.name AS target, r.valid_until AS vu, r.created_by AS cb "
-                "ORDER BY r.valid_from"
+                "MATCH (:Assertion)-[:SUPPORTS]->(f:MemoryFact {family: 'WORKS_FOR'}) "
+                "OPTIONAL MATCH (f)-[:AS_OBJECT]->(o:Entity) "
+                "RETURN o.name AS target, f.current AS current, "
+                "f.created_at AS created_at, f.updated_at AS updated_at "
+                "ORDER BY f.created_at"
             )
         ).data()
 
-    old_edge = next((e for e in edges if e["target"] == "Acme"), None)
-    new_edge = next((e for e in edges if e["target"] == "Beacon"), None)
+    old_edge = next((e for e in facts if e["target"] == "Acme"), None)
+    new_edge = next((e for e in facts if e["target"] == "Beacon"), None)
 
-    assert old_edge is not None, "Old Acme edge must still exist"
-    assert old_edge["vu"] is not None, "Old edge must be superseded (valid_until set)"
+    assert old_edge is not None, "Old Acme fact must still exist"
+    assert old_edge["current"] is False, "Old fact must be superseded"
 
-    assert new_edge is not None, "New Beacon edge must be created"
-    assert new_edge["vu"] is None, "New edge must be live"
-    assert new_edge["cb"] == "agent"
+    assert new_edge is not None, "New Beacon fact must be created"
+    assert new_edge["current"] is True, "New fact must be live"
 
 
 @pytest.mark.asyncio
@@ -259,7 +266,7 @@ async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_drive
         turn_id="t-dup",
     )
 
-    assert result.outcome in ("created", "reinforced", "superseded")
+    assert result.outcome == "memory_fact"
 
     # Assert: exactly one Entity node named 'Alice' (no Unknown duplicate)
     async with neo4j_driver.session() as session:
@@ -270,8 +277,9 @@ async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_drive
         ).single()
         edge_count_rec = await (
             await session.run(
-                "MATCH (s:Entity {name: 'Alice'})-[r:RELATES_TO]->(o:Entity {name: 'Beacon'}) "
-                "WHERE r.valid_until IS NULL "
+                "MATCH (s:Entity {name: 'Alice'})-[r:MEMORY_REL {family: 'WORKS_FOR'}]->"
+                "(o:Entity {name: 'Beacon'}) "
+                "WHERE r.current = true "
                 "RETURN count(r) AS cnt"
             )
         ).single()
@@ -281,8 +289,8 @@ async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_drive
         "Unknown-type cross-type resolution likely failed, creating a duplicate."
     )
     assert edge_count_rec["cnt"] == 1, (
-        f"Expected exactly 1 Alice->Beacon edge, got {edge_count_rec['cnt']} — "
-        "cartesian product in upsert_relation likely occurred."
+        f"Expected exactly 1 Alice->Beacon memory rel, got {edge_count_rec['cnt']} — "
+        "entity resolution likely failed."
     )
 
 
@@ -418,7 +426,7 @@ async def test_existing_entity_mention_in_new_turn_creates_mentioned_in(http_cli
 @pytest.mark.asyncio
 async def test_add_relation_with_session_turn_links_entities_to_turn(http_client, neo4j_driver):
     """add_relation with session+turn should link both endpoints via :MENTIONED_IN
-    and the RELATES_TO edge should carry session_id/turn_id/created_by properties."""
+    and the assertion/memory fact should be linked to the current turn."""
     from landscape.writeback import add_relation
 
     result = await add_relation(
@@ -432,7 +440,9 @@ async def test_add_relation_with_session_turn_links_entities_to_turn(http_client
         turn_id="t1",
     )
 
-    assert result.outcome in ("created", "reinforced", "superseded")
+    assert result.outcome == "memory_fact"
+    assert result.assertion_id
+    assert result.memory_fact_id
 
     async with neo4j_driver.session() as session:
         # Both Dave and Initech must be linked to the turn
@@ -452,19 +462,18 @@ async def test_add_relation_with_session_turn_links_entities_to_turn(http_client
         ).single()
         assert initech_rec["cnt"] == 1, "Initech missing :MENTIONED_IN -> Turn s3:t1"
 
-        # RELATES_TO edge must carry provenance properties
+        # Assertion/MemoryFact provenance must exist
         edge_rec = await (
             await session.run(
-                "MATCH (:Entity {name: 'Dave'})-[r:RELATES_TO {type: 'WORKS_FOR'}]->"
-                "(:Entity {name: 'Initech'}) "
-                "WHERE r.valid_until IS NULL "
-                "RETURN r.session_id AS sid, r.turn_id AS tid, r.created_by AS cb"
+                "MATCH (:Turn {id: 's3:t1'})-[:ASSERTS]->"
+                "(:Assertion {id: $aid})-[:SUPPORTS]->"
+                "(f:MemoryFact {id: $fid, family: 'WORKS_FOR'}) "
+                "RETURN count(f) AS cnt",
+                aid=result.assertion_id,
+                fid=result.memory_fact_id,
             )
         ).single()
-        assert edge_rec is not None, "RELATES_TO edge not found"
-        assert edge_rec["sid"] == "s3"
-        assert edge_rec["tid"] == "t1"
-        assert edge_rec["cb"] == "agent"
+        assert edge_rec["cnt"] == 1, "Assertion->MemoryFact link not found"
 
 
 @pytest.mark.asyncio
@@ -731,6 +740,52 @@ async def test_add_relation_endpoint_types_coerce(http_client, neo4j_driver):
     )
 
 
+@pytest.mark.asyncio
+async def test_add_relation_creates_assertion_and_memory_fact(http_client):
+    from landscape.writeback import add_relation
+    from landscape.storage import neo4j_store
+
+    result = await add_relation(
+        subject="Alice",
+        subject_type="Person",
+        object_="Acme",
+        object_type="Organization",
+        rel_type="WORKS_FOR",
+        source="wb-doc",
+        confidence=0.9,
+        session_id="s1",
+        turn_id="t1",
+    )
+
+    assert result.assertion_id
+    assert result.memory_fact_id
+
+    rows = await neo4j_store.run_cypher_readonly(
+        "MATCH (:Assertion)-[:SUPPORTS]->(f:MemoryFact {family: 'WORKS_FOR'}) "
+        "RETURN count(f) AS count"
+    )
+    assert rows[0]["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_alias_writeback_creates_alias_not_stub_entity(http_client):
+    from landscape.writeback import add_entity
+    from landscape.storage import neo4j_store
+
+    canonical = await add_entity("Robert", "Person", source="wb-doc", confidence=0.9, session_id="s1", turn_id="t1")
+    await neo4j_store.merge_alias(canonical.entity_id, "Bob", "wb-doc", 0.9)
+
+    rows = await neo4j_store.run_cypher_readonly(
+        "MATCH (a:Alias)-[:SAME_AS]->(:Entity {name: 'Robert'}) RETURN count(a) AS count"
+    )
+    assert rows[0]["count"] == 1
+
+    stub_rows = await neo4j_store.run_cypher_readonly(
+        "MATCH (e:Entity {name: 'Bob', canonical: false}) RETURN count(e) AS count"
+    )
+    assert stub_rows[0]["count"] == 0
+
+
 # ---------------------------------------------------------------------------
 # Helpers for alias / homonym regression tests
 # ---------------------------------------------------------------------------
@@ -774,24 +829,17 @@ async def _seed_entity_with_vector(
     return entity_id
 
 
-async def _seed_alias_stub(
+async def _seed_alias(
     canonical_entity_id: str,
     alias_name: str,
 ) -> None:
-    """Register an alias stub for an existing canonical entity in Neo4j.
+    """Register an alias for an existing canonical entity in Neo4j.
 
-    Creates the SAME_AS edge from the stub to the canonical node, and appends
-    the alias to the canonical node's aliases list — exactly as
-    neo4j_store.add_alias does.
+    Uses the Alias node model instead of creating a stub Entity node.
     """
     from landscape.storage import neo4j_store
 
-    await neo4j_store.add_alias(
-        canonical_element_id=canonical_entity_id,
-        alias=alias_name,
-        source_doc="test-alias",
-        confidence=0.95,
-    )
+    await neo4j_store.merge_alias(canonical_entity_id, alias_name, "test-alias", 0.95)
 
 
 @pytest.mark.asyncio
@@ -813,8 +861,8 @@ async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver
     bob_vector = encoder.encode("Bob (Person)")
     robert_id = await _seed_entity_with_vector("Robert", "Person", vector=bob_vector)
 
-    # Register "Bob" as an alias stub in Neo4j so MATCH {name: 'Bob'} finds the stub.
-    await _seed_alias_stub(robert_id, "Bob")
+    # Register "Bob" as an alias in Neo4j without creating a stub Entity node.
+    await _seed_alias(robert_id, "Bob")
 
     # Seed Acme (plain -- no alias trickery needed here).
     acme_id = await _seed_entity_with_vector("Acme", "Organization")
@@ -830,7 +878,7 @@ async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver
         turn_id="t-alias",
     )
 
-    assert result.outcome in ("created", "reinforced", "superseded")
+    assert result.outcome == "memory_fact"
 
     # The edge must be attached to Robert (canonical), not to the alias stub.
     assert result.subject_id == robert_id, (
@@ -841,12 +889,12 @@ async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver
         f"Expected edge object_id to be Acme ({acme_id}), got {result.object_id!r}"
     )
 
-    # Double-check via the graph: Robert should have the RELATES_TO edge.
+    # Double-check via the graph: Robert should have the MEMORY_REL edge.
     async with neo4j_driver.session() as session:
         edge_on_canonical = await (
             await session.run(
-                "MATCH (s:Entity)-[r:RELATES_TO {type: 'WORKS_FOR'}]->(o:Entity) "
-                "WHERE elementId(s) = $sid AND r.valid_until IS NULL "
+                "MATCH (s:Entity)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity) "
+                "WHERE elementId(s) = $sid AND r.current = true "
                 "RETURN count(r) AS cnt",
                 sid=robert_id,
             )
@@ -854,8 +902,8 @@ async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver
         edge_on_stub = await (
             await session.run(
                 "MATCH (stub:Entity {name: 'Bob', canonical: false})"
-                "-[r:RELATES_TO {type: 'WORKS_FOR'}]->() "
-                "WHERE r.valid_until IS NULL "
+                "-[r:MEMORY_REL {family: 'WORKS_FOR'}]->() "
+                "WHERE r.current = true "
                 "RETURN count(r) AS cnt"
             )
         ).single()
@@ -902,7 +950,7 @@ async def test_add_relation_does_not_cross_link_same_surface_name(http_client, n
         turn_id="t-homonym",
     )
 
-    assert result.outcome in ("created", "reinforced", "superseded")
+    assert result.outcome == "memory_fact"
     assert result.subject_id == alex_person_id, (
         f"Expected edge to land on Alex-Person ({alex_person_id}), "
         f"got {result.subject_id!r} -- homonym cross-link may have occurred."
@@ -915,8 +963,8 @@ async def test_add_relation_does_not_cross_link_same_surface_name(http_client, n
     async with neo4j_driver.session() as session:
         all_edges = await (
             await session.run(
-                "MATCH (s:Entity {name: 'Alex'})-[r:RELATES_TO {type: 'WORKS_FOR'}]->(o:Entity) "
-                "WHERE r.valid_until IS NULL "
+                "MATCH (s:Entity {name: 'Alex'})-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity) "
+                "WHERE r.current = true "
                 "RETURN elementId(s) AS sid, s.type AS stype, count(r) AS cnt"
             )
         ).data()

@@ -23,10 +23,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from landscape.embeddings import encoder
-from landscape.entities import resolver
+from landscape.extraction.schema import normalize_relation_type
 from landscape.extraction.entity_type_coercion import coerce_entity_type
-from landscape.extraction.rel_type_coercion import coerce_rel_type
-from landscape.extraction.schema import normalize_subtype
+from landscape.memory_graph.models import AssertionPayload
+from landscape.memory_graph.service import persist_assertion_and_maybe_promote
 from landscape.storage import neo4j_store, qdrant_store
 
 # ---------------------------------------------------------------------------
@@ -43,8 +43,9 @@ class AddEntityResult:
 
 @dataclass
 class AddRelationResult:
-    relation_id: str        # Neo4j element id of the (new or reinforced) edge
-    outcome: str            # "created" | "reinforced" | "superseded"
+    assertion_id: str       # Neo4j id of the persisted assertion
+    memory_fact_id: str | None
+    outcome: str            # "assertion_only" | "memory_fact"
     subject_id: str
     object_id: str
 
@@ -70,69 +71,51 @@ class StatusSummary:
 # ---------------------------------------------------------------------------
 
 
-async def add_entity(
+UNKNOWN_TYPE_THRESHOLD = 0.90
+
+
+async def _resolve_entity_for_writeback(
     name: str,
     entity_type: str,
     *,
     source: str,
-    confidence: float = 0.8,
-    session_id: str | None = None,
-    turn_id: str | None = None,
+    confidence: float,
+    session_id: str,
+    turn_id: str,
 ) -> AddEntityResult:
-    """Persist an entity authored by an agent.
-
-    Both ``session_id`` and ``turn_id`` are required.  Agent-authored entities
-    must be anchored to a real conversation Turn for provenance to be
-    meaningful.  Calls without them raise ``ValueError``.
-
-    Resolution flow:
-    1. Validate that session_id and turn_id are both non-empty.
-    2. Embed ``name`` with the same encoder used by the ingest pipeline.
-    3. Call ``resolver.resolve_entity`` to check for a near-duplicate canonical
-       node.  The resolver searches Qdrant by type, so the entity_type must
-       match for resolution to fire.
-    4. If resolved → return the canonical id/name and add a :MENTIONED_IN edge
-       to anchor the mention to the current Turn.
-    5. If not resolved → create a new Neo4j entity node (``created_by="agent"``)
-       and upsert its embedding into Qdrant.  Provenance is anchored via a
-       :MENTIONED_IN edge to the Turn.
-    """
-    if not session_id or not turn_id:
-        raise ValueError(
-            "session_id and turn_id are required for agent write-back; "
-            "synthetic-Document provenance has been removed"
-        )
-
-    # Coerce the agent-supplied type to the canonical vocab.
-    canonical_type, _coerce_score = coerce_entity_type(entity_type)
-    # Only store subtype when the raw type differs from the canonical (avoid storage noise).
-    subtype: str | None = entity_type if canonical_type != entity_type else None
+    canonical_type, _ = coerce_entity_type(entity_type)
 
     vector = encoder.encode(f"{name} ({canonical_type})")
 
-    canonical_id, is_new, _sim = await resolver.resolve_entity(
-        name=name,
-        entity_type=canonical_type,
-        vector=vector,
-        source_doc=source,
-    )
-
-    if not is_new:
-        # Resolved to an existing canonical node — fetch its name for the caller.
-        existing = await neo4j_store.find_entity_by_element_id(canonical_id)
-        canonical_name = existing["name"] if existing else name
-
-        # Record the mention in this turn.
-        turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
-        await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id, confidence=confidence)
-
-        return AddEntityResult(
-            entity_id=canonical_id,
-            canonical_name=canonical_name,
-            resolved_to_existing=True,
+    if canonical_type == "Unknown":
+        candidates = await qdrant_store.search_entities_any_type(vector=vector, limit=5)
+        effective_threshold = UNKNOWN_TYPE_THRESHOLD
+    else:
+        candidates = await qdrant_store.search_similar_entities(
+            vector=vector,
+            entity_type=canonical_type,
+            limit=5,
         )
+        effective_threshold = 0.85
 
-    # No match — create the Turn node then create the entity node.
+    if candidates and candidates[0].score >= effective_threshold:
+        best = candidates[0]
+        canonical_id = best.payload["neo4j_node_id"]
+        existing = await neo4j_store.find_entity_by_element_id(canonical_id)
+        if existing is not None:
+            canonical_name = existing["name"] if existing["name"] else name
+            if name.lower() != canonical_name.lower() and name not in existing["aliases"]:
+                await neo4j_store.merge_alias(canonical_id, name, source, best.score)
+
+            turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
+            await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id, confidence=confidence)
+
+            return AddEntityResult(
+                entity_id=canonical_id,
+                canonical_name=canonical_name,
+                resolved_to_existing=True,
+            )
+
     turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
 
     entity_id = await neo4j_store.merge_entity(
@@ -145,7 +128,7 @@ async def add_entity(
         created_by="agent",
         session_id=session_id,
         turn_id=turn_id,
-        subtype=subtype,
+        subtype=entity_type if canonical_type != entity_type else None,
     )
 
     await neo4j_store.link_entity_to_turn(entity_id, turn_element_id, confidence=confidence)
@@ -164,6 +147,49 @@ async def add_entity(
         entity_id=entity_id,
         canonical_name=name,
         resolved_to_existing=False,
+    )
+
+
+async def add_entity(
+    name: str,
+    entity_type: str,
+    *,
+    source: str,
+    confidence: float = 0.8,
+    session_id: str | None = None,
+    turn_id: str | None = None,
+) -> AddEntityResult:
+    """Persist an entity authored by an agent.
+
+    Both ``session_id`` and ``turn_id`` are required.  Agent-authored entities
+    must be anchored to a real conversation Turn for provenance to be
+    meaningful.  Calls without them raise ``ValueError``.
+
+    Resolution flow:
+    1. Validate that session_id and turn_id are both non-empty.
+    2. Embed ``name`` with the same encoder used by the ingest pipeline.
+    3. Search Qdrant for a near-duplicate canonical node using the same typed
+       similarity path as ingest.
+    4. If resolved → return the canonical id/name, add a :MENTIONED_IN edge to
+       anchor the mention to the current Turn, and record the alias as an Alias
+       node when the surface form differs.
+    5. If not resolved → create a new Neo4j entity node (``created_by="agent"``)
+       and upsert its embedding into Qdrant.  Provenance is anchored via a
+       :MENTIONED_IN edge to the Turn.
+    """
+    if not session_id or not turn_id:
+        raise ValueError(
+            "session_id and turn_id are required for agent write-back; "
+            "synthetic-Document provenance has been removed"
+        )
+
+    return await _resolve_entity_for_writeback(
+        name,
+        entity_type,
+        source=source,
+        confidence=confidence,
+        session_id=session_id,
+        turn_id=turn_id,
     )
 
 
@@ -189,13 +215,13 @@ async def add_relation(
     Both endpoints are auto-resolved (or auto-created with the declared types)
     if they don't already exist.  ``subject_type`` and ``object_type`` are
     required: agents must declare what kind of entities they are relating so
-    that the resolver can find existing typed nodes and avoid creating Unknown-
-    typed duplicates that degrade graph quality.
+    that the write-back layer can find existing typed nodes and avoid creating
+    Unknown-typed duplicates that degrade graph quality.
 
-    ``rel_type`` is normalised via ``normalize_relation_type`` before the edge
-    is written, so callers may pass synonyms like ``"EMPLOYED_BY"`` and they
-    will be stored as the canonical ``"WORKS_FOR"``.  Functional-type
-    supersession semantics apply automatically.
+    ``rel_type`` is normalised via ``normalize_relation_type`` before the
+    assertion is persisted, so callers may pass synonyms like ``"EMPLOYED_BY"``
+    and they will be stored under the canonical family.  If the family is
+    promotable, the assertion is upgraded to a MemoryFact.
 
     Args:
         subject:      Name of the subject entity (e.g. "Alice Chen").
@@ -214,7 +240,7 @@ async def add_relation(
             "synthetic-Document provenance has been removed"
         )
 
-    # Resolve / create both endpoints with the declared types
+    # Resolve / create both endpoints with the declared types.
     subj_result = await add_entity(
         subject,
         subject_type,
@@ -232,32 +258,31 @@ async def add_relation(
         turn_id=turn_id,
     )
 
-    canonical_rel_type, _coerce_score = coerce_rel_type(rel_type)
-    # Preserve LLM/agent nuance as subtype when rel_type got coerced; explicit
-    # subtype kwarg wins.
-    raw_upper = (rel_type or "").strip().upper().replace(" ", "_")
-    subtype_source = subtype or (
-        raw_upper if raw_upper and raw_upper != canonical_rel_type else None
-    )
-    canonical_subtype = normalize_subtype(subtype_source)
+    turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
 
-    outcome, relation_id = await neo4j_store.upsert_relation(
-        subject_node_id=subj_result.entity_id,
-        object_node_id=obj_result.entity_id,
-        subject_name=subject,
-        object_name=object_,
-        relation_type=canonical_rel_type,
+    payload = AssertionPayload(
+        source_kind="turn",
+        source_id=f"{session_id}:{turn_id}",
+        raw_subject_text=subject,
+        raw_relation_text=rel_type,
+        raw_object_text=object_,
         confidence=confidence,
-        source_doc=source,
-        created_by="agent",
-        session_id=session_id,
-        turn_id=turn_id,
-        subtype=canonical_subtype,
+        family_candidate=normalize_relation_type(rel_type),
+        subtype=None,
+    )
+    persistence = await persist_assertion_and_maybe_promote(
+        payload,
+        source_node_id=turn_element_id,
+        source_kind="turn",
+        subject_entity_id=subj_result.entity_id,
+        object_entity_id=obj_result.entity_id,
+        chunk_ids=[],
     )
 
     return AddRelationResult(
-        relation_id=relation_id or "",
-        outcome=outcome,
+        assertion_id=persistence.assertion_id,
+        memory_fact_id=persistence.fact_id,
+        outcome="memory_fact" if persistence.fact_id is not None else "assertion_only",
         subject_id=subj_result.entity_id,
         object_id=obj_result.entity_id,
     )
@@ -268,14 +293,14 @@ async def status_summary() -> StatusSummary:
     ``status`` tool (~200 tokens).
 
     Runs three small read-only Cypher queries in a single session:
-    a. Counts for Entity / Document / live RELATES_TO edges.
-    b. Top-5 entities by total incident edge access_count (a proxy for
-       reinforcement).
-    c. Most-recent 5 agent-written RELATES_TO edges.
+    a. Counts for Entity / Document / live MemoryFact edges.
+    b. Top-5 entities by total incident edge reinforcement (a proxy for
+       support).
+    c. Most-recent 5 agent-written assertions / memory facts.
     """
     driver = neo4j_store.get_driver()
     async with driver.session() as session:
-        # (a) Counts — use OPTIONAL MATCH so an empty Document or RELATES_TO
+        # (a) Counts — use OPTIONAL MATCH so an empty Document or MemoryFact
         # set does not suppress the whole row via Cypher's eager-MATCH semantics.
         count_result = await session.run(
             """
@@ -283,7 +308,8 @@ async def status_summary() -> StatusSummary:
             WITH count(e) AS entity_count
             OPTIONAL MATCH (d:Document)
             WITH entity_count, count(d) AS doc_count
-            OPTIONAL MATCH ()-[r:RELATES_TO]->() WHERE r.valid_until IS NULL
+            OPTIONAL MATCH ()-[r:MEMORY_REL]->()
+            WHERE r.current = true
             RETURN entity_count, doc_count, count(r) AS rel_count
             """
         )
@@ -292,13 +318,13 @@ async def status_summary() -> StatusSummary:
         document_count = count_rec["doc_count"] if count_rec else 0
         relation_count = count_rec["rel_count"] if count_rec else 0
 
-        # (b) Top-5 entities by reinforcement (sum of incident edge access_counts)
+        # (b) Top-5 entities by reinforcement (sum of incident edge confidence)
         top_result = await session.run(
             """
-            MATCH (e:Entity)-[r:RELATES_TO]-()
-            WHERE r.valid_until IS NULL
+            MATCH (e:Entity)-[r:MEMORY_REL]-()
+            WHERE r.current = true
             WITH e.name AS name, e.type AS type,
-                 sum(coalesce(r.access_count, 0)) AS reinforcement
+                 sum(coalesce(r.confidence_agg, 0)) AS reinforcement
             ORDER BY reinforcement DESC
             LIMIT 5
             RETURN name, type, reinforcement
@@ -312,19 +338,20 @@ async def status_summary() -> StatusSummary:
                 "reinforcement": rec["reinforcement"],
             })
 
-        # (c) Recent agent writes — DISTINCT elementId(r) defends against
-        # any future duplicate edges from surfacing the same write twice.
+        # (c) Recent agent writes — DISTINCT elementId(f) defends against
+        # any future duplicate facts from surfacing the same write twice.
         recent_result = await session.run(
             """
-            MATCH (s:Entity)-[r:RELATES_TO]->(o:Entity)
-            WHERE r.created_by = 'agent'
-            WITH DISTINCT elementId(r) AS rid, s.name AS subject,
-                 r.type AS rel_type, o.name AS object,
-                 r.session_id AS session_id, r.turn_id AS turn_id,
-                 r.valid_from AS when
+            MATCH (t:Turn)-[:ASSERTS]->(a:Assertion)-[:SUPPORTS]->(f:MemoryFact)
+            OPTIONAL MATCH (s:Entity)-[:AS_SUBJECT]->(f)
+            OPTIONAL MATCH (f)-[:AS_OBJECT]->(o:Entity)
+            WITH DISTINCT elementId(f) AS fid, s.name AS subject,
+                 f.family AS rel_type, coalesce(o.name, '') AS object,
+                 t.session_id AS session_id, t.turn_id AS turn_id,
+                 a.created_at AS when
             ORDER BY when DESC
             LIMIT 5
-            RETURN rid, subject, rel_type, object, session_id, turn_id, when
+            RETURN fid, subject, rel_type, object, session_id, turn_id, when
             """
         )
         recent_agent_writes = []

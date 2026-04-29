@@ -264,7 +264,8 @@ async def add_relation(
     )
     return json.dumps(
         {
-            "relation_id": result.relation_id,
+            "assertion_id": result.assertion_id,
+            "memory_fact_id": result.memory_fact_id,
             "outcome": result.outcome,
             "subject_id": result.subject_id,
             "object_id": result.object_id,

@@ -721,7 +721,7 @@ async def test_add_entity_returns_canonical_id(http_client):
 
 @pytest.mark.asyncio
 async def test_add_relation_creates_or_supersedes(http_client):
-    """add_relation should report outcome 'created' for a fresh edge."""
+    """add_relation should return assertion and memory-fact ids."""
     async with _mcp_client() as client:
         result = await client.call_tool(
             "add_relation",
@@ -740,15 +740,16 @@ async def test_add_relation_creates_or_supersedes(http_client):
     assert not result.isError, f"Tool returned error: {result.content}"
     data = _parse(result)
 
-    assert data["outcome"] == "created"
+    assert data["outcome"] == "memory_fact"
+    assert data["assertion_id"]
+    assert data["memory_fact_id"]
     assert data["subject_id"]
     assert data["object_id"]
-    assert "relation_id" in data
 
 
 @pytest.mark.asyncio
 async def test_add_relation_supersedes_functional_edge(http_client):
-    """Writing WORKS_FOR twice for the same subject should supersede the first edge."""
+    """Writing WORKS_FOR twice for the same subject should yield distinct memory facts."""
     async with _mcp_client() as client:
         # First write
         r1 = await client.call_tool(
@@ -766,7 +767,9 @@ async def test_add_relation_supersedes_functional_edge(http_client):
         )
         assert not r1.isError
         d1 = _parse(r1)
-        assert d1["outcome"] == "created"
+        assert d1["outcome"] == "memory_fact"
+        assert d1["assertion_id"]
+        assert d1["memory_fact_id"]
 
         # Second write — different object, same functional rel_type → supersession
         r2 = await client.call_tool(
@@ -784,7 +787,10 @@ async def test_add_relation_supersedes_functional_edge(http_client):
         )
         assert not r2.isError
         d2 = _parse(r2)
-        assert d2["outcome"] == "superseded"
+        assert d2["outcome"] == "memory_fact"
+        assert d2["assertion_id"]
+        assert d2["memory_fact_id"]
+        assert d2["memory_fact_id"] != d1["memory_fact_id"]
 
 
 def _graph_query_principal():
