@@ -126,18 +126,15 @@ path directly.
 
 ## Supersession Model
 
-Landscape supports temporal updates through valid-time properties on relation
-edges. When a new fact conflicts with a live functional relationship, the old
-edge receives `valid_until` and the new edge becomes current.
+Supersession is modeled at the `MemoryFact` layer, not on raw assertions.
+`Assertion` records remain immutable source evidence. When a newer extraction
+conflicts with an existing current fact, Landscape creates a new versioned
+`MemoryFact`, marks the prior version superseded, and only projects the current
+version into `MEMORY_REL` for traversal.
 
-Only functional relationship types trigger this behavior by default. For
-example, `WORKS_FOR` and `REPORTS_TO` are treated as at-most-one-current-value
-per subject, while `USES`, `APPROVED`, and `LOCATED_IN` are additive because a
-project can use several tools, a person can approve several items, and an
-organization can have several locations.
-
-This avoids a common graph-memory failure mode where a second true fact
-incorrectly deletes or hides the first true fact.
+This keeps provenance intact while ensuring retrieval only walks live facts.
+Non-conflicting facts remain additive, and superseded versions stay available
+for audit and temporal reasoning without appearing in the current graph view.
 
 ## Relationship Vocabulary
 
