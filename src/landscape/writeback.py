@@ -105,7 +105,7 @@ async def _resolve_entity_for_writeback(
         existing = await neo4j_store.find_entity_by_element_id(canonical_id)
         if existing is not None:
             canonical_name = existing["name"] if existing["name"] else name
-            if name.lower() != canonical_name.lower() and name not in existing["aliases"]:
+            if name.lower() != canonical_name.lower():
                 await neo4j_store.merge_alias(canonical_id, name, source, best.score)
 
             turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
@@ -345,20 +345,20 @@ async def status_summary() -> StatusSummary:
                 "reinforcement": rec["reinforcement"],
             })
 
-        # (c) Recent agent writes — DISTINCT elementId(f) defends against
-        # any future duplicate facts from surfacing the same write twice.
+        # (c) Recent agent writes — DISTINCT assertion ids defends against
+        # any future duplicate assertions from surfacing the same write twice.
         recent_result = await session.run(
             """
-            MATCH (t:Turn)-[:ASSERTS]->(a:Assertion)-[:SUPPORTS]->(f:MemoryFact)
-            OPTIONAL MATCH (s:Entity)-[:AS_SUBJECT]->(f)
-            OPTIONAL MATCH (f)-[:AS_OBJECT]->(o:Entity)
-            WITH DISTINCT elementId(f) AS fid, s.name AS subject,
-                 f.family AS rel_type, coalesce(o.name, '') AS object,
+            MATCH (t:Turn)-[:ASSERTS]->(a:Assertion)
+            OPTIONAL MATCH (a)-[:SUPPORTS]->(f:MemoryFact)
+            WITH DISTINCT a.id AS aid, a.raw_subject_text AS subject,
+                 coalesce(f.family, a.family_candidate, a.raw_relation_text) AS rel_type,
+                 coalesce(a.raw_object_text, '') AS object,
                  t.session_id AS session_id, t.turn_id AS turn_id,
                  a.created_at AS when
             ORDER BY when DESC
             LIMIT 5
-            RETURN fid, subject, rel_type, object, session_id, turn_id, when
+            RETURN aid, subject, rel_type, object, session_id, turn_id, when
             """
         )
         recent_agent_writes = []

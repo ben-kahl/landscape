@@ -826,6 +826,31 @@ async def test_add_relation_threads_subtype_through_mcp(http_client):
     assert rows[0]["subtype"] == "temporary_contractor"
 
 
+@pytest.mark.asyncio
+async def test_add_relation_returns_assertion_only_for_unpromotable_relation(http_client):
+    """add_relation should surface assertion_only when the family is not promotable."""
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "add_relation",
+            {
+                "subject": "Ivy",
+                "subject_type": "Person",
+                "object": "Notebook",
+                "object_type": "Organization",
+                "rel_type": "RELATED_TO",
+                "source": "agent:test-session:3d",
+                "session_id": "test-session",
+                "turn_id": "t3d",
+            },
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    data = _parse(result)
+    assert data["outcome"] == "assertion_only"
+    assert data["assertion_id"]
+    assert data["memory_fact_id"] is None
+
+
 def _graph_query_principal():
     from landscape.auth import AuthContext
 

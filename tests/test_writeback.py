@@ -791,6 +791,18 @@ async def test_alias_writeback_creates_alias_not_stub_entity(http_client):
     assert result.resolved_to_existing is True
     assert result.entity_id == robert_id
 
+    repeat = await add_entity(
+        "Bob",
+        "Person",
+        source="wb-doc-2",
+        confidence=0.9,
+        session_id="s1",
+        turn_id="t2",
+    )
+
+    assert repeat.resolved_to_existing is True
+    assert repeat.entity_id == robert_id
+
     rows = await neo4j_store.run_cypher_readonly(
         "MATCH (a:Alias)-[:SAME_AS]->(:Entity {name: 'Robert'}) RETURN count(a) AS count"
     )
@@ -800,6 +812,38 @@ async def test_alias_writeback_creates_alias_not_stub_entity(http_client):
         "MATCH (e:Entity {name: 'Bob', canonical: false}) RETURN count(e) AS count"
     )
     assert stub_rows[0]["count"] == 0
+
+    alias_rows = await neo4j_store.run_cypher_readonly(
+        "MATCH (a:Alias)-[:SAME_AS]->(:Entity {name: 'Robert'}) RETURN count(a) AS count"
+    )
+    assert alias_rows[0]["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_assertion_only_writeback_is_reported_in_status_summary(http_client):
+    from landscape.writeback import add_relation, status_summary
+
+    result = await add_relation(
+        "Alice",
+        "Person",
+        "Acme",
+        "Organization",
+        "RELATED_TO",
+        source="wb-doc",
+        confidence=0.9,
+        session_id="s1",
+        turn_id="t3",
+    )
+
+    assert result.outcome == "assertion_only"
+    assert result.assertion_id
+    assert result.memory_fact_id is None
+
+    summary = await status_summary()
+    assert any(
+        entry["subject"] == "Alice" and entry["rel_type"] == "RELATED_TO" and entry["object"] == "Acme"
+        for entry in summary.recent_agent_writes
+    )
 
 
 # ---------------------------------------------------------------------------
