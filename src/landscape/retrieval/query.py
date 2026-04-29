@@ -2,7 +2,6 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import perf_counter
-
 from landscape.embeddings import encoder
 from landscape.observability import RetrievalLogContext, create_retrieval_log_context
 from landscape.retrieval.scoring import (
@@ -28,6 +27,9 @@ class RetrievedEntity:
     path_edge_types: list[str] = field(default_factory=list)
     path_edge_subtypes: list[str | None] = field(default_factory=list)
     path_edge_quantities: list[dict[str, object | None]] = field(default_factory=list)
+    path_memory_fact_ids: list[str] = field(default_factory=list)
+    memory_facts: list[dict[str, object]] = field(default_factory=list)
+    supporting_assertions: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass
@@ -61,6 +63,84 @@ def _top_results_for_logging(results: list[RetrievedEntity], *, max_items: int =
     ]
 
 
+async def _hydrate_memory_path_details(
+    memory_fact_ids: list[str],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Hydrate memory facts and their supporting assertions for a retrieved path.
+
+    This keeps the retrieval-layer API stable without introducing a new public
+    helper in storage. If the storage layer later grows a dedicated batch helper,
+    this function can delegate to it without changing callers."""
+    if not memory_fact_ids:
+        return [], []
+
+    unique_fact_ids = list(dict.fromkeys(memory_fact_ids))
+    driver = neo4j_store.get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (fact:MemoryFact)
+            WHERE fact.id IN $fact_ids
+            OPTIONAL MATCH (subject:Entity)-[:AS_SUBJECT]->(fact)
+            OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
+            OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: fact.id}]->(object)
+            OPTIONAL MATCH (a:Assertion)-[:SUPPORTS]->(fact)
+            WITH fact, subject, object, rel,
+                 collect(DISTINCT a) AS assertions
+            RETURN fact.id AS memory_fact_id,
+                   fact.family AS family,
+                   fact.current AS current,
+                   fact.fact_key AS fact_key,
+                   fact.slot_key AS slot_key,
+                   fact.subtype AS subtype,
+                   fact.support_count AS support_count,
+                   fact.confidence_agg AS confidence_agg,
+                   subject.id AS subject_entity_id,
+                   subject.name AS subject_name,
+                   subject.type AS subject_type,
+                   object.id AS object_entity_id,
+                   object.name AS object_name,
+                   object.type AS object_type,
+                   rel.current AS memory_rel_current,
+                   [a IN assertions WHERE a IS NOT NULL | {
+                     assertion_id: a.id,
+                     source_kind: a.source_kind,
+                     source_id: a.source_id,
+                     raw_subject_text: a.raw_subject_text,
+                     raw_relation_text: a.raw_relation_text,
+                     raw_object_text: a.raw_object_text,
+                     family_candidate: a.family_candidate,
+                     confidence: a.confidence,
+                     subtype: a.subtype,
+                     quantity_value: a.quantity_value,
+                     quantity_unit: a.quantity_unit,
+                     quantity_kind: a.quantity_kind,
+                     time_scope: a.time_scope,
+                     status: a.status,
+                     created_at: a.created_at
+                   }] AS supporting_assertions
+            ORDER BY memory_fact_id
+            """,
+            fact_ids=unique_fact_ids,
+        )
+        rows = [dict(record) async for record in result]
+
+    row_by_fact_id = {row["memory_fact_id"]: row for row in rows}
+    memory_facts: list[dict[str, object]] = []
+    supporting_assertions: list[dict[str, object]] = []
+    for fact_id in unique_fact_ids:
+        row = row_by_fact_id.get(fact_id)
+        if row is None:
+            continue
+        assertions = list(row.pop("supporting_assertions") or [])
+        memory_facts.append(row)
+        supporting_assertions.extend(
+            {**assertion, "memory_fact_id": fact_id} for assertion in assertions
+        )
+
+    return memory_facts, supporting_assertions
+
+
 async def retrieve(
     query_text: str,
     hops: int = 2,
@@ -71,6 +151,7 @@ async def retrieve(
     session_id: str | None = None,
     since: datetime | None = None,
     debug: bool = False,
+    include_historical: bool = False,
     log_context: RetrievalLogContext | None = None,
 ) -> RetrievalResult:
     """Hybrid retrieval: seed by vector similarity, expand by graph BFS,
@@ -217,7 +298,7 @@ async def retrieve(
         #    waste BFS work on entities whose edges are all superseded anyway).
         live_seed_ids = [row["eid"] for row in seed_rows]
         stage_started_at = log.set_stage("graph_expansion_completed")
-        expansions = await neo4j_store.bfs_expand(live_seed_ids, max_hops=hops)
+        expansions = await neo4j_store.bfs_expand_memory_rel(live_seed_ids, max_hops=hops)
         log.emit(
             "graph_expansion_completed",
             expansion_count=len(expansions),
@@ -231,12 +312,12 @@ async def retrieve(
             inherited_sim = seed_sims.get(seed_id, 0.0)
 
             # Edge signals: average confidence along the path, worst-case reinforcement
-            edge_confs = row["edge_confidences"] or []
+            edge_confs = row.get("edge_confidences") or []
             avg_conf = sum(edge_confs) / len(edge_confs) if edge_confs else 0.0
 
-            edge_access_counts = row["edge_access_counts"] or []
+            edge_access_counts = row.get("edge_access_counts") or []
             edge_last_accesseds = [
-                parse_neo4j_datetime(x) for x in (row["edge_last_accessed"] or [])
+                parse_neo4j_datetime(x) for x in (row.get("edge_last_accessed") or [])
             ]
             edge_reinforcements = [
                 reinforcement_score(c, la, now, w)
@@ -248,8 +329,8 @@ async def retrieve(
 
             # Also fold in the target entity's own reinforcement
             target_reinforcement = reinforcement_score(
-                row["target_access_count"],
-                parse_neo4j_datetime(row["target_last_accessed"]),
+                row.get("target_access_count", 0),
+                parse_neo4j_datetime(row.get("target_last_accessed")),
                 now,
                 w,
             )
@@ -266,6 +347,17 @@ async def retrieve(
                 weights=w,
             )
 
+            path_memory_fact_ids = list(
+                row.get("path_memory_fact_ids")
+                or row.get("memory_fact_ids")
+                or []
+            )
+            path_edge_types = list(
+                row.get("edge_families")
+                or row.get("edge_types")
+                or []
+            )
+
             existing = candidates.get(target_id)
             if existing is None or s > existing.score:
                 candidates[target_id] = RetrievedEntity(
@@ -277,10 +369,11 @@ async def retrieve(
                     reinforcement=combined_reinforcement,
                     edge_confidence=avg_conf,
                     score=s,
-                    path_edge_ids=list(row["edge_ids"] or []),
-                    path_edge_types=list(row["edge_types"] or []),
+                    path_edge_ids=list(row.get("edge_ids") or []),
+                    path_edge_types=path_edge_types,
                     path_edge_subtypes=list(row.get("edge_subtypes") or []),
                     path_edge_quantities=list(row.get("edge_quantities") or []),
+                    path_memory_fact_ids=path_memory_fact_ids,
                 )
 
         # 5. Session/time allowlist filtering (post-search intersection per spec).
@@ -354,6 +447,45 @@ async def retrieve(
             ranked_count=len(ranked),
             duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
         )
+
+        path_fact_ids = [
+            fact_id
+            for item in ranked
+            for fact_id in item.path_memory_fact_ids
+        ]
+        if path_fact_ids:
+            stage_started_at = log.set_stage("path_hydration_completed")
+            memory_facts, supporting_assertions = await _hydrate_memory_path_details(
+                path_fact_ids
+            )
+            facts_by_id = {
+                fact["memory_fact_id"]: fact
+                for fact in memory_facts
+                if fact.get("memory_fact_id") is not None
+            }
+            assertions_by_fact_id: dict[str, list[dict[str, object]]] = {}
+            for assertion in supporting_assertions:
+                fact_id = assertion.get("memory_fact_id")
+                if fact_id is None:
+                    continue
+                assertions_by_fact_id.setdefault(str(fact_id), []).append(assertion)
+            for item in ranked:
+                item.memory_facts = [
+                    facts_by_id[fact_id]
+                    for fact_id in item.path_memory_fact_ids
+                    if fact_id in facts_by_id
+                ]
+                item.supporting_assertions = [
+                    assertion
+                    for fact_id in item.path_memory_fact_ids
+                    for assertion in assertions_by_fact_id.get(fact_id, [])
+                ]
+            log.emit(
+                "path_hydration_completed",
+                hydrated_fact_count=len(memory_facts),
+                hydrated_assertion_count=len(supporting_assertions),
+                duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
+            )
 
         touched_entity_ids = [c.neo4j_id for c in ranked]
         touched_edge_ids: list[str] = []

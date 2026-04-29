@@ -104,6 +104,7 @@ async def search(
     chunk_limit: int = 3,
     session_id: str | None = None,
     since_hours: int | None = None,
+    include_historical: bool = False,
     debug: bool = False,
 ) -> str:
     """Hybrid retrieval over the Landscape knowledge graph."""
@@ -123,6 +124,7 @@ async def search(
         session_id=session_id,
         since=since,
         debug=debug,
+        include_historical=include_historical,
     )
     output = {
         "results": [
@@ -130,9 +132,12 @@ async def search(
                 "name": r.name,
                 "type": r.type,
                 "score": round(r.score, 6),
+                "path_memory_fact_ids": r.path_memory_fact_ids,
                 "path_edge_types": r.path_edge_types,
                 "path_edge_subtypes": r.path_edge_subtypes,
                 "path_edge_quantities": r.path_edge_quantities,
+                "memory_facts": r.memory_facts,
+                "supporting_assertions": r.supporting_assertions,
             }
             for r in result.results
         ],

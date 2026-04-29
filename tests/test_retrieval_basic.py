@@ -175,7 +175,7 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_retrieval_includes_path_edge_quantities(monkeypatch):
+async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeypatch):
     from landscape.retrieval import query
 
     monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
@@ -205,30 +205,16 @@ async def test_retrieval_includes_path_edge_quantities(monkeypatch):
             }
         ]
 
-    async def fake_bfs_expand(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
         return [
             {
                 "seed_id": "eric-id",
                 "target_id": "netflix-id",
                 "target_name": "Netflix",
                 "target_type": "TECHNOLOGY",
-                "target_access_count": 0,
-                "target_last_accessed": None,
                 "distance": 1,
-                "edge_ids": ["rel-1"],
-                "edge_types": ["DISCUSSED"],
-                "edge_subtypes": ["watched"],
-                "edge_quantities": [
-                    {
-                        "quantity_value": 10,
-                        "quantity_unit": "hour",
-                        "quantity_kind": "duration",
-                        "time_scope": "last_month",
-                    }
-                ],
-                "edge_confidences": [0.9],
-                "edge_access_counts": [0],
-                "edge_last_accessed": [None],
+                "path_memory_fact_ids": ["fact-1"],
+                "edge_families": ["DISCUSSION"],
             }
         ]
 
@@ -237,6 +223,50 @@ async def test_retrieval_includes_path_edge_quantities(monkeypatch):
 
     async def fake_touch_relations(ids, now):
         return None
+
+    async def fake_hydrate_path_memory_facts(memory_fact_ids):
+        assert memory_fact_ids == ["fact-1"]
+        return (
+            [
+                {
+                    "memory_fact_id": "fact-1",
+                    "family": "DISCUSSION",
+                    "current": True,
+                    "fact_key": "fact-key",
+                    "slot_key": "slot-key",
+                    "subtype": None,
+                    "support_count": 1,
+                    "confidence_agg": 0.9,
+                    "subject_entity_id": "eric-id",
+                    "subject_name": "Eric",
+                    "subject_type": "PERSON",
+                    "object_entity_id": "netflix-id",
+                    "object_name": "Netflix",
+                    "object_type": "TECHNOLOGY",
+                    "memory_rel_current": True,
+                }
+            ],
+            [
+                {
+                    "memory_fact_id": "fact-1",
+                    "assertion_id": "assert-1",
+                    "source_kind": "document",
+                    "source_id": "doc-1",
+                    "raw_subject_text": "Eric",
+                    "raw_relation_text": "discussed",
+                    "raw_object_text": "Netflix",
+                    "family_candidate": "DISCUSSION",
+                    "confidence": 0.9,
+                    "subtype": None,
+                    "quantity_value": 10,
+                    "quantity_unit": "hour",
+                    "quantity_kind": "duration",
+                    "time_scope": "last_month",
+                    "status": "active",
+                    "created_at": "2026-04-29T00:00:00Z",
+                }
+            ],
+        )
 
     monkeypatch.setattr(
         query.qdrant_store,
@@ -250,19 +280,55 @@ async def test_retrieval_includes_path_edge_quantities(monkeypatch):
         fake_get_entities_from_chunks,
     )
     monkeypatch.setattr(query, "_hydrate_entities", fake_hydrate_entities)
-    monkeypatch.setattr(query.neo4j_store, "bfs_expand", fake_bfs_expand)
+    monkeypatch.setattr(
+        query.neo4j_store, "bfs_expand_memory_rel", fake_bfs_expand_memory_rel
+    )
     monkeypatch.setattr(query.neo4j_store, "touch_entities", fake_touch_entities)
     monkeypatch.setattr(query.neo4j_store, "touch_relations", fake_touch_relations)
+    monkeypatch.setattr(query, "_hydrate_memory_path_details", fake_hydrate_path_memory_facts)
 
     result = await query.retrieve("How many hours on Netflix?", reinforce=False)
 
     netflix = next(r for r in result.results if r.name == "Netflix")
-    assert netflix.path_edge_quantities == [
+    assert netflix.path_memory_fact_ids == ["fact-1"]
+    assert netflix.path_edge_types == ["DISCUSSION"]
+    assert netflix.memory_facts == [
         {
+            "memory_fact_id": "fact-1",
+            "family": "DISCUSSION",
+            "current": True,
+            "fact_key": "fact-key",
+            "slot_key": "slot-key",
+            "subtype": None,
+            "support_count": 1,
+            "confidence_agg": 0.9,
+            "subject_entity_id": "eric-id",
+            "subject_name": "Eric",
+            "subject_type": "PERSON",
+            "object_entity_id": "netflix-id",
+            "object_name": "Netflix",
+            "object_type": "TECHNOLOGY",
+            "memory_rel_current": True,
+        }
+    ]
+    assert netflix.supporting_assertions == [
+        {
+            "memory_fact_id": "fact-1",
+            "assertion_id": "assert-1",
+            "source_kind": "document",
+            "source_id": "doc-1",
+            "raw_subject_text": "Eric",
+            "raw_relation_text": "discussed",
+            "raw_object_text": "Netflix",
+            "family_candidate": "DISCUSSION",
+            "confidence": 0.9,
+            "subtype": None,
             "quantity_value": 10,
             "quantity_unit": "hour",
             "quantity_kind": "duration",
             "time_scope": "last_month",
+            "status": "active",
+            "created_at": "2026-04-29T00:00:00Z",
         }
     ]
 
@@ -299,7 +365,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
             }
         ]
 
-    async def fake_bfs_expand(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -317,7 +383,9 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
         fake_get_entities_from_chunks,
     )
     monkeypatch.setattr(query, "_hydrate_entities", fake_hydrate_entities)
-    monkeypatch.setattr(query.neo4j_store, "bfs_expand", fake_bfs_expand)
+    monkeypatch.setattr(
+        query.neo4j_store, "bfs_expand_memory_rel", fake_bfs_expand_memory_rel
+    )
     monkeypatch.setattr(query.neo4j_store, "touch_entities", noop_touch)
     monkeypatch.setattr(query.neo4j_store, "touch_relations", noop_touch)
 
@@ -344,6 +412,89 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
             "distance": 0,
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
+    from landscape.retrieval import query
+
+    monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+
+    class Hit:
+        def __init__(self, score, payload):
+            self.score = score
+            self.payload = payload
+
+    async def fake_search_entities_any_type(vector, limit=10):
+        return [Hit(0.9, {"neo4j_node_id": "atlas-id"})]
+
+    async def fake_search_chunks(vector, limit=10):
+        return []
+
+    async def fake_get_entities_from_chunks(chunk_ids):
+        return []
+
+    async def fake_hydrate_entities(ids):
+        return [
+            {
+                "eid": "atlas-id",
+                "name": "Project Atlas",
+                "type": "PROJECT",
+                "access_count": 0,
+                "last_accessed": None,
+            }
+        ]
+
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+        assert seed_ids == ["atlas-id"]
+        assert max_hops == 2
+        return [
+            {
+                "seed_id": "atlas-id",
+                "target_id": "postgres-id",
+                "target_name": "PostgreSQL",
+                "target_type": "DATABASE",
+                "distance": 1,
+                "path_memory_fact_ids": ["fact-1"],
+                "edge_families": ["USES"],
+            }
+        ]
+
+    async def noop_touch(*args, **kwargs):
+        return None
+
+    async def fail_if_legacy_bfs(*args, **kwargs):
+        raise AssertionError("legacy bfs_expand should not be used")
+
+    async def noop_hydrate(memory_fact_ids):
+        return ([], [])
+
+    monkeypatch.setattr(
+        query.qdrant_store,
+        "search_entities_any_type",
+        fake_search_entities_any_type,
+    )
+    monkeypatch.setattr(query.qdrant_store, "search_chunks", fake_search_chunks)
+    monkeypatch.setattr(
+        query.neo4j_store,
+        "get_entities_from_chunks",
+        fake_get_entities_from_chunks,
+    )
+    monkeypatch.setattr(query, "_hydrate_entities", fake_hydrate_entities)
+    monkeypatch.setattr(
+        query.neo4j_store, "bfs_expand_memory_rel", fake_bfs_expand_memory_rel
+    )
+    monkeypatch.setattr(query.neo4j_store, "bfs_expand", fail_if_legacy_bfs)
+    monkeypatch.setattr(query.neo4j_store, "touch_entities", noop_touch)
+    monkeypatch.setattr(query.neo4j_store, "touch_relations", noop_touch)
+    monkeypatch.setattr(query, "_hydrate_memory_path_details", noop_hydrate)
+
+    result = await query.retrieve("What does Project Atlas use?", reinforce=False)
+
+    assert [item.name for item in result.results] == ["Project Atlas", "PostgreSQL"]
+    postgres = next(item for item in result.results if item.name == "PostgreSQL")
+    assert postgres.path_memory_fact_ids == ["fact-1"]
 
 
 @pytest.mark.asyncio
@@ -389,7 +540,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
             }
         ]
 
-    async def fake_bfs_expand(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -407,7 +558,9 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
         fake_get_entities_from_chunks,
     )
     monkeypatch.setattr(query, "_hydrate_entities", fake_hydrate_entities)
-    monkeypatch.setattr(query.neo4j_store, "bfs_expand", fake_bfs_expand)
+    monkeypatch.setattr(
+        query.neo4j_store, "bfs_expand_memory_rel", fake_bfs_expand_memory_rel
+    )
     monkeypatch.setattr(query.neo4j_store, "touch_entities", noop_touch)
     monkeypatch.setattr(query.neo4j_store, "touch_relations", noop_touch)
 
@@ -456,6 +609,7 @@ async def test_query_api_threads_debug_flag(monkeypatch, http_client):
         session_id=None,
         since=None,
         debug=False,
+        include_historical=False,
         log_context=None,
     ):
         calls.append(
@@ -467,6 +621,7 @@ async def test_query_api_threads_debug_flag(monkeypatch, http_client):
                 "reinforce": reinforce,
                 "session_id": session_id,
                 "debug": debug,
+                "include_historical": include_historical,
             }
         )
         return RetrievalResult(
@@ -481,7 +636,7 @@ async def test_query_api_threads_debug_flag(monkeypatch, http_client):
 
     response = await http_client.post(
         "/query",
-        json={"text": "Project Atlas", "debug": True},
+        json={"text": "Project Atlas", "debug": True, "include_historical": True},
     )
 
     assert response.status_code == 200
@@ -494,8 +649,101 @@ async def test_query_api_threads_debug_flag(monkeypatch, http_client):
             "reinforce": True,
             "session_id": None,
             "debug": True,
+            "include_historical": True,
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_query_cli_threads_include_historical_flag(monkeypatch, capsys):
+    from argparse import Namespace
+
+    from landscape.cli import query as query_cli
+    from landscape.retrieval.query import RetrievalResult, RetrievedEntity
+
+    calls = []
+
+    class FakeEncoder:
+        def load_model(self):
+            return None
+
+    class FakeStore:
+        async def init_collection(self):
+            return None
+
+        async def init_chunks_collection(self):
+            return None
+
+    async def fake_retrieve(
+        query_text,
+        hops=2,
+        limit=10,
+        chunk_limit=3,
+        weights=None,
+        reinforce=True,
+        session_id=None,
+        since=None,
+        debug=False,
+        include_historical=False,
+        log_context=None,
+    ):
+        calls.append(
+            {
+                "query_text": query_text,
+                "include_historical": include_historical,
+                "debug": debug,
+            }
+        )
+        return RetrievalResult(
+            query=query_text,
+            results=[
+                RetrievedEntity(
+                    neo4j_id="atlas-id",
+                    name="Project Atlas",
+                    type="PROJECT",
+                    distance=0,
+                    vector_sim=0.9,
+                    reinforcement=0.0,
+                    edge_confidence=0.0,
+                    score=1.0,
+                )
+            ],
+            touched_entity_ids=["atlas-id"],
+            touched_edge_ids=[],
+            chunks=[],
+        )
+
+    async def noop_close_runtime(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        query_cli,
+        "_get_runtime",
+        lambda: (FakeEncoder(), fake_retrieve, FakeStore(), FakeStore()),
+    )
+    monkeypatch.setattr(query_cli, "close_runtime", noop_close_runtime)
+
+    exit_code = await query_cli.handle_query(
+        Namespace(
+            text="Project Atlas",
+            hops=2,
+            limit=10,
+            no_reinforce=False,
+            debug=False,
+            include_historical=True,
+        )
+    )
+
+    assert exit_code == 0
+    assert calls == [
+        {
+            "query_text": "Project Atlas",
+            "include_historical": True,
+            "debug": False,
+        }
+    ]
+    assert "1. Project Atlas [PROJECT]" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -516,8 +764,13 @@ async def test_alias_resolved_relation_traversable_from_canonical(neo4j_driver):
     from landscape.writeback import add_relation
 
     # Ensure Qdrant collections exist (lifespan not triggered without http_client).
-    await qdrant_store.init_collection()
-    await qdrant_store.init_chunks_collection()
+    existing = await qdrant_store.get_client().get_collections()
+    names = {c.name for c in existing.collections}
+    if qdrant_store.COLLECTION not in names:
+        await qdrant_store.init_collection()
+    if qdrant_store.CHUNKS_COLLECTION not in names:
+        await qdrant_store.init_chunks_collection()
+    encoder.load_model()
 
     # Seed Robert in Neo4j + Qdrant using the "Bob (Person)" vector so that
     # the resolver finds Robert when add_entity("Bob") queries Qdrant.
@@ -566,28 +819,29 @@ async def test_alias_resolved_relation_traversable_from_canonical(neo4j_driver):
         session_id="s-ret-alias",
         turn_id="t-ret-alias",
     )
-    assert result.outcome in ("created", "reinforced", "superseded")
+    assert result.outcome == "memory_fact"
+    assert result.memory_fact_id is not None
 
-    # bfs_expand from Robert's canonical id must reach AcmeCorp.
-    expansions = await neo4j_store.bfs_expand([robert_id], max_hops=1)
+    # bfs_expand_memory_rel from Robert's canonical id must reach AcmeCorp.
+    expansions = await neo4j_store.bfs_expand_memory_rel([robert_id], max_hops=1)
     target_names = {row["target_name"] for row in expansions}
 
     assert "AcmeCorp" in target_names, (
-        f"AcmeCorp should be reachable from Robert (canonical) via bfs_expand, "
+        f"AcmeCorp should be reachable from Robert (canonical) via bfs_expand_memory_rel, "
         f"got: {target_names}. The relation may have been written to the alias stub."
     )
 
-    # Confirm the alias stub has no RELATES_TO edges (the canonical node owns the edge).
+    # Confirm the alias stub has no MEMORY_REL edges (the canonical node owns the edge).
     async with neo4j_driver.session() as session:
         stub_edges = await (
             await session.run(
                 "MATCH (stub:Entity {name: 'Bob', canonical: false})"
-                "-[r:RELATES_TO]->() RETURN count(r) AS cnt"
+                "-[r:MEMORY_REL]->() RETURN count(r) AS cnt"
             )
         ).single()
 
     assert stub_edges["cnt"] == 0, (
-        f"Alias stub 'Bob' must not have any RELATES_TO edges; the canonical 'Robert' "
+        f"Alias stub 'Bob' must not have any MEMORY_REL edges; the canonical 'Robert' "
         f"node owns the relation. Got {stub_edges['cnt']} edge(s) on stub."
     )
 

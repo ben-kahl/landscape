@@ -18,6 +18,7 @@ class QueryRequest(BaseModel):
     session_id: str | None = None
     since_hours: int | None = Field(default=None, ge=1)
     debug: bool = False
+    include_historical: bool = False
 
 
 class QueryResultItem(BaseModel):
@@ -29,9 +30,12 @@ class QueryResultItem(BaseModel):
     reinforcement: float
     edge_confidence: float
     score: float
+    path_memory_fact_ids: list[str] = Field(default_factory=list)
     path_edge_types: list[str]
     path_edge_subtypes: list[str | None] = Field(default_factory=list)
     path_edge_quantities: list[dict[str, object | None]] = Field(default_factory=list)
+    memory_facts: list[dict[str, object]] = Field(default_factory=list)
+    supporting_assertions: list[dict[str, object]] = Field(default_factory=list)
 
 
 class QueryChunkItem(BaseModel):
@@ -68,6 +72,7 @@ async def query_endpoint(req: QueryRequest, auth: AgentPrincipal) -> QueryRespon
         session_id=req.session_id,
         since=since,
         debug=req.debug,
+        include_historical=req.include_historical,
     )
     return QueryResponse(
         query=result.query,
@@ -81,9 +86,12 @@ async def query_endpoint(req: QueryRequest, auth: AgentPrincipal) -> QueryRespon
                 reinforcement=r.reinforcement,
                 edge_confidence=r.edge_confidence,
                 score=r.score,
+                path_memory_fact_ids=r.path_memory_fact_ids,
                 path_edge_types=r.path_edge_types,
                 path_edge_subtypes=r.path_edge_subtypes,
                 path_edge_quantities=r.path_edge_quantities,
+                memory_facts=r.memory_facts,
+                supporting_assertions=r.supporting_assertions,
             )
             for r in result.results
         ],

@@ -24,6 +24,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--hops", type=int, default=2)
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--no-reinforce", action="store_true")
+    parser.add_argument("--include-historical", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.set_defaults(func=handle_query)
 
@@ -41,6 +42,7 @@ async def handle_query(args: argparse.Namespace) -> int:
             limit=args.limit,
             reinforce=not args.no_reinforce,
             debug=args.debug,
+            include_historical=args.include_historical,
         )
         if not result.results:
             print("No results.")
