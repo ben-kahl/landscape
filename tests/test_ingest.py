@@ -182,6 +182,7 @@ async def test_ingest_idempotent(http_client):
 async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     from landscape import pipeline
     from landscape.extraction.schema import ExtractedEntity, ExtractedRelation
+    from landscape.memory_graph.service import PersistenceResult
 
     captured_relation_kwargs = {}
 
@@ -203,9 +204,6 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     async def fake_upsert_entity(**kwargs):
         return None
 
-    async def fake_resolve_existing_entity_id(name):
-        return f"{name}-id"
-
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -225,13 +223,16 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
                 "chunk_ids": chunk_ids,
             }
         )
-        return "assertion-1", "fact-1"
+        return PersistenceResult(
+            assertion_id="assertion-1",
+            fact_id="fact-1",
+            outcome="created",
+        )
 
     monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
     monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", fake_upsert_chunk)
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
-    monkeypatch.setattr(pipeline.resolver, "resolve_existing_entity_id", fake_resolve_existing_entity_id)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
     monkeypatch.setattr(
@@ -285,6 +286,7 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
     from landscape import pipeline
     from landscape.extraction.chunker import Chunk
     from landscape.extraction.schema import ExtractedEntity, ExtractedRelation
+    from landscape.memory_graph.service import PersistenceResult
 
     async def fake_merge_document(content_hash, title, source_type):
         return "doc-1", True
@@ -304,9 +306,6 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
     async def fake_upsert_entity(**kwargs):
         return None
 
-    async def fake_resolve_existing_entity_id(name):
-        return f"{name}-id"
-
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -316,13 +315,16 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
         object_entity_id,
         chunk_ids,
     ):
-        return "assertion-1", "fact-1"
+        return PersistenceResult(
+            assertion_id="assertion-1",
+            fact_id="fact-1",
+            outcome="created",
+        )
 
     monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
     monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", fake_upsert_chunk)
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
-    monkeypatch.setattr(pipeline.resolver, "resolve_existing_entity_id", fake_resolve_existing_entity_id)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
     monkeypatch.setattr(
@@ -380,6 +382,7 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
     from landscape import pipeline
     from landscape.extraction.chunker import Chunk
     from landscape.extraction.schema import ExtractedEntity, ExtractedRelation
+    from landscape.memory_graph.service import PersistenceResult
 
     async def fake_merge_document(content_hash, title, source_type):
         return "doc-2", True
@@ -399,9 +402,6 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
     async def fake_upsert_entity(**kwargs):
         return None
 
-    async def fake_resolve_existing_entity_id(name):
-        return f"{name}-id"
-
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -411,13 +411,16 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
         object_entity_id,
         chunk_ids,
     ):
-        return "assertion-2", "fact-2"
+        return PersistenceResult(
+            assertion_id="assertion-2",
+            fact_id="fact-2",
+            outcome="created",
+        )
 
     monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
     monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", fake_upsert_chunk)
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
-    monkeypatch.setattr(pipeline.resolver, "resolve_existing_entity_id", fake_resolve_existing_entity_id)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
     monkeypatch.setattr(
@@ -483,6 +486,7 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
 async def test_ingest_logs_failure_with_failed_stage(monkeypatch, caplog):
     from landscape import pipeline
     from landscape.extraction.chunker import Chunk
+    from landscape.memory_graph.service import PersistenceResult
 
     async def fake_merge_document(content_hash, title, source_type):
         return "doc-3", True
@@ -493,9 +497,6 @@ async def test_ingest_logs_failure_with_failed_stage(monkeypatch, caplog):
     async def boom_upsert_chunk(**kwargs):
         raise RuntimeError("chunk upsert exploded")
 
-    async def fake_resolve_existing_entity_id(name):
-        return f"{name}-id"
-
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -505,12 +506,15 @@ async def test_ingest_logs_failure_with_failed_stage(monkeypatch, caplog):
         object_entity_id,
         chunk_ids,
     ):
-        return "assertion-3", "fact-3"
+        return PersistenceResult(
+            assertion_id="assertion-3",
+            fact_id="fact-3",
+            outcome="created",
+        )
 
     monkeypatch.setattr(pipeline.neo4j_store, "merge_document", fake_merge_document)
     monkeypatch.setattr(pipeline.neo4j_store, "create_chunk", fake_create_chunk)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", boom_upsert_chunk)
-    monkeypatch.setattr(pipeline.resolver, "resolve_existing_entity_id", fake_resolve_existing_entity_id)
     monkeypatch.setattr(
         pipeline,
         "persist_assertion_and_maybe_promote",

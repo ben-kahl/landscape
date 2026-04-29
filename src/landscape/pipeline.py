@@ -208,10 +208,13 @@ async def ingest(
         )
 
         stage_started_at = log.set_stage("entity_writes_completed")
+        resolved_entity_ids: dict[str, str] = {}
+        ambiguous_entity_names: set[str] = set()
         for key, vector, (canonical_id, is_new, _sim) in zip(
             group_keys, vectors, resolutions, strict=True
         ):
             g = grouped[key]
+            surface_name = g["name"].strip().lower()
             if is_new:
                 canonical_id = await neo4j_store.merge_entity(
                     name=g["name"],
@@ -243,6 +246,14 @@ async def ingest(
 
             if turn_element_id is not None:
                 await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id)
+
+            if surface_name in ambiguous_entity_names:
+                pass
+            elif surface_name in resolved_entity_ids and resolved_entity_ids[surface_name] != canonical_id:
+                ambiguous_entity_names.add(surface_name)
+                resolved_entity_ids.pop(surface_name, None)
+            else:
+                resolved_entity_ids[surface_name] = canonical_id
         log.emit(
             "entity_writes_completed",
             entities_created=entities_created,
@@ -257,6 +268,8 @@ async def ingest(
         relations_superseded = 0
         for relation in extraction.relations:
             canonical_rel_type, _coerce_score = coerce_rel_type(relation.relation_type)
+            subject_entity_id = resolved_entity_ids.get(relation.subject.strip().lower())
+            object_entity_id = resolved_entity_ids.get(relation.object.strip().lower())
             payload = AssertionPayload(
                 source_kind="document",
                 source_id=doc_id,
@@ -272,9 +285,7 @@ async def ingest(
                 time_scope=relation.time_scope,
                 chunk_refs=[(cid, None, None) for cid in chunk_ids],
             )
-            subject_entity_id = await resolver.resolve_existing_entity_id(relation.subject)
-            object_entity_id = await resolver.resolve_existing_entity_id(relation.object)
-            _, fact_id = await persist_assertion_and_maybe_promote(
+            promotion = await persist_assertion_and_maybe_promote(
                 payload,
                 source_node_id=doc_id,
                 source_kind="document",
@@ -282,10 +293,12 @@ async def ingest(
                 object_entity_id=object_entity_id,
                 chunk_ids=chunk_ids,
             )
-            if fact_id is None:
+            if promotion.outcome == "created":
                 relations_created += 1
-            else:
+            elif promotion.outcome == "reinforced":
                 relations_reinforced += 1
+            elif promotion.outcome == "superseded":
+                relations_superseded += 1
         log.emit(
             "relation_upserts_completed",
             relations_created=relations_created,

@@ -777,10 +777,30 @@ async def upsert_memory_fact_from_assertion(
     subtype: str | None,
     confidence: float,
     assertion_id: str,
-) -> str:
+) -> tuple[str, str]:
     family_cfg = FAMILY_REGISTRY[family]
+    subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
+    object_entity_id = (
+        await _resolve_entity_app_id(object_entity_id)
+        if object_entity_id is not None
+        else None
+    )
     if family_cfg.single_current:
-        return await supersede_single_current_fact(
+        family_key = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+        driver = get_driver()
+        async with driver.session() as session:
+            current_result = await session.run(
+                """
+                MATCH (f:MemoryFact {family: $family, slot_key: $slot_key, current: true})
+                RETURN collect(f.id) AS fact_ids
+                """,
+                family=family,
+                slot_key=family_key,
+            )
+            current_record = await current_result.single()
+            current_fact_ids = current_record["fact_ids"] if current_record is not None else []
+
+        fact_id = await supersede_single_current_fact(
             family=family,
             subject_entity_id=subject_entity_id,
             object_entity_id=object_entity_id,
@@ -788,7 +808,25 @@ async def upsert_memory_fact_from_assertion(
             confidence=confidence,
             assertion_id=assertion_id,
         )
-    return await create_memory_fact_version(
+        if fact_id in current_fact_ids:
+            return fact_id, "reinforced"
+        if current_fact_ids:
+            return fact_id, "superseded"
+        return fact_id, "created"
+
+    family_key = fact_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+    driver = get_driver()
+    async with driver.session() as session:
+        existing_result = await session.run(
+            """
+            MATCH (f:MemoryFact {id: $fact_id})
+            RETURN f.id AS fact_id
+            LIMIT 1
+            """,
+            fact_id=f"fact:{hashlib.sha256(f'{family_key}:{assertion_id}'.encode()).hexdigest()[:20]}",
+        )
+        existing_record = await existing_result.single()
+    fact_id = await create_memory_fact_version(
         family=family,
         subject_entity_id=subject_entity_id,
         object_entity_id=object_entity_id,
@@ -796,6 +834,7 @@ async def upsert_memory_fact_from_assertion(
         confidence=confidence,
         assertion_id=assertion_id,
     )
+    return fact_id, "reinforced" if existing_record is not None else "created"
 
 
 async def materialize_memory_rel(memory_fact_id: str) -> None:
