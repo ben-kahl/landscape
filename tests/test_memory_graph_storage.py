@@ -36,14 +36,18 @@ def test_memory_fact_key_modes_follow_family_config():
     assert fact_key(has_pref, "ent-a", "ent-b", "favorite_color") == (
         "HAS_PREFERENCE:ent-a:ent-b:favorite_color"
     )
-    assert slot_key(has_pref, "ent-a", "ent-b", "favorite_color") == "HAS_PREFERENCE:ent-a:favorite_color"
+    assert slot_key(has_pref, "ent-a", "ent-b", "favorite_color") == (
+        "HAS_PREFERENCE:ent-a:favorite_color"
+    )
     assert fact_key(created, "ent-a", None, "diagram") == "CREATED:ent-a:diagram"
 
 
 @pytest.mark.asyncio
 async def test_value_backed_family_preserves_value_identity_on_promotion(neo4j_driver):
     doc_id, _ = await neo4j_store.merge_document("hash-happened", "value-backed-test", "text")
-    kickoff = await neo4j_store.merge_entity("Kickoff", "EVENT", "value-backed-test", 0.95, doc_id, "test")
+    kickoff = await neo4j_store.merge_entity(
+        "Kickoff", "EVENT", "value-backed-test", 0.95, doc_id, "test"
+    )
     payload = AssertionPayload(
         source_kind="document",
         source_id="value-backed-test",
@@ -106,8 +110,12 @@ async def test_value_backed_family_preserves_value_identity_on_promotion(neo4j_d
 async def test_object_keyed_family_supersedes_on_same_slot(neo4j_driver):
     doc1, _ = await neo4j_store.merge_document("hash-title-1", "object-keyed-test-1", "text")
     doc2, _ = await neo4j_store.merge_document("hash-title-2", "object-keyed-test-2", "text")
-    alice = await neo4j_store.merge_entity("Alice", "PERSON", "object-keyed-test", 0.95, doc1, "test")
-    atlas = await neo4j_store.merge_entity("Atlas", "ORGANIZATION", "object-keyed-test", 0.95, doc1, "test")
+    alice = await neo4j_store.merge_entity(
+        "Alice", "PERSON", "object-keyed-test", 0.95, doc1, "test"
+    )
+    atlas = await neo4j_store.merge_entity(
+        "Atlas", "ORGANIZATION", "object-keyed-test", 0.95, doc1, "test"
+    )
     first = await persist_assertion_and_maybe_promote(
         AssertionPayload(
             source_kind="document",
@@ -149,7 +157,9 @@ async def test_object_keyed_family_supersedes_on_same_slot(neo4j_driver):
 
     alice_id = await _entity_app_id(neo4j_driver, alice)
     atlas_id = await _entity_app_id(neo4j_driver, atlas)
-    expected_slot_key = slot_key(FAMILY_REGISTRY["HAS_TITLE"], alice_id, atlas_id, "principal_engineer")
+    expected_slot_key = slot_key(
+        FAMILY_REGISTRY["HAS_TITLE"], alice_id, atlas_id, "principal_engineer"
+    )
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
@@ -168,7 +178,9 @@ async def test_object_keyed_family_supersedes_on_same_slot(neo4j_driver):
 async def test_subtype_keyed_family_supersedes_on_same_slot(neo4j_driver):
     doc1, _ = await neo4j_store.merge_document("hash-pref-1", "subtype-keyed-test-1", "text")
     doc2, _ = await neo4j_store.merge_document("hash-pref-2", "subtype-keyed-test-2", "text")
-    alice = await neo4j_store.merge_entity("Alice", "PERSON", "subtype-keyed-test", 0.95, doc1, "test")
+    alice = await neo4j_store.merge_entity(
+        "Alice", "PERSON", "subtype-keyed-test", 0.95, doc1, "test"
+    )
     first = await persist_assertion_and_maybe_promote(
         AssertionPayload(
             source_kind="document",

@@ -109,7 +109,9 @@ async def _resolve_entity_for_writeback(
                 await neo4j_store.merge_alias(canonical_id, name, source, best.score)
 
             turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
-            await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id, confidence=confidence)
+            await neo4j_store.link_entity_to_turn(
+                canonical_id, turn_element_id, confidence=confidence
+            )
 
             return AddEntityResult(
                 entity_id=canonical_id,

@@ -13,26 +13,34 @@ class FamilyConfig:
     traversable: bool
 
 
+def _e(family: str, slot_mode: SlotMode, traversable: bool = True) -> FamilyConfig:
+    return FamilyConfig(family, slot_mode=slot_mode, object_kind="entity", traversable=traversable)
+
+
+def _v(family: str, slot_mode: SlotMode, traversable: bool = True) -> FamilyConfig:
+    return FamilyConfig(family, slot_mode=slot_mode, object_kind="value", traversable=traversable)
+
+
 FAMILY_REGISTRY: dict[str, FamilyConfig] = {
-    "WORKS_FOR": FamilyConfig("WORKS_FOR", slot_mode="subject", object_kind="entity", traversable=True),
-    "LEADS": FamilyConfig("LEADS", slot_mode="additive", object_kind="entity", traversable=True),
-    "MEMBER_OF": FamilyConfig("MEMBER_OF", slot_mode="additive", object_kind="entity", traversable=True),
-    "WORKS_ON": FamilyConfig("WORKS_ON", slot_mode="additive", object_kind="entity", traversable=True),
-    "MAINTAINS": FamilyConfig("MAINTAINS", slot_mode="additive", object_kind="entity", traversable=True),
-    "REPORTS_TO": FamilyConfig("REPORTS_TO", slot_mode="subject", object_kind="entity", traversable=True),
-    "APPROVED": FamilyConfig("APPROVED", slot_mode="additive", object_kind="entity", traversable=True),
-    "USES": FamilyConfig("USES", slot_mode="additive", object_kind="entity", traversable=True),
-    "BELONGS_TO": FamilyConfig("BELONGS_TO", slot_mode="subject", object_kind="entity", traversable=True),
-    "LOCATED_IN": FamilyConfig("LOCATED_IN", slot_mode="additive", object_kind="entity", traversable=True),
-    "CREATED": FamilyConfig("CREATED", slot_mode="additive", object_kind="entity", traversable=True),
-    "HAS_TITLE": FamilyConfig("HAS_TITLE", slot_mode="object", object_kind="entity", traversable=True),
-    "HAS_PREFERENCE": FamilyConfig("HAS_PREFERENCE", slot_mode="subtype", object_kind="value", traversable=True),
-    "HAS_ATTRIBUTE": FamilyConfig("HAS_ATTRIBUTE", slot_mode="subtype", object_kind="value", traversable=True),
-    "FAMILY_OF": FamilyConfig("FAMILY_OF", slot_mode="additive", object_kind="entity", traversable=True),
-    "RECOMMENDED": FamilyConfig("RECOMMENDED", slot_mode="additive", object_kind="value", traversable=True),
-    "DISCUSSED": FamilyConfig("DISCUSSED", slot_mode="additive", object_kind="value", traversable=True),
-    "HAPPENED_ON": FamilyConfig("HAPPENED_ON", slot_mode="subject", object_kind="value", traversable=True),
-    "LIVES_IN": FamilyConfig("LIVES_IN", slot_mode="subject", object_kind="entity", traversable=True),
-    "OWNS": FamilyConfig("OWNS", slot_mode="additive", object_kind="entity", traversable=True),
-    "DEPENDS_ON": FamilyConfig("DEPENDS_ON", slot_mode="additive", object_kind="entity", traversable=True),
+    "WORKS_FOR":      _e("WORKS_FOR", "subject"),
+    "LEADS":          _e("LEADS", "additive"),
+    "MEMBER_OF":      _e("MEMBER_OF", "additive"),
+    "WORKS_ON":       _e("WORKS_ON", "additive"),
+    "MAINTAINS":      _e("MAINTAINS", "additive"),
+    "REPORTS_TO":     _e("REPORTS_TO", "subject"),
+    "APPROVED":       _e("APPROVED", "additive"),
+    "USES":           _e("USES", "additive"),
+    "BELONGS_TO":     _e("BELONGS_TO", "subject"),
+    "LOCATED_IN":     _e("LOCATED_IN", "additive"),
+    "CREATED":        _e("CREATED", "additive"),
+    "HAS_TITLE":      _e("HAS_TITLE", "object"),
+    "FAMILY_OF":      _e("FAMILY_OF", "additive"),
+    "LIVES_IN":       _e("LIVES_IN", "subject"),
+    "OWNS":           _e("OWNS", "additive"),
+    "DEPENDS_ON":     _e("DEPENDS_ON", "additive"),
+    "HAS_PREFERENCE": _v("HAS_PREFERENCE", "subtype"),
+    "HAS_ATTRIBUTE":  _v("HAS_ATTRIBUTE", "subtype"),
+    "RECOMMENDED":    _v("RECOMMENDED", "additive"),
+    "DISCUSSED":      _v("DISCUSSED", "additive"),
+    "HAPPENED_ON":    _v("HAPPENED_ON", "subject"),
 }

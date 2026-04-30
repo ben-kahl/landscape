@@ -843,7 +843,9 @@ async def test_assertion_only_writeback_is_reported_in_status_summary(http_clien
 
     summary = await status_summary()
     assert any(
-        entry["subject"] == "Alice" and entry["rel_type"] == "RELATED_TO" and entry["object"] == "Acme"
+        entry["subject"] == "Alice"
+        and entry["rel_type"] == "RELATED_TO"
+        and entry["object"] == "Acme"
         for entry in summary.recent_agent_writes
     )
 

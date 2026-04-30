@@ -65,7 +65,8 @@ async def _wait_for_qdrant_collection_present(
             return
         if asyncio.get_running_loop().time() >= deadline:
             raise AssertionError(
-                f"Timed out waiting for {collection_name!r} to exist; current collections={sorted(names)}"
+                f"Timed out waiting for {collection_name!r} to exist;"
+                f" current collections={sorted(names)}"
             )
         await asyncio.sleep(0.1)
 

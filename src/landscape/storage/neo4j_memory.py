@@ -16,11 +16,16 @@ def _memory_slot_lock_id(slot: str) -> str:
 async def ensure_memory_graph_schema() -> None:
     driver = get_driver()
     statements = [
-        "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (n:Entity) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT alias_id_unique IF NOT EXISTS FOR (n:Alias) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT assertion_id_unique IF NOT EXISTS FOR (n:Assertion) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT memory_fact_id_unique IF NOT EXISTS FOR (n:MemoryFact) REQUIRE n.id IS UNIQUE",
-        "CREATE CONSTRAINT memory_slot_lock_id_unique IF NOT EXISTS FOR (n:MemorySlotLock) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS"
+        " FOR (n:Entity) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT alias_id_unique IF NOT EXISTS"
+        " FOR (n:Alias) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT assertion_id_unique IF NOT EXISTS"
+        " FOR (n:Assertion) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT memory_fact_id_unique IF NOT EXISTS"
+        " FOR (n:MemoryFact) REQUIRE n.id IS UNIQUE",
+        "CREATE CONSTRAINT memory_slot_lock_id_unique IF NOT EXISTS"
+        " FOR (n:MemorySlotLock) REQUIRE n.id IS UNIQUE",
     ]
     async with driver.session() as session:
         for stmt in statements:
@@ -237,7 +242,8 @@ async def _create_memory_fact_version_in_tx(
                       fact.assertion_id = $assertion_id
         ON MATCH SET fact.support_count = coalesce(fact.support_count, 0) + 1,
                      fact.confidence_agg = CASE
-                         WHEN coalesce(fact.confidence_agg, 0.0) >= $confidence THEN fact.confidence_agg
+                         WHEN coalesce(fact.confidence_agg, 0.0) >= $confidence
+                         THEN fact.confidence_agg
                          ELSE $confidence
                      END,
                      fact.updated_at = $now,

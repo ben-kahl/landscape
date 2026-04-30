@@ -424,8 +424,9 @@ async def retrieve(
                 duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
             )
 
+        entity_ids_ranked = [item.entity_id for item in ranked]
         current_scalar_facts, current_scalar_assertions = (
-            await _hydrate_current_non_traversable_entity_memory([item.entity_id for item in ranked])
+            await _hydrate_current_non_traversable_entity_memory(entity_ids_ranked)
         )
         if current_scalar_facts:
             facts_by_entity_id: dict[str, list[dict[str, object]]] = {}

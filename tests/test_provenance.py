@@ -307,7 +307,9 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
             await session.run(
                 """
                 MATCH (f:MemoryFact {id: $fid})
-                OPTIONAL MATCH (s:Entity)-[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]->(o:Entity)
+                OPTIONAL MATCH (s:Entity)
+                      -[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]
+                      ->(o:Entity)
                 RETURN f.valid_until AS fact_valid_until,
                        (f.valid_until IS NULL) AS fact_current,
                        o.name AS target,
@@ -321,7 +323,9 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
             await session.run(
                 """
                 MATCH (f:MemoryFact {id: $fid})
-                OPTIONAL MATCH (s:Entity)-[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]->(o:Entity)
+                OPTIONAL MATCH (s:Entity)
+                      -[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]
+                      ->(o:Entity)
                 RETURN f.valid_until AS fact_valid_until,
                        (f.valid_until IS NULL) AS fact_current,
                        o.name AS target,

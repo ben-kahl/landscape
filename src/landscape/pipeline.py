@@ -254,7 +254,10 @@ async def ingest(
 
             if surface_name in ambiguous_entity_names:
                 pass
-            elif surface_name in resolved_entity_ids and resolved_entity_ids[surface_name] != canonical_id:
+            elif (
+                surface_name in resolved_entity_ids
+                and resolved_entity_ids[surface_name] != canonical_id
+            ):
                 ambiguous_entity_names.add(surface_name)
                 resolved_entity_ids.pop(surface_name, None)
             else:

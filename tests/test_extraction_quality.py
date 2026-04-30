@@ -54,8 +54,9 @@ async def _assert_current_memory_relation(
         records = await result.data()
         found_families = {rec["family"] for rec in records if rec["rel_family"] == rec["family"]}
         assert found_families & accepted_families, (
-            f"Expected live assertion-backed relation ({subject_text!r}) -[{accepted_families}]-> "
-            f"({object_text!r}) in doc {title!r}. Found families: {found_families}. Records: {records}"
+            f"Expected live assertion-backed relation ({subject_text!r})"
+            f" -[{accepted_families}]-> ({object_text!r}) in doc {title!r}."
+            f" Found families: {found_families}. Records: {records}"
         )
 
 
@@ -77,7 +78,8 @@ async def _clear_title_graph(neo4j_driver, title: str) -> None:
             title=title,
         )
         record = await result.single()
-        fact_ids = [fact_id for fact_id in (record["fact_ids"] if record is not None else []) if fact_id]
+        raw_ids = record["fact_ids"] if record is not None else []
+        fact_ids = [fid for fid in raw_ids if fid]
 
         if fact_ids:
             await session.run(
