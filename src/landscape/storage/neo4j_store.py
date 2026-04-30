@@ -6,8 +6,8 @@ from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from landscape.config import settings
 from landscape.memory_graph import (
-    AssertionPayload,
     FAMILY_REGISTRY,
+    AssertionPayload,
     alias_id,
     assertion_id,
     fact_key,
@@ -691,9 +691,19 @@ async def _create_memory_fact_version_in_tx(
                       fact.normalization_policy = 'v1_family_rules',
                       fact.created_at = $now,
                       fact.updated_at = $now,
+                      fact.access_count = 1,
+                      fact.last_accessed = $now,
                       fact.subject_entity_id = $subject_entity_id,
                       fact.object_entity_id = $object_entity_id,
                       fact.assertion_id = $assertion_id
+        ON MATCH SET fact.support_count = coalesce(fact.support_count, 0) + 1,
+                     fact.confidence_agg = CASE
+                         WHEN coalesce(fact.confidence_agg, 0.0) >= $confidence THEN fact.confidence_agg
+                         ELSE $confidence
+                     END,
+                     fact.updated_at = $now,
+                     fact.access_count = coalesce(fact.access_count, 0) + 1,
+                     fact.last_accessed = $now
         MERGE (subject)-[:AS_SUBJECT]->(fact)
         FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
             MERGE (fact)-[:AS_OBJECT]->(object)
@@ -731,6 +741,8 @@ async def _materialize_memory_rel_in_tx(tx, memory_fact_id: str, now: str) -> No
                 r.subtype = fact.subtype,
                 r.subject_entity_id = subject.id,
                 r.object_entity_id = object.id,
+                r.access_count = coalesce(fact.access_count, 0),
+                r.last_accessed = fact.last_accessed,
                 r.updated_at = $now
         )
         SET fact.current = true,
@@ -793,7 +805,7 @@ async def upsert_memory_fact_from_assertion(
         if object_entity_id is not None
         else None
     )
-    if family_cfg.single_current:
+    if family_cfg.slot_mode == "subject":
         family_key = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
         driver = get_driver()
         async with driver.session() as session:
@@ -875,8 +887,8 @@ async def supersede_single_current_fact(
         else None
     )
     family_cfg = FAMILY_REGISTRY[family]
-    if not family_cfg.single_current:
-        raise ValueError(f"family {family!r} is not single_current")
+    if family_cfg.slot_mode != "subject":
+        raise ValueError(f"family {family!r} is not subject-keyed")
     skey = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
     driver = get_driver()
     now = datetime.now(UTC).isoformat()
@@ -1608,6 +1620,13 @@ async def bfs_expand_memory_rel(
     seed_entity_ids: list[str],
     max_hops: int,
 ) -> list[dict[str, Any]]:
+    """BFS over current MEMORY_REL edges.
+
+    Input seed refs may be Neo4j element ids or stable app ids. Returned rows
+    preserve the stable app ids (`seed_id`/`target_id`) for memory-graph
+    callers and include Neo4j element ids for retrieval/ranking code that
+    keys Qdrant payloads, allowlists, and touch writes by elementId().
+    """
     if not seed_entity_ids:
         return []
     if max_hops < 1 or max_hops > 5:
@@ -1618,15 +1637,27 @@ async def bfs_expand_memory_rel(
     query = f"""
     MATCH (seed:Entity) WHERE seed.id IN $seed_ids
     MATCH path = shortestPath((seed)-[rels:MEMORY_REL*1..{max_hops}]-(target:Entity))
-    WHERE seed.id <> target.id AND ALL(r IN rels WHERE r.current = true)
+    WHERE seed.id <> target.id
+      AND target.canonical = true
+      AND ALL(r IN rels WHERE r.current = true)
     RETURN
       seed.id AS seed_id,
+      elementId(seed) AS seed_element_id,
       target.id AS target_id,
+      elementId(target) AS target_element_id,
       target.name AS target_name,
       target.type AS target_type,
+      coalesce(target.access_count, 0) AS target_access_count,
+      target.last_accessed AS target_last_accessed,
       length(path) AS distance,
       [r IN rels | r.memory_fact_id] AS memory_fact_ids,
-      [r IN rels | r.family] AS edge_families
+      [r IN rels | r.memory_fact_id] AS path_memory_fact_ids,
+      [r IN rels | elementId(r)] AS edge_ids,
+      [r IN rels | r.family] AS edge_families,
+      [r IN rels | r.subtype] AS edge_subtypes,
+      [r IN rels | coalesce(r.confidence_agg, 0.0)] AS edge_confidences,
+      [r IN rels | coalesce(r.access_count, 0)] AS edge_access_counts,
+      [r IN rels | r.last_accessed] AS edge_last_accessed
     """
     driver = get_driver()
     async with driver.session() as session:
@@ -1659,9 +1690,16 @@ async def touch_relations(element_ids: list[str], now: str) -> None:
     async with driver.session() as session:
         await session.run(
             """
-            MATCH ()-[r:RELATES_TO]->() WHERE elementId(r) IN $ids
+            MATCH ()-[r:MEMORY_REL]->() WHERE elementId(r) IN $ids
+            OPTIONAL MATCH (f:MemoryFact {id: r.memory_fact_id})
             SET r.access_count = coalesce(r.access_count, 0) + 1,
-                r.last_accessed = $now
+                r.last_accessed = $now,
+                r.updated_at = $now
+            FOREACH (_ IN CASE WHEN f IS NULL THEN [] ELSE [1] END |
+                SET f.access_count = coalesce(f.access_count, 0) + 1,
+                    f.last_accessed = $now,
+                    f.updated_at = $now
+            )
             """,
             ids=element_ids,
             now=now,
