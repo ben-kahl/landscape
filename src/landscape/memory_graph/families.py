@@ -12,14 +12,6 @@ class FamilyConfig:
     object_kind: ObjectKind
     traversable: bool
 
-    @property
-    def single_current(self) -> bool:
-        return self.slot_mode == "subject"
-
-    @property
-    def identity_uses_subtype(self) -> bool:
-        return self.slot_mode == "subtype"
-
 
 FAMILY_REGISTRY: dict[str, FamilyConfig] = {
     "WORKS_FOR": FamilyConfig("WORKS_FOR", slot_mode="subject", object_kind="entity", traversable=True),
@@ -36,7 +28,7 @@ FAMILY_REGISTRY: dict[str, FamilyConfig] = {
     "HAS_TITLE": FamilyConfig("HAS_TITLE", slot_mode="object", object_kind="entity", traversable=True),
     "HAS_PREFERENCE": FamilyConfig("HAS_PREFERENCE", slot_mode="subtype", object_kind="value", traversable=True),
     "HAS_ATTRIBUTE": FamilyConfig("HAS_ATTRIBUTE", slot_mode="subtype", object_kind="value", traversable=True),
-    "FAMILY_OF": FamilyConfig("FAMILY_OF", slot_mode="subtype", object_kind="entity", traversable=True),
+    "FAMILY_OF": FamilyConfig("FAMILY_OF", slot_mode="additive", object_kind="entity", traversable=True),
     "RECOMMENDED": FamilyConfig("RECOMMENDED", slot_mode="additive", object_kind="value", traversable=True),
     "DISCUSSED": FamilyConfig("DISCUSSED", slot_mode="additive", object_kind="value", traversable=True),
     "HAPPENED_ON": FamilyConfig("HAPPENED_ON", slot_mode="subject", object_kind="value", traversable=True),

@@ -117,9 +117,19 @@ def slot_key(
             object_part = "|".join(value_parts) if value_parts else ""
         return ":".join(part for part in (family.family, subject_entity_id, object_part) if part)
     if family.slot_mode == "subtype":
-        return ":".join(
-            part for part in (family.family, subject_entity_id, subtype or "") if part
-        )
+        if subtype is None:
+            return fact_key(
+                family,
+                subject_entity_id,
+                object_entity_id,
+                subtype,
+                value_text=value_text,
+                value_number=value_number,
+                value_unit=value_unit,
+                value_kind=value_kind,
+                value_time=value_time,
+            )
+        return ":".join(part for part in (family.family, subject_entity_id, subtype) if part)
     return fact_key(
         family,
         subject_entity_id,
