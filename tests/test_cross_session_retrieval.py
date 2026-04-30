@@ -111,7 +111,7 @@ async def _seed_entity_to_qdrant(
     await neo4j_store.link_entity_to_turn(eid, turn_eid)
     vector = encoder.embed_query(name)
     await qdrant_store.upsert_entity(
-        neo4j_element_id=eid,
+        entity_id=eid,
         name=name,
         entity_type=entity_type,
         source_doc=source_doc,
@@ -156,8 +156,8 @@ async def test_retrieve_filtered_by_session_id_returns_only_that_conversations_e
         session_id="conv-sf-b",
     )
 
-    ids_a = {r.neo4j_id for r in result_a.results}
-    ids_b = {r.neo4j_id for r in result_b.results}
+    ids_a = {r.entity_id for r in result_a.results}
+    ids_b = {r.entity_id for r in result_b.results}
 
     assert eid_a in ids_a, f"EntityA should be in conv-sf-a results, got: {ids_a}"
     assert eid_b not in ids_a, "EntityB must not bleed into conv-sf-a results"
@@ -207,7 +207,7 @@ async def test_retrieve_filtered_by_since_excludes_old_turn(
     result = await retrieve(
         "SinceFilterNewEntity", hops=1, limit=10, reinforce=False, since=since_cutoff
     )
-    result_ids = {r.neo4j_id for r in result.results}
+    result_ids = {r.entity_id for r in result.results}
 
     assert eid_new in result_ids, f"Recent entity should surface, got: {result_ids}"
     assert eid_old not in result_ids, (
@@ -254,8 +254,8 @@ async def test_retrieve_unfiltered_returns_both(
     result_a = await retrieve("UnfilteredEntityAlpha", hops=1, limit=10, reinforce=False)
     result_b = await retrieve("UnfilteredEntityBeta", hops=1, limit=10, reinforce=False)
 
-    ids_a = {r.neo4j_id for r in result_a.results}
-    ids_b = {r.neo4j_id for r in result_b.results}
+    ids_a = {r.entity_id for r in result_a.results}
+    ids_b = {r.entity_id for r in result_b.results}
 
     assert eid_a in ids_a, f"EntityAlpha must be reachable without filter, got: {ids_a}"
     assert eid_b in ids_b, f"EntityBeta must be reachable without filter, got: {ids_b}"

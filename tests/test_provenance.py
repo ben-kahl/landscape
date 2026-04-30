@@ -239,7 +239,7 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
     )
 
     await qdrant_store.upsert_entity(
-        neo4j_element_id=subject_id,
+        entity_id=subject_id,
         name="RelSubj3",
         entity_type="PERSON",
         source_doc="prov-sup-doc-1",
@@ -247,7 +247,7 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
         vector=encoder.encode("RelSubj3 (PERSON)"),
     )
     await qdrant_store.upsert_entity(
-        neo4j_element_id=old_object_id,
+        entity_id=old_object_id,
         name=old_org_name,
         entity_type="ORGANIZATION",
         source_doc="prov-sup-doc-2",
@@ -255,7 +255,7 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
         vector=encoder.encode(f"{old_org_name} (ORGANIZATION)"),
     )
     await qdrant_store.upsert_entity(
-        neo4j_element_id=new_object_id,
+        entity_id=new_object_id,
         name=new_org_name,
         entity_type="ORGANIZATION",
         source_doc="prov-sup-doc-3",

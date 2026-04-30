@@ -25,7 +25,7 @@ def test_entity_document_renders_quantity_qualifiers():
 
     doc = _entity_to_document(
         RetrievedEntity(
-            neo4j_id="netflix-id",
+            entity_id="netflix-id",
             name="Netflix",
             type="TECHNOLOGY",
             distance=1,
@@ -66,7 +66,7 @@ async def test_langchain_retriever_returns_chunk_documents(monkeypatch):
             touched_edge_ids=[],
             chunks=[
                 RetrievedChunk(
-                    chunk_neo4j_id="chunk-1",
+                    chunk_id="chunk-1",
                     text="I spent 10 hours last month watching documentaries on Netflix.",
                     doc_id="doc-1",
                     source_doc="longmemeval:test",
@@ -86,7 +86,7 @@ async def test_langchain_retriever_returns_chunk_documents(monkeypatch):
         "I spent 10 hours last month watching documentaries on Netflix."
     )
     assert docs[0].metadata["kind"] == "chunk"
-    assert docs[0].metadata["chunk_neo4j_id"] == "chunk-1"
+    assert docs[0].metadata["chunk_id"] == "chunk-1"
 
 
 @pytest.mark.asyncio
@@ -115,7 +115,7 @@ async def test_langchain_retriever_returns_documents(http_client):
         )
         # metadata carries every numeric signal the scoring layer produced
         for key in (
-            "neo4j_id",
+            "entity_id",
             "name",
             "type",
             "distance",
@@ -133,7 +133,7 @@ async def test_langchain_retriever_returns_documents(http_client):
     for d in chunk_docs:
         assert d.page_content
         for key in (
-            "chunk_neo4j_id",
+            "chunk_id",
             "doc_id",
             "source_doc",
             "position",

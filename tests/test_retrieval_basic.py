@@ -175,7 +175,7 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (s:Entity) WHERE elementId(s) = $subject_id
+            MATCH (s:Entity) WHERE s.id = $subject_id
             MATCH (s)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity)
             RETURN o.name AS target, r.valid_until AS valid_until,
                    (r.valid_until IS NULL) AS current, r.memory_fact_id AS fact_id

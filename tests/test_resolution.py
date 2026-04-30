@@ -180,7 +180,7 @@ async def _seed_person_entity(name: str) -> str:
     )
     vector = encoder.encode(f"{name} (Person)")
     await qdrant_store.upsert_entity(
-        neo4j_element_id=entity_id,
+        entity_id=entity_id,
         name=name,
         entity_type="Person",
         source_doc=f"res-seed-{name}",

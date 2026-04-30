@@ -57,13 +57,14 @@ async def test_add_entity_resolves_to_existing(http_client, neo4j_driver):
     )
     vector = encoder.encode("Acme Corporation (Organization)")
     await qdrant_store.upsert_entity(
-        neo4j_element_id=entity_id,
+        entity_id=entity_id,
         name="Acme Corporation",
         entity_type="Organization",
         source_doc="wb-doc-2",
         timestamp=datetime.now(UTC).isoformat(),
         vector=vector,
     )
+    canonical_entity_id = await neo4j_store.resolve_entity_app_id(entity_id)
 
     # Now call add_entity with a slightly different (alias) name
     result = await add_entity(
@@ -75,7 +76,7 @@ async def test_add_entity_resolves_to_existing(http_client, neo4j_driver):
     )
 
     assert result.resolved_to_existing is True
-    assert result.entity_id == entity_id
+    assert result.entity_id == canonical_entity_id
     # canonical_name should reflect the stored entity's name
     assert result.canonical_name == "Acme Corporation"
 
@@ -246,7 +247,7 @@ async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_drive
     )
     vector = encoder.encode("Alice (Person)")
     await qdrant_store.upsert_entity(
-        neo4j_element_id=alice_id,
+        entity_id=alice_id,
         name="Alice",
         entity_type="Person",
         source_doc="wb-dup-doc",
@@ -858,7 +859,7 @@ async def _seed_entity_with_vector(
     *,
     vector: list[float] | None = None,
 ) -> str:
-    """Create Entity in Neo4j + Qdrant. Returns element id.
+    """Create Entity in Neo4j + Qdrant. Returns stable app id.
 
     If vector is None, encodes ``name (entity_type)`` using the project encoder.
     Callers that want alias resolution to fire from a different surface name
@@ -880,14 +881,14 @@ async def _seed_entity_with_vector(
     )
     v = vector if vector is not None else encoder.encode(f"{name} ({entity_type})")
     await qdrant_store.upsert_entity(
-        neo4j_element_id=entity_id,
+        entity_id=entity_id,
         name=name,
         entity_type=entity_type,
         source_doc=f"seed-doc-{name.lower().replace(' ', '-')}",
         timestamp=datetime.now(UTC).isoformat(),
         vector=v,
     )
-    return entity_id
+    return await neo4j_store.resolve_entity_app_id(entity_id)
 
 
 async def _seed_alias(
@@ -955,7 +956,7 @@ async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver
         edge_on_canonical = await (
             await session.run(
                 "MATCH (s:Entity)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity) "
-                "WHERE elementId(s) = $sid AND r.valid_until IS NULL "
+                "WHERE s.id = $sid AND r.valid_until IS NULL "
                 "RETURN count(r) AS cnt",
                 sid=robert_id,
             )
@@ -1026,7 +1027,7 @@ async def test_add_relation_does_not_cross_link_same_surface_name(http_client, n
             await session.run(
                 "MATCH (s:Entity {name: 'Alex'})-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity) "
                 "WHERE r.valid_until IS NULL "
-                "RETURN elementId(s) AS sid, s.type AS stype, count(r) AS cnt"
+                "RETURN s.id AS sid, s.type AS stype, count(r) AS cnt"
             )
         ).data()
 
