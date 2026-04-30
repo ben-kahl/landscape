@@ -7,7 +7,7 @@ Verification is via direct Cypher queries.
 Usage from bench_ab.py:
     from scripts.fixtures.supersession_scenarios import run_all_scenarios
     results = await run_all_scenarios()
-    # results: list[{"id": int, "name": str, "passed": bool}]
+    # results: list[ScenarioResult]
 """
 from __future__ import annotations
 
@@ -239,10 +239,12 @@ async def _scenario_4() -> ScenarioResult:
         error = "" if passed else f"canonical_id={canonical_id!r}"
         return ScenarioResult(id=4, name="alias_seed_resolution", passed=passed, error=error)
     finally:
-        await _wipe_entities(*names)
         driver = neo4j_store.get_driver()
-        async with driver.session() as session:
-            await session.run("MATCH (a:Alias {name: 'Bob-S4'}) DETACH DELETE a")
+        try:
+            await _wipe_entities(*names)
+        finally:
+            async with driver.session() as session:
+                await session.run("MATCH (a:Alias {name: 'Bob-S4'}) DETACH DELETE a")
 
 
 # ---------------------------------------------------------------------------
@@ -341,21 +343,22 @@ async def _scenario_6() -> ScenarioResult:
 # Runner
 # ---------------------------------------------------------------------------
 
+_SCENARIOS: list[tuple[int, str, object]] = [
+    (1, "subject_keyed_works_for", _scenario_1),
+    (2, "object_keyed_has_title", _scenario_2),
+    (3, "additive_leads", _scenario_3),
+    (4, "alias_seed_resolution", _scenario_4),
+    (5, "interval_propagation", _scenario_5),
+    (6, "multi_hop_excludes_stale", _scenario_6),
+]
+
+
 async def run_all_scenarios() -> list[ScenarioResult]:
     results = []
-    for fn in [
-        _scenario_1,
-        _scenario_2,
-        _scenario_3,
-        _scenario_4,
-        _scenario_5,
-        _scenario_6,
-    ]:
+    for sid, name, fn in _SCENARIOS:
         try:
             result = await fn()
         except Exception as exc:
-            name = fn.__name__.replace("_scenario_", "scenario_")
-            sid = int(fn.__name__.split("_")[2])
             result = ScenarioResult(id=sid, name=name, passed=False, error=str(exc))
         results.append(result)
     return results
