@@ -215,7 +215,12 @@ async def ingest(
         ):
             g = grouped[key]
             surface_name = g["name"].strip().lower()
-            if is_new:
+            existing_entity = (
+                None
+                if is_new or canonical_id is None
+                else await neo4j_store.find_entity_by_app_id(canonical_id)
+            )
+            if is_new or existing_entity is None:
                 canonical_id = await neo4j_store.merge_entity(
                     name=g["name"],
                     entity_type=g["canonical_entity_type"],
@@ -228,7 +233,7 @@ async def ingest(
                     subtype=g["subtype"],
                 )
                 await qdrant_store.upsert_entity(
-                    neo4j_element_id=canonical_id,
+                    entity_id=canonical_id,
                     name=g["name"],
                     entity_type=g["canonical_entity_type"],
                     source_doc=title,

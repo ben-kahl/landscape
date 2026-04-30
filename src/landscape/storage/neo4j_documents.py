@@ -145,7 +145,7 @@ async def merge_turn(
 
 
 async def link_entity_to_turn(
-    entity_element_id: str,
+    entity_ref: str,
     turn_element_id: str,
     confidence: float = 1.0,
 ) -> None:
@@ -154,7 +154,7 @@ async def link_entity_to_turn(
     async with driver.session() as session:
         await session.run(
             """
-            MATCH (e:Entity) WHERE elementId(e) = $eid
+            MATCH (e:Entity) WHERE e.id = $entity_ref
             MATCH (t:Turn)   WHERE elementId(t) = $tid
             MERGE (e)-[r:MENTIONED_IN]->(t)
             ON CREATE SET r.confidence = $confidence,
@@ -164,7 +164,7 @@ async def link_entity_to_turn(
                               ELSE r.confidence
                           END
             """,
-            eid=entity_element_id,
+            entity_ref=entity_ref,
             tid=turn_element_id,
             confidence=confidence,
             now=now,
@@ -195,11 +195,11 @@ async def get_entities_in_conversation(session_id: str) -> list[str]:
             """
             MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)
                   <-[:MENTIONED_IN]-(e:Entity)
-            RETURN DISTINCT elementId(e) AS eid
+            RETURN DISTINCT e.id AS entity_id
             """,
             session_id=session_id,
         )
-        return [record["eid"] async for record in result]
+        return [record["entity_id"] async for record in result]
 
 
 async def get_entities_since(since: datetime) -> list[str]:
@@ -210,11 +210,11 @@ async def get_entities_since(since: datetime) -> list[str]:
             """
             MATCH (e:Entity)-[:MENTIONED_IN]->(t:Turn)
             WHERE t.timestamp >= $since_iso
-            RETURN DISTINCT elementId(e) AS eid
+            RETURN DISTINCT e.id AS entity_id
             """,
             since_iso=since_iso,
         )
-        return [record["eid"] async for record in result]
+        return [record["entity_id"] async for record in result]
 
 
 async def get_chunks_in_conversation(session_id: str) -> list[str]:
@@ -224,7 +224,7 @@ async def get_chunks_in_conversation(session_id: str) -> list[str]:
             """
             MATCH (c:Conversation {id: $session_id})-[:HAS_TURN]->(t:Turn)
                   <-[:INGESTED_IN]-(d:Document)<-[:PART_OF]-(ch:Chunk)
-            RETURN DISTINCT coalesce(ch.chunk_id, elementId(ch)) AS cid
+            RETURN DISTINCT ch.chunk_id AS cid
             """,
             session_id=session_id,
         )
@@ -239,7 +239,7 @@ async def get_chunks_since(since: datetime) -> list[str]:
             """
             MATCH (ch:Chunk)-[:PART_OF]->(d:Document)-[:INGESTED_IN]->(t:Turn)
             WHERE t.timestamp >= $since_iso
-            RETURN DISTINCT coalesce(ch.chunk_id, elementId(ch)) AS cid
+            RETURN DISTINCT ch.chunk_id AS cid
             """,
             since_iso=since_iso,
         )
@@ -288,7 +288,7 @@ async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict
                    collect(
                        CASE WHEN e IS NOT NULL
                             THEN {
-                                eid: elementId(e),
+                                entity_id: e.id,
                                 name: e.name,
                                 type: e.type
                             }
@@ -323,8 +323,7 @@ async def link_assertion_to_chunk(assertion_id: str, chunk_id: str) -> None:
         await session.run(
             """
             MATCH (a:Assertion {id: $assertion_id})
-            MATCH (c:Chunk)
-            WHERE c.chunk_id = $chunk_id OR elementId(c) = $chunk_id
+            MATCH (c:Chunk {chunk_id: $chunk_id})
             MERGE (a)-[:MENTIONS_CHUNK]->(c)
             """,
             assertion_id=assertion_id,

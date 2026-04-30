@@ -36,7 +36,7 @@ from landscape.storage import neo4j_store, qdrant_store
 
 @dataclass
 class AddEntityResult:
-    entity_id: str          # Neo4j element id of the canonical node
+    entity_id: str          # Stable application id of the canonical node
     canonical_name: str     # May differ from input if resolved to existing
     resolved_to_existing: bool
 
@@ -101,8 +101,8 @@ async def _resolve_entity_for_writeback(
 
     if candidates and candidates[0].score >= effective_threshold:
         best = candidates[0]
-        canonical_id = best.payload["neo4j_node_id"]
-        existing = await neo4j_store.find_entity_by_element_id(canonical_id)
+        canonical_id = best.payload["entity_id"]
+        existing = await neo4j_store.find_entity_by_app_id(canonical_id)
         if existing is not None:
             canonical_name = existing["name"] if existing["name"] else name
             if name.lower() != canonical_name.lower():
@@ -119,7 +119,7 @@ async def _resolve_entity_for_writeback(
 
     turn_element_id, _ = await neo4j_store.merge_turn(session_id, turn_id)
 
-    entity_id = await neo4j_store.merge_entity(
+    entity_ref = await neo4j_store.merge_entity(
         name=name,
         entity_type=canonical_type,
         source_doc=source,
@@ -132,11 +132,12 @@ async def _resolve_entity_for_writeback(
         subtype=entity_type if canonical_type != entity_type else None,
     )
 
-    await neo4j_store.link_entity_to_turn(entity_id, turn_element_id, confidence=confidence)
+    await neo4j_store.link_entity_to_turn(entity_ref, turn_element_id, confidence=confidence)
+    entity_id = await neo4j_store.resolve_entity_app_id(entity_ref)
 
     now = datetime.now(UTC).isoformat()
     await qdrant_store.upsert_entity(
-        neo4j_element_id=entity_id,
+        entity_id=entity_id,
         name=name,
         entity_type=canonical_type,
         source_doc=source,

@@ -14,6 +14,7 @@ from qdrant_client.models import (
 )
 
 from landscape.config import settings
+from landscape.storage.neo4j_entities import resolve_entity_app_id
 
 COLLECTION = "entities"
 CHUNKS_COLLECTION = "chunks"
@@ -85,7 +86,7 @@ async def init_chunks_collection() -> None:
 
 
 async def upsert_entity(
-    neo4j_element_id: str,
+    entity_id: str,
     name: str,
     entity_type: str,
     source_doc: str,
@@ -93,24 +94,46 @@ async def upsert_entity(
     vector: list[float],
 ) -> None:
     client = get_client()
+    canonical_entity_id = await resolve_entity_app_id(entity_id)
     # Deterministic UUID so re-ingestion of the same entity doesn't duplicate points
-    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, neo4j_element_id))
-    await client.upsert(
-        collection_name=COLLECTION,
-        points=[
-            PointStruct(
-                id=point_id,
-                vector=vector,
-                payload={
-                    "neo4j_node_id": neo4j_element_id,
-                    "name": name,
-                    "type": entity_type,
-                    "source_doc": source_doc,
-                    "timestamp": timestamp,
-                },
-            )
-        ],
-    )
+    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, canonical_entity_id))
+    try:
+        await client.upsert(
+            collection_name=COLLECTION,
+            points=[
+                PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload={
+                        "entity_id": canonical_entity_id,
+                        "name": name,
+                        "type": entity_type,
+                        "source_doc": source_doc,
+                        "timestamp": timestamp,
+                    },
+                )
+            ],
+        )
+    except UnexpectedResponse as exc:
+        if exc.status_code != 404:
+            raise
+        await init_collection()
+        await client.upsert(
+            collection_name=COLLECTION,
+            points=[
+                PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload={
+                        "entity_id": canonical_entity_id,
+                        "name": name,
+                        "type": entity_type,
+                        "source_doc": source_doc,
+                        "timestamp": timestamp,
+                    },
+                )
+            ],
+        )
 
 
 async def search_similar_entities(
@@ -119,15 +142,29 @@ async def search_similar_entities(
     limit: int = 5,
 ) -> list[ScoredPoint]:
     client = get_client()
-    result = await client.query_points(
-        collection_name=COLLECTION,
-        query=vector,
-        query_filter=Filter(
-            must=[FieldCondition(key="type", match=MatchValue(value=entity_type))]
-        ),
-        limit=limit,
-        with_payload=True,
-    )
+    try:
+        result = await client.query_points(
+            collection_name=COLLECTION,
+            query=vector,
+            query_filter=Filter(
+                must=[FieldCondition(key="type", match=MatchValue(value=entity_type))]
+            ),
+            limit=limit,
+            with_payload=True,
+        )
+    except UnexpectedResponse as exc:
+        if exc.status_code != 404:
+            raise
+        await init_collection()
+        result = await client.query_points(
+            collection_name=COLLECTION,
+            query=vector,
+            query_filter=Filter(
+                must=[FieldCondition(key="type", match=MatchValue(value=entity_type))]
+            ),
+            limit=limit,
+            with_payload=True,
+        )
     return result.points
 
 
@@ -138,12 +175,23 @@ async def search_entities_any_type(
     """Entity search without the type filter — for retrieval where the
     caller doesn't know the entity type in advance."""
     client = get_client()
-    result = await client.query_points(
-        collection_name=COLLECTION,
-        query=vector,
-        limit=limit,
-        with_payload=True,
-    )
+    try:
+        result = await client.query_points(
+            collection_name=COLLECTION,
+            query=vector,
+            limit=limit,
+            with_payload=True,
+        )
+    except UnexpectedResponse as exc:
+        if exc.status_code != 404:
+            raise
+        await init_collection()
+        result = await client.query_points(
+            collection_name=COLLECTION,
+            query=vector,
+            limit=limit,
+            with_payload=True,
+        )
     return result.points
 
 
@@ -152,12 +200,23 @@ async def search_chunks(
     limit: int = 10,
 ) -> list[ScoredPoint]:
     client = get_client()
-    result = await client.query_points(
-        collection_name=CHUNKS_COLLECTION,
-        query=vector,
-        limit=limit,
-        with_payload=True,
-    )
+    try:
+        result = await client.query_points(
+            collection_name=CHUNKS_COLLECTION,
+            query=vector,
+            limit=limit,
+            with_payload=True,
+        )
+    except UnexpectedResponse as exc:
+        if exc.status_code != 404:
+            raise
+        await init_chunks_collection()
+        result = await client.query_points(
+            collection_name=CHUNKS_COLLECTION,
+            query=vector,
+            limit=limit,
+            with_payload=True,
+        )
     return result.points
 
 
@@ -171,20 +230,40 @@ async def upsert_chunk(
 ) -> None:
     client = get_client()
     point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, chunk_id))
-    await client.upsert(
-        collection_name=CHUNKS_COLLECTION,
-        points=[
-            PointStruct(
-                id=point_id,
-                vector=vector,
-                payload={
-                    "chunk_id": chunk_id,
-                    "chunk_neo4j_id": chunk_id,
-                    "doc_id": doc_id,
-                    "source_doc": source_doc,
-                    "position": position,
-                    "text": text,
-                },
-            )
-        ],
-    )
+    try:
+        await client.upsert(
+            collection_name=CHUNKS_COLLECTION,
+            points=[
+                PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload={
+                        "chunk_id": chunk_id,
+                        "doc_id": doc_id,
+                        "source_doc": source_doc,
+                        "position": position,
+                        "text": text,
+                    },
+                )
+            ],
+        )
+    except UnexpectedResponse as exc:
+        if exc.status_code != 404:
+            raise
+        await init_chunks_collection()
+        await client.upsert(
+            collection_name=CHUNKS_COLLECTION,
+            points=[
+                PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload={
+                        "chunk_id": chunk_id,
+                        "doc_id": doc_id,
+                        "source_doc": source_doc,
+                        "position": position,
+                        "text": text,
+                    },
+                )
+            ],
+        )

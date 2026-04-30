@@ -125,13 +125,13 @@ async def test_touch_writes_access_count_and_last_accessed(http_client, neo4j_dr
         },
     )
     assert q.status_code == 200
-    touched_ids = [item["neo4j_id"] for item in q.json()["results"]]
+    touched_ids = [item["entity_id"] for item in q.json()["results"]]
     assert touched_ids, "query should return at least one result"
 
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (e:Entity) WHERE elementId(e) IN $ids
+            MATCH (e:Entity) WHERE e.id IN $ids
             RETURN e.name AS name,
                    coalesce(e.access_count, 0) AS ac,
                    e.last_accessed AS la
@@ -349,7 +349,7 @@ async def test_reasserted_fact_outranks_cold_fact(
 
     fixed_ts = "2026-04-20T00:00:00+00:00"
     await qdrant_store.upsert_entity(
-        neo4j_element_id=subject_id,
+        entity_id=subject_id,
         name="Reinforce Subject",
         entity_type="Concept",
         source_doc="phase-3.5-test",

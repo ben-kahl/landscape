@@ -287,6 +287,7 @@ def test_query_command_threads_debug_flag(monkeypatch, capsys):
             session_id=None,
             since=None,
             debug=False,
+            include_historical=False,
             log_context=None,
         ):
             self.calls.append(
@@ -296,13 +297,14 @@ def test_query_command_threads_debug_flag(monkeypatch, capsys):
                     "limit": limit,
                     "reinforce": reinforce,
                     "debug": debug,
+                    "include_historical": include_historical,
                 }
             )
             return RetrievalResult(
                 query=query_text,
                 results=[
                     RetrievedEntity(
-                        neo4j_id="atlas-id",
+                        entity_id="atlas-id",
                         name="Project Atlas",
                         type="PROJECT",
                         distance=0,
@@ -338,6 +340,7 @@ def test_query_command_threads_debug_flag(monkeypatch, capsys):
             "limit": 10,
             "reinforce": True,
             "debug": True,
+            "include_historical": False,
         }
     ]
     output = capsys.readouterr().out

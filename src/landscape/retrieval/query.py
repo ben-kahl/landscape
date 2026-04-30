@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import perf_counter
+
 from landscape.embeddings import encoder
 from landscape.observability import RetrievalLogContext, create_retrieval_log_context
 from landscape.retrieval.scoring import (
@@ -15,7 +16,7 @@ from landscape.storage import neo4j_store, qdrant_store
 
 @dataclass
 class RetrievedEntity:
-    neo4j_id: str
+    entity_id: str
     name: str
     type: str
     distance: int
@@ -34,7 +35,7 @@ class RetrievedEntity:
 
 @dataclass
 class RetrievedChunk:
-    chunk_neo4j_id: str  # Stable document-scoped chunk id from storage
+    chunk_id: str
     text: str
     doc_id: str          # Document node ID from the chunk payload
     source_doc: str      # Human-readable document title/filename slug
@@ -66,79 +67,13 @@ def _top_results_for_logging(results: list[RetrievedEntity], *, max_items: int =
 async def _hydrate_memory_path_details(
     memory_fact_ids: list[str],
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    """Hydrate memory facts and their supporting assertions for a retrieved path.
+    return await neo4j_store.get_memory_fact_details_batch(memory_fact_ids)
 
-    This keeps the retrieval-layer API stable without introducing a new public
-    helper in storage. If the storage layer later grows a dedicated batch helper,
-    this function can delegate to it without changing callers."""
-    if not memory_fact_ids:
-        return [], []
 
-    unique_fact_ids = list(dict.fromkeys(memory_fact_ids))
-    driver = neo4j_store.get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            """
-            MATCH (fact:MemoryFact)
-            WHERE fact.id IN $fact_ids
-            OPTIONAL MATCH (subject:Entity)-[:AS_SUBJECT]->(fact)
-            OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
-            OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: fact.id}]->(object)
-            OPTIONAL MATCH (a:Assertion)-[:SUPPORTS]->(fact)
-            WITH fact, subject, object, rel,
-                 collect(DISTINCT a) AS assertions
-            RETURN fact.id AS memory_fact_id,
-                   fact.family AS family,
-                   fact.current AS current,
-                   fact.fact_key AS fact_key,
-                   fact.slot_key AS slot_key,
-                   fact.subtype AS subtype,
-                   fact.support_count AS support_count,
-                   fact.confidence_agg AS confidence_agg,
-                   subject.id AS subject_entity_id,
-                   subject.name AS subject_name,
-                   subject.type AS subject_type,
-                   object.id AS object_entity_id,
-                   object.name AS object_name,
-                   object.type AS object_type,
-                   rel.current AS memory_rel_current,
-                   [a IN assertions WHERE a IS NOT NULL | {
-                     assertion_id: a.id,
-                     source_kind: a.source_kind,
-                     source_id: a.source_id,
-                     raw_subject_text: a.raw_subject_text,
-                     raw_relation_text: a.raw_relation_text,
-                     raw_object_text: a.raw_object_text,
-                     family_candidate: a.family_candidate,
-                     confidence: a.confidence,
-                     subtype: a.subtype,
-                     quantity_value: a.quantity_value,
-                     quantity_unit: a.quantity_unit,
-                     quantity_kind: a.quantity_kind,
-                     time_scope: a.time_scope,
-                     status: a.status,
-                     created_at: a.created_at
-                   }] AS supporting_assertions
-            ORDER BY memory_fact_id
-            """,
-            fact_ids=unique_fact_ids,
-        )
-        rows = [dict(record) async for record in result]
-
-    row_by_fact_id = {row["memory_fact_id"]: row for row in rows}
-    memory_facts: list[dict[str, object]] = []
-    supporting_assertions: list[dict[str, object]] = []
-    for fact_id in unique_fact_ids:
-        row = row_by_fact_id.get(fact_id)
-        if row is None:
-            continue
-        assertions = list(row.pop("supporting_assertions") or [])
-        memory_facts.append(row)
-        supporting_assertions.extend(
-            {**assertion, "memory_fact_id": fact_id} for assertion in assertions
-        )
-
-    return memory_facts, supporting_assertions
+async def _hydrate_current_non_traversable_entity_memory(
+    entity_ids: list[str],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    return await neo4j_store.get_current_non_traversable_fact_details_for_entities(entity_ids)
 
 
 async def retrieve(
@@ -178,6 +113,14 @@ async def retrieve(
             duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
         )
 
+        stage_started_at = log.set_stage("alias_seed_resolution_completed")
+        direct_seed_ids = await neo4j_store.resolve_seed_entity_ids(query_text)
+        log.emit(
+            "alias_seed_resolution_completed",
+            alias_seed_count=len(direct_seed_ids),
+            duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
+        )
+
         # Seed searches: independent Qdrant queries against two collections.
         stage_started_at = log.set_stage("seed_search_completed")
         entity_hits, chunk_hits = await asyncio.gather(
@@ -192,26 +135,28 @@ async def retrieve(
         )
 
         seed_sims: dict[str, float] = {}
+        for entity_id in direct_seed_ids:
+            seed_sims[entity_id] = max(seed_sims.get(entity_id, 0.0), 1.0)
         for hit in entity_hits:
             payload = hit.payload or {}
-            neo4j_id = payload.get("neo4j_node_id")
-            if not neo4j_id:
+            entity_id = payload.get("entity_id")
+            if not entity_id:
                 continue
-            seed_sims[neo4j_id] = max(seed_sims.get(neo4j_id, 0.0), float(hit.score))
+            seed_sims[entity_id] = max(seed_sims.get(entity_id, 0.0), float(hit.score))
 
         chunk_ids: list[str] = []
         chunk_score_by_id: dict[str, float] = {}
         retrieved_chunks: list[RetrievedChunk] = []
         for hit in chunk_hits:
             payload = hit.payload or {}
-            cid = payload.get("chunk_id") or payload.get("chunk_neo4j_id")
+            cid = payload.get("chunk_id")
             if not cid:
                 continue
             chunk_ids.append(cid)
             chunk_score_by_id[cid] = float(hit.score)
             retrieved_chunks.append(
                 RetrievedChunk(
-                    chunk_neo4j_id=cid,
+                    chunk_id=cid,
                     text=payload.get("text", ""),
                     doc_id=payload.get("doc_id", ""),
                     source_doc=payload.get("source_doc", ""),
@@ -223,7 +168,7 @@ async def retrieve(
         stage_started_at = log.set_stage("chunk_entity_propagation_completed")
         chunk_entities = await neo4j_store.get_entities_from_chunks(chunk_ids)
         for ent in chunk_entities:
-            eid = ent["eid"]
+            entity_id = ent["entity_id"]
             src_chunk_ids = (
                 ent["chunk_eids"] if ent.get("chunk_eids") is not None else chunk_ids
             )
@@ -231,7 +176,7 @@ async def retrieve(
                 (chunk_score_by_id.get(cid, 0.0) for cid in src_chunk_ids),
                 default=0.0,
             )
-            seed_sims[eid] = max(seed_sims.get(eid, 0.0), best)
+            seed_sims[entity_id] = max(seed_sims.get(entity_id, 0.0), best)
         log.emit(
             "chunk_entity_propagation_completed",
             propagated_entity_count=len(chunk_entities),
@@ -269,7 +214,7 @@ async def retrieve(
 
         # Seeds as distance-0 candidates.
         for row in seed_rows:
-            eid = row["eid"]
+            entity_id = row["entity_id"]
             r = reinforcement_score(
                 row["access_count"],
                 parse_neo4j_datetime(row["last_accessed"]),
@@ -277,18 +222,18 @@ async def retrieve(
                 w,
             )
             s = score_candidate(
-                vector_sim=seed_sims.get(eid, 0.0),
+                vector_sim=seed_sims.get(entity_id, 0.0),
                 graph_distance=0,
                 edge_confidence=0.0,
                 reinforcement=r,
                 weights=w,
             )
-            candidates[eid] = RetrievedEntity(
-                neo4j_id=eid,
+            candidates[entity_id] = RetrievedEntity(
+                entity_id=entity_id,
                 name=row["name"],
                 type=row["type"],
                 distance=0,
-                vector_sim=seed_sims.get(eid, 0.0),
+                vector_sim=seed_sims.get(entity_id, 0.0),
                 reinforcement=r,
                 edge_confidence=0.0,
                 score=s,
@@ -296,7 +241,7 @@ async def retrieve(
 
         # 4. Graph expansion from the seeds that survived hydration (so we don't
         #    waste BFS work on entities whose edges are all superseded anyway).
-        live_seed_ids = [row["eid"] for row in seed_rows]
+        live_seed_ids = [row["entity_id"] for row in seed_rows]
         stage_started_at = log.set_stage("graph_expansion_completed")
         expansions = await neo4j_store.bfs_expand_memory_rel(live_seed_ids, max_hops=hops)
         log.emit(
@@ -347,21 +292,13 @@ async def retrieve(
                 weights=w,
             )
 
-            path_memory_fact_ids = list(
-                row.get("path_memory_fact_ids")
-                or row.get("memory_fact_ids")
-                or []
-            )
-            path_edge_types = list(
-                row.get("edge_families")
-                or row.get("edge_types")
-                or []
-            )
+            path_memory_fact_ids = list(row.get("path_memory_fact_ids") or [])
+            path_edge_types = list(row.get("path_edge_types") or [])
 
             existing = candidates.get(target_id)
             if existing is None or s > existing.score:
                 candidates[target_id] = RetrievedEntity(
-                    neo4j_id=target_id,
+                    entity_id=target_id,
                     name=row["target_name"],
                     type=row["target_type"],
                     distance=row["distance"],
@@ -406,7 +343,7 @@ async def retrieve(
                 chunk_allowlist = set(chunks_since)
 
             retrieved_chunks = [
-                c for c in retrieved_chunks if c.chunk_neo4j_id in chunk_allowlist
+                c for c in retrieved_chunks if c.chunk_id in chunk_allowlist
             ]
 
             if not allowlist:
@@ -487,7 +424,35 @@ async def retrieve(
                 duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
             )
 
-        touched_entity_ids = [c.neo4j_id for c in ranked]
+        current_scalar_facts, current_scalar_assertions = (
+            await _hydrate_current_non_traversable_entity_memory([item.entity_id for item in ranked])
+        )
+        if current_scalar_facts:
+            facts_by_entity_id: dict[str, list[dict[str, object]]] = {}
+            for fact in current_scalar_facts:
+                entity_id = fact.get("subject_entity_id")
+                if entity_id is None:
+                    continue
+                facts_by_entity_id.setdefault(str(entity_id), []).append(fact)
+            assertions_by_fact_id: dict[str, list[dict[str, object]]] = {}
+            for assertion in current_scalar_assertions:
+                fact_id = assertion.get("memory_fact_id")
+                if fact_id is None:
+                    continue
+                assertions_by_fact_id.setdefault(str(fact_id), []).append(assertion)
+            for item in ranked:
+                seen_fact_ids = {str(fact["memory_fact_id"]) for fact in item.memory_facts}
+                extra_facts = [
+                    fact
+                    for fact in facts_by_entity_id.get(item.entity_id, [])
+                    if str(fact["memory_fact_id"]) not in seen_fact_ids
+                ]
+                item.memory_facts.extend(extra_facts)
+                for fact in extra_facts:
+                    fact_id = str(fact["memory_fact_id"])
+                    item.supporting_assertions.extend(assertions_by_fact_id.get(fact_id, []))
+
+        touched_entity_ids = [c.entity_id for c in ranked]
         touched_edge_ids: list[str] = []
         seen_edges: set[str] = set()
         for c in ranked:
@@ -531,30 +496,10 @@ async def retrieve(
 
 
 async def _hydrate_entities(element_ids: list[str]) -> list[dict]:
-    """Hydrate canonical entities and drop any whose edges are *all* superseded.
+    """Hydrate canonical entities by stable app id and drop stale-only nodes.
 
     An entity with zero edges is kept (newly ingested, not orphaned). An entity
     with at least one currently-valid edge is kept. Only entities that had
     edges and have had *all* of them superseded are dropped — they're stale
     facts masquerading as live seeds."""
-    if not element_ids:
-        return []
-    driver = neo4j_store.get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            """
-            MATCH (e:Entity) WHERE elementId(e) IN $ids AND e.canonical = true
-            OPTIONAL MATCH (e)-[r:RELATES_TO]-()
-            WITH e,
-                 count(r) AS total_edges,
-                 sum(CASE WHEN r.valid_until IS NULL THEN 1 ELSE 0 END) AS valid_edges
-            WHERE total_edges = 0 OR valid_edges > 0
-            RETURN elementId(e) AS eid,
-                   e.name AS name,
-                   e.type AS type,
-                   coalesce(e.access_count, 0) AS access_count,
-                   e.last_accessed AS last_accessed
-            """,
-            ids=element_ids,
-        )
-        return [dict(r) async for r in result]
+    return await neo4j_store.get_rankable_entities(element_ids)

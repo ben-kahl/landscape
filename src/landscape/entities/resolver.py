@@ -16,7 +16,7 @@ async def resolve_entity(
     threshold: float = SIMILARITY_THRESHOLD,
 ) -> tuple[str | None, bool, float | None]:
     """
-    Returns (canonical_neo4j_id, is_new, similarity).
+    Returns (canonical_entity_id, is_new, similarity).
     is_new=True means no match found — caller must create the entity.
 
     When entity_type is "Unknown" (the default for agent-authored relation
@@ -42,8 +42,8 @@ async def resolve_entity(
         return (None, True, None)
 
     best = candidates[0]
-    canonical_id: str = best.payload["neo4j_node_id"]
-    canonical = await neo4j_entities.find_entity_by_element_id(canonical_id)
+    canonical_id: str = best.payload["entity_id"]
+    canonical = await neo4j_entities.find_entity_by_app_id(canonical_id)
 
     if canonical is None:
         # Qdrant has a stale entry; treat as new

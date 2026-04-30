@@ -4,6 +4,7 @@ The multi-hop killer demo lives in test_retrieval_multihop.py under
 the 'retrieval' marker. Tests here run by default."""
 import json
 import logging
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -81,12 +82,12 @@ async def test_query_reinforces_touched_entities(http_client, neo4j_driver):
     assert body["touched_entity_count"] > 0
     assert body["results"]
 
-    # The response reports which neo4j IDs were touched; check them directly.
-    touched_ids = [r["neo4j_id"] for r in body["results"]]
+    # The response reports which stable entity ids were touched; check them directly.
+    touched_ids = [r["entity_id"] for r in body["results"]]
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (e:Entity) WHERE elementId(e) IN $ids
+            MATCH (e:Entity) WHERE e.id IN $ids
             RETURN count(e) AS total,
                    sum(CASE WHEN e.access_count > 0 THEN 1 ELSE 0 END) AS reinforced
             """,
@@ -176,7 +177,8 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
             """
             MATCH (s:Entity) WHERE elementId(s) = $subject_id
             MATCH (s)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity)
-            RETURN o.name AS target, r.current AS current, r.memory_fact_id AS fact_id
+            RETURN o.name AS target, r.valid_until AS valid_until,
+                   (r.valid_until IS NULL) AS current, r.memory_fact_id AS fact_id
             ORDER BY o.name
             """,
             subject_id=subject_id,
@@ -185,13 +187,15 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
 
         old_fact_record = await (
             await session.run(
-                "MATCH (f:MemoryFact {id: $fact_id}) RETURN f.current AS current",
+                "MATCH (f:MemoryFact {id: $fact_id}) RETURN f.valid_until AS valid_until, "
+                "(f.valid_until IS NULL) AS current",
                 fact_id=old_fact,
             )
         ).single()
         new_fact_record = await (
             await session.run(
-                "MATCH (f:MemoryFact {id: $fact_id}) RETURN f.current AS current",
+                "MATCH (f:MemoryFact {id: $fact_id}) RETURN f.valid_until AS valid_until, "
+                "(f.valid_until IS NULL) AS current",
                 fact_id=new_fact,
             )
         ).single()
@@ -205,9 +209,9 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
     assert old_obj not in target_names, (
         f"Superseded target {old_obj} should be filtered out, got: {target_names}"
     )
-    assert old_fact_record is not None and old_fact_record["current"] is False
-    assert new_fact_record is not None and new_fact_record["current"] is True
-    assert {record["target"]: record["current"] for record in records} == {
+    assert old_fact_record is not None and old_fact_record["valid_until"] is not None
+    assert new_fact_record is not None and new_fact_record["valid_until"] is None
+    assert {record["target"]: record["valid_until"] is None for record in records} == {
         old_obj: False,
         new_obj: True,
     }
@@ -219,11 +223,12 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
     from landscape.retrieval import query
 
     monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+    monkeypatch.setattr(query.neo4j_store, "resolve_seed_entity_ids", AsyncMock(return_value=[]))
 
     class Hit:
         def __init__(self):
             self.score = 0.9
-            self.payload = {"neo4j_node_id": "eric-id"}
+            self.payload = {"entity_id": "eric-id"}
 
     async def fake_search_entities_any_type(vector, limit=10):
         return [Hit()]
@@ -237,7 +242,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
     async def fake_hydrate_entities(ids):
         return [
             {
-                "eid": "eric-id",
+                "entity_id": "eric-id",
                 "name": "Eric",
                 "type": "PERSON",
                 "access_count": 0,
@@ -254,7 +259,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
                 "target_type": "TECHNOLOGY",
                 "distance": 1,
                 "path_memory_fact_ids": ["fact-1"],
-                "edge_families": ["DISCUSSION"],
+                "path_edge_types": ["DISCUSSION"],
             }
         ]
 
@@ -271,6 +276,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
                 {
                     "memory_fact_id": "fact-1",
                     "family": "DISCUSSION",
+                    "valid_until": None,
                     "current": True,
                     "fact_key": "fact-key",
                     "slot_key": "slot-key",
@@ -283,6 +289,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
                     "object_entity_id": "netflix-id",
                     "object_name": "Netflix",
                     "object_type": "TECHNOLOGY",
+                    "memory_rel_valid_until": None,
                     "memory_rel_current": True,
                 }
             ],
@@ -326,6 +333,9 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
     monkeypatch.setattr(query.neo4j_store, "touch_entities", fake_touch_entities)
     monkeypatch.setattr(query.neo4j_store, "touch_relations", fake_touch_relations)
     monkeypatch.setattr(query, "_hydrate_memory_path_details", fake_hydrate_path_memory_facts)
+    monkeypatch.setattr(
+        query, "_hydrate_current_non_traversable_entity_memory", AsyncMock(return_value=([], []))
+    )
 
     result = await query.retrieve("How many hours on Netflix?", reinforce=False)
 
@@ -336,6 +346,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
         {
             "memory_fact_id": "fact-1",
             "family": "DISCUSSION",
+            "valid_until": None,
             "current": True,
             "fact_key": "fact-key",
             "slot_key": "slot-key",
@@ -348,6 +359,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
             "object_entity_id": "netflix-id",
             "object_name": "Netflix",
             "object_type": "TECHNOLOGY",
+            "memory_rel_valid_until": None,
             "memory_rel_current": True,
         }
     ]
@@ -379,6 +391,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
     from landscape.retrieval import query
 
     monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+    monkeypatch.setattr(query.neo4j_store, "resolve_seed_entity_ids", AsyncMock(return_value=[]))
 
     class Hit:
         def __init__(self, score, payload):
@@ -386,7 +399,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
             self.payload = payload
 
     async def fake_search_entities_any_type(vector, limit=10):
-        return [Hit(0.9, {"neo4j_node_id": "atlas-id"})]
+        return [Hit(0.9, {"entity_id": "atlas-id"})]
 
     async def fake_search_chunks(vector, limit=10):
         return []
@@ -397,7 +410,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
     async def fake_hydrate_entities(ids):
         return [
             {
-                "eid": "atlas-id",
+                "entity_id": "atlas-id",
                 "name": "Project Atlas",
                 "type": "PROJECT",
                 "access_count": 0,
@@ -428,6 +441,9 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
     )
     monkeypatch.setattr(query.neo4j_store, "touch_entities", noop_touch)
     monkeypatch.setattr(query.neo4j_store, "touch_relations", noop_touch)
+    monkeypatch.setattr(
+        query, "_hydrate_current_non_traversable_entity_memory", AsyncMock(return_value=([], []))
+    )
 
     caplog.set_level(logging.INFO, logger="landscape.retrieval")
 
@@ -460,6 +476,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
     from landscape.retrieval import query
 
     monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+    monkeypatch.setattr(query.neo4j_store, "resolve_seed_entity_ids", AsyncMock(return_value=[]))
 
     class Hit:
         def __init__(self, score, payload):
@@ -467,7 +484,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
             self.payload = payload
 
     async def fake_search_entities_any_type(vector, limit=10):
-        return [Hit(0.9, {"neo4j_node_id": "atlas-id"})]
+        return [Hit(0.9, {"entity_id": "atlas-id"})]
 
     async def fake_search_chunks(vector, limit=10):
         return []
@@ -478,7 +495,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
     async def fake_hydrate_entities(ids):
         return [
             {
-                "eid": "atlas-id",
+                "entity_id": "atlas-id",
                 "name": "Project Atlas",
                 "type": "PROJECT",
                 "access_count": 0,
@@ -497,7 +514,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
                 "target_type": "DATABASE",
                 "distance": 1,
                 "path_memory_fact_ids": ["fact-1"],
-                "edge_families": ["USES"],
+                "path_edge_types": ["USES"],
             }
         ]
 
@@ -525,10 +542,13 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
     monkeypatch.setattr(
         query.neo4j_store, "bfs_expand_memory_rel", fake_bfs_expand_memory_rel
     )
-    monkeypatch.setattr(query.neo4j_store, "bfs_expand", fail_if_legacy_bfs)
+    monkeypatch.setattr(query.neo4j_store, "bfs_expand", fail_if_legacy_bfs, raising=False)
     monkeypatch.setattr(query.neo4j_store, "touch_entities", noop_touch)
     monkeypatch.setattr(query.neo4j_store, "touch_relations", noop_touch)
     monkeypatch.setattr(query, "_hydrate_memory_path_details", noop_hydrate)
+    monkeypatch.setattr(
+        query, "_hydrate_current_non_traversable_entity_memory", AsyncMock(return_value=([], []))
+    )
 
     result = await query.retrieve("What does Project Atlas use?", reinforce=False)
 
@@ -543,6 +563,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
     from landscape.retrieval import query
 
     monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+    monkeypatch.setattr(query.neo4j_store, "resolve_seed_entity_ids", AsyncMock(return_value=[]))
 
     class Hit:
         def __init__(self, score, payload):
@@ -550,14 +571,14 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
             self.payload = payload
 
     async def fake_search_entities_any_type(vector, limit=10):
-        return [Hit(0.9, {"neo4j_node_id": "atlas-id"})]
+        return [Hit(0.9, {"entity_id": "atlas-id"})]
 
     async def fake_search_chunks(vector, limit=10):
         return [
             Hit(
                 0.7,
                 {
-                    "chunk_neo4j_id": "chunk-1",
+                    "chunk_id": "chunk-1",
                     "text": "Project Atlas uses PostgreSQL.",
                     "doc_id": "doc-1",
                     "source_doc": "atlas-doc",
@@ -567,12 +588,12 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
         ]
 
     async def fake_get_entities_from_chunks(chunk_ids):
-        return [{"eid": "atlas-id", "chunk_eids": chunk_ids}]
+        return [{"entity_id": "atlas-id", "chunk_eids": chunk_ids}]
 
     async def fake_hydrate_entities(ids):
         return [
             {
-                "eid": "atlas-id",
+                "entity_id": "atlas-id",
                 "name": "Project Atlas",
                 "type": "PROJECT",
                 "access_count": 0,
@@ -603,6 +624,9 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
     )
     monkeypatch.setattr(query.neo4j_store, "touch_entities", noop_touch)
     monkeypatch.setattr(query.neo4j_store, "touch_relations", noop_touch)
+    monkeypatch.setattr(
+        query, "_hydrate_current_non_traversable_entity_memory", AsyncMock(return_value=([], []))
+    )
 
     caplog.set_level(logging.INFO, logger="landscape.retrieval")
 
@@ -739,7 +763,7 @@ async def test_query_cli_threads_include_historical_flag(monkeypatch, capsys):
             query=query_text,
             results=[
                 RetrievedEntity(
-                    neo4j_id="atlas-id",
+                    entity_id="atlas-id",
                     name="Project Atlas",
                     type="PROJECT",
                     distance=0,
@@ -822,7 +846,7 @@ async def test_alias_resolved_relation_traversable_from_canonical(neo4j_driver):
         "Robert", "Person", "ret-alias-robert-doc", 0.9, doc_id, "test"
     )
     await qdrant_store.upsert_entity(
-        neo4j_element_id=robert_id,
+        entity_id=robert_id,
         name="Robert",
         entity_type="Person",
         source_doc="ret-alias-robert-doc",
@@ -840,14 +864,13 @@ async def test_alias_resolved_relation_traversable_from_canonical(neo4j_driver):
         "AcmeCorp", "Organization", "ret-alias-acme-doc", 0.9, doc_id2, "test"
     )
     await qdrant_store.upsert_entity(
-        neo4j_element_id=acme_id,
+        entity_id=acme_id,
         name="AcmeCorp",
         entity_type="Organization",
         source_doc="ret-alias-acme-doc",
         timestamp=datetime.now(UTC).isoformat(),
         vector=encoder.encode("AcmeCorp (Organization)"),
     )
-
     # Write the relation via the writeback path using alias name "Bob".
     result = await add_relation(
         "Bob",
@@ -884,6 +907,77 @@ async def test_alias_resolved_relation_traversable_from_canonical(neo4j_driver):
         f"Alias stub 'Bob' must not have any MEMORY_REL edges; the canonical 'Robert' "
         f"node owns the relation. Got {stub_edges['cnt']} edge(s) on stub."
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_retrieve_seeds_canonical_entity_from_alias_resolution(monkeypatch):
+    from landscape.retrieval import query
+
+    monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+
+    async def fake_resolve_seed_entity_ids(query_text):
+        assert query_text == "What is Bob working on?"
+        return ["robert-id"]
+
+    async def fake_search_entities_any_type(vector, limit=10):
+        return []
+
+    async def fake_search_chunks(vector, limit=10):
+        return []
+
+    async def fake_get_entities_from_chunks(chunk_ids):
+        return []
+
+    async def fake_hydrate_entities(entity_ids):
+        assert entity_ids == ["robert-id"]
+        return [
+            {
+                "entity_id": "robert-id",
+                "name": "Robert",
+                "type": "PERSON",
+                "access_count": 0,
+                "last_accessed": None,
+            }
+        ]
+
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+        assert seed_ids == ["robert-id"]
+        return []
+
+    async def noop_touch(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        query.neo4j_store,
+        "resolve_seed_entity_ids",
+        fake_resolve_seed_entity_ids,
+    )
+    monkeypatch.setattr(
+        query.qdrant_store,
+        "search_entities_any_type",
+        fake_search_entities_any_type,
+    )
+    monkeypatch.setattr(query.qdrant_store, "search_chunks", fake_search_chunks)
+    monkeypatch.setattr(
+        query.neo4j_store,
+        "get_entities_from_chunks",
+        fake_get_entities_from_chunks,
+    )
+    monkeypatch.setattr(query, "_hydrate_entities", fake_hydrate_entities)
+    monkeypatch.setattr(
+        query.neo4j_store, "bfs_expand_memory_rel", fake_bfs_expand_memory_rel
+    )
+    monkeypatch.setattr(query.neo4j_store, "touch_entities", noop_touch)
+    monkeypatch.setattr(query.neo4j_store, "touch_relations", noop_touch)
+    monkeypatch.setattr(
+        query, "_hydrate_current_non_traversable_entity_memory", AsyncMock(return_value=([], []))
+    )
+
+    result = await query.retrieve("What is Bob working on?", reinforce=False)
+
+    assert [item.entity_id for item in result.results] == ["robert-id"]
+    assert result.results[0].name == "Robert"
 
 
 @pytest.mark.unit

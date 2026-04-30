@@ -39,7 +39,7 @@ async def test_init_collection_uses_configured_dims(model_name, expected_dims):
     from landscape.storage import qdrant_store
 
     fake_client = MagicMock()
-    fake_client.get_collections = AsyncMock(return_value=MagicMock(collections=[]))
+    fake_client.get_collection = AsyncMock(return_value=MagicMock())
     fake_client.create_collection = AsyncMock()
 
     with patch.object(qdrant_store, "get_client", return_value=fake_client), \
@@ -89,12 +89,12 @@ async def test_retrieve_runs_both_filter_queries_in_parallel():
     # `if not seed_sims` return is bypassed.
     fake_hit = MagicMock(spec=ScoredPoint)
     fake_hit.score = 0.9
-    fake_hit.payload = {"neo4j_node_id": "e1"}
+    fake_hit.payload = {"entity_id": "e1"}
 
-    # _hydrate_entities and bfs_expand must be patched to prevent real Neo4j
+    # _hydrate_entities and bfs_expand_memory_rel must be patched to prevent real Neo4j
     # connections while allowing the function to reach the filter block.
     fake_entity_row = {
-        "eid": "e1",
+        "entity_id": "e1",
         "name": "FakeEntity",
         "type": "Person",
         "access_count": 0,
@@ -110,13 +110,15 @@ async def test_retrieve_runs_both_filter_queries_in_parallel():
     ), patch.object(
         query_mod.encoder, "embed_query", return_value=[0.0] * 4,
     ), patch.object(
+        query_mod.neo4j_store, "resolve_seed_entity_ids", AsyncMock(return_value=[]),
+    ), patch.object(
         query_mod.neo4j_store, "get_entities_from_chunks",
         AsyncMock(return_value=[]),
     ), patch(
         "landscape.retrieval.query._hydrate_entities",
         AsyncMock(return_value=[fake_entity_row]),
     ), patch.object(
-        query_mod.neo4j_store, "bfs_expand",
+        query_mod.neo4j_store, "bfs_expand_memory_rel",
         AsyncMock(return_value=[]),
     ), patch.object(
         query_mod.neo4j_store, "get_entities_in_conversation",
@@ -178,6 +180,10 @@ async def test_retrieve_runs_seed_searches_in_parallel():
         return_value=[0.0] * 4,
     ), patch.object(
         query_mod.neo4j_store,
+        "resolve_seed_entity_ids",
+        AsyncMock(return_value=[]),
+    ), patch.object(
+        query_mod.neo4j_store,
         "get_entities_from_chunks",
         AsyncMock(return_value=[]),
     ):
@@ -206,7 +212,7 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
 
     # Seed the retrieval with a single entity hit so reinforce runs.
     fake_hit = MagicMock()
-    fake_hit.payload = {"neo4j_node_id": "e1"}
+    fake_hit.payload = {"entity_id": "e1"}
     fake_hit.score = 0.9
 
     with patch.object(
@@ -223,11 +229,15 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
         return_value=[0.0] * 4,
     ), patch.object(
         query_mod.neo4j_store,
+        "resolve_seed_entity_ids",
+        AsyncMock(return_value=[]),
+    ), patch.object(
+        query_mod.neo4j_store,
         "get_entities_from_chunks",
         AsyncMock(return_value=[]),
     ), patch.object(
         query_mod.neo4j_store,
-        "bfs_expand",
+        "bfs_expand_memory_rel",
         AsyncMock(return_value=[]),
     ), patch.object(
         query_mod,
@@ -235,7 +245,7 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
         AsyncMock(
             return_value=[
                 {
-                    "eid": "e1",
+                    "entity_id": "e1",
                     "name": "E1",
                     "type": "T",
                     "access_count": 0,
@@ -243,6 +253,10 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
                 }
             ]
         ),
+    ), patch.object(
+        query_mod,
+        "_hydrate_current_non_traversable_entity_memory",
+        AsyncMock(return_value=([], [])),
     ), patch.object(
         query_mod.neo4j_store,
         "touch_entities",

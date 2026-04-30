@@ -22,7 +22,7 @@ class QueryRequest(BaseModel):
 
 
 class QueryResultItem(BaseModel):
-    neo4j_id: str
+    entity_id: str
     name: str
     type: str
     distance: int
@@ -39,7 +39,7 @@ class QueryResultItem(BaseModel):
 
 
 class QueryChunkItem(BaseModel):
-    chunk_neo4j_id: str
+    chunk_id: str
     text: str
     doc_id: str
     source_doc: str
@@ -78,7 +78,7 @@ async def query_endpoint(req: QueryRequest, auth: AgentPrincipal) -> QueryRespon
         query=result.query,
         results=[
             QueryResultItem(
-                neo4j_id=r.neo4j_id,
+                entity_id=r.entity_id,
                 name=r.name,
                 type=r.type,
                 distance=r.distance,
@@ -97,7 +97,7 @@ async def query_endpoint(req: QueryRequest, auth: AgentPrincipal) -> QueryRespon
         ],
         chunks=[
             QueryChunkItem(
-                chunk_neo4j_id=c.chunk_neo4j_id,
+                chunk_id=c.chunk_id,
                 text=c.text,
                 doc_id=c.doc_id,
                 source_doc=c.source_doc,
