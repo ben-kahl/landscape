@@ -39,16 +39,95 @@ def assertion_id(
     return f"assertion:{source_kind}:{digest}"
 
 
-def fact_key(family: FamilyConfig, subject_entity_id: str, object_entity_id: str | None, subtype: str | None) -> str:
+def _encode_value_parts(
+    *,
+    value_text: str | None,
+    value_number: float | None,
+    value_unit: str | None,
+    value_kind: str | None,
+    value_time: str | None,
+) -> list[str]:
+    parts: list[str] = []
+    if value_text is not None:
+        parts.append(f"value_text={value_text}")
+    if value_number is not None:
+        parts.append(f"value_number={value_number}")
+    if value_unit is not None:
+        parts.append(f"value_unit={value_unit}")
+    if value_kind is not None:
+        parts.append(f"value_kind={value_kind}")
+    if value_time is not None:
+        parts.append(f"value_time={value_time}")
+    return parts
+
+
+def fact_key(
+    family: FamilyConfig,
+    subject_entity_id: str,
+    object_entity_id: str | None,
+    subtype: str | None,
+    *,
+    value_text: str | None = None,
+    value_number: float | None = None,
+    value_unit: str | None = None,
+    value_kind: str | None = None,
+    value_time: str | None = None,
+) -> str:
     parts = [family.family, subject_entity_id]
     if object_entity_id is not None:
         parts.append(object_entity_id)
-    if family.identity_uses_subtype:
-        parts.append(subtype or "")
+    if subtype is not None:
+        parts.append(subtype)
+    parts.extend(
+        _encode_value_parts(
+            value_text=value_text,
+            value_number=value_number,
+            value_unit=value_unit,
+            value_kind=value_kind,
+            value_time=value_time,
+        )
+    )
     return ":".join(parts)
 
 
-def slot_key(family: FamilyConfig, subject_entity_id: str, object_entity_id: str | None, subtype: str | None) -> str:
-    if family.single_current:
+def slot_key(
+    family: FamilyConfig,
+    subject_entity_id: str,
+    object_entity_id: str | None,
+    subtype: str | None,
+    *,
+    value_text: str | None = None,
+    value_number: float | None = None,
+    value_unit: str | None = None,
+    value_kind: str | None = None,
+    value_time: str | None = None,
+) -> str:
+    if family.slot_mode == "subject":
         return f"{family.family}:{subject_entity_id}"
-    return fact_key(family, subject_entity_id, object_entity_id, subtype)
+    if family.slot_mode == "object":
+        object_part = object_entity_id
+        if object_part is None:
+            value_parts = _encode_value_parts(
+                value_text=value_text,
+                value_number=value_number,
+                value_unit=value_unit,
+                value_kind=value_kind,
+                value_time=value_time,
+            )
+            object_part = "|".join(value_parts) if value_parts else ""
+        return ":".join(part for part in (family.family, subject_entity_id, object_part) if part)
+    if family.slot_mode == "subtype":
+        return ":".join(
+            part for part in (family.family, subject_entity_id, subtype or "") if part
+        )
+    return fact_key(
+        family,
+        subject_entity_id,
+        object_entity_id,
+        subtype,
+        value_text=value_text,
+        value_number=value_number,
+        value_unit=value_unit,
+        value_kind=value_kind,
+        value_time=value_time,
+    )

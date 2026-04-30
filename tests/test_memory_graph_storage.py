@@ -1,6 +1,6 @@
 import pytest
 
-from landscape.memory_graph import AssertionPayload, FAMILY_REGISTRY, slot_key
+from landscape.memory_graph import FAMILY_REGISTRY, AssertionPayload, fact_key, slot_key
 from landscape.storage import neo4j_store
 
 
@@ -17,6 +17,30 @@ async def _entity_app_id(neo4j_driver, entity_element_id: str) -> str:
         record = await result.single()
         assert record is not None
         return record["entity_id"]
+
+
+def test_memory_fact_key_modes_follow_family_config():
+    works_for = FAMILY_REGISTRY["WORKS_FOR"]
+    has_title = FAMILY_REGISTRY["HAS_TITLE"]
+    has_pref = FAMILY_REGISTRY["HAS_PREFERENCE"]
+    created = FAMILY_REGISTRY["CREATED"]
+
+    assert works_for.slot_mode == "subject"
+    assert has_title.slot_mode == "object"
+    assert has_pref.slot_mode == "subtype"
+    assert created.slot_mode == "additive"
+
+    assert fact_key(works_for, "ent-a", "ent-b", None) == "WORKS_FOR:ent-a:ent-b"
+    assert slot_key(works_for, "ent-a", "ent-b", None) == "WORKS_FOR:ent-a"
+    assert fact_key(has_title, "ent-a", "ent-b", "senior_engineer") == (
+        "HAS_TITLE:ent-a:ent-b:senior_engineer"
+    )
+    assert slot_key(has_title, "ent-a", "ent-b", "senior_engineer") == "HAS_TITLE:ent-a:ent-b"
+    assert fact_key(has_pref, "ent-a", "ent-b", "favorite_color") == (
+        "HAS_PREFERENCE:ent-a:ent-b:favorite_color"
+    )
+    assert slot_key(has_pref, "ent-a", "ent-b", "favorite_color") == "HAS_PREFERENCE:ent-a:favorite_color"
+    assert fact_key(created, "ent-a", None, "diagram") == "CREATED:ent-a:diagram"
 
 
 @pytest.mark.asyncio
@@ -311,15 +335,22 @@ async def test_bfs_expand_memory_rel_uses_current_edges_only(neo4j_driver):
         assertion_id=stale_assertion,
     )
     rows = await neo4j_store.bfs_expand_memory_rel([alice], max_hops=1)
-    assert rows == [
-        {
-            "seed_id": alice_id,
-            "target_id": beacon_id,
-            "target_name": "Beacon",
-            "target_type": "Organization",
-            "distance": 1,
-            "memory_fact_ids": [current_fact],
-            "edge_families": ["WORKS_FOR"],
-        }
-    ]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["seed_id"] == alice_id
+    assert row["seed_element_id"] == alice
+    assert row["target_id"] == beacon_id
+    assert row["target_element_id"] == beacon
+    assert row["target_name"] == "Beacon"
+    assert row["target_type"] == "Organization"
+    assert row["target_access_count"] >= 1
+    assert row["target_last_accessed"] is not None
+    assert row["distance"] == 1
+    assert row["memory_fact_ids"] == [current_fact]
+    assert row["path_memory_fact_ids"] == [current_fact]
+    assert row["edge_families"] == ["WORKS_FOR"]
+    assert len(row["edge_ids"]) == 1
+    assert row["edge_confidences"] == [0.95]
+    assert row["edge_access_counts"] == [1]
+    assert row["edge_last_accessed"][0] is not None
     assert all(row["target_id"] != acme_id for row in rows)

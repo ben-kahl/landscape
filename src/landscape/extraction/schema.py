@@ -1,6 +1,6 @@
 import re
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 # Closed vocabulary of relation types. Any rel_type the LLM produces that's
 # not in this set is normalized via RELATION_SYNONYMS before write, or passed
@@ -193,7 +193,7 @@ class ExtractedEntity(BaseModel):
     name: str
     type: str
     confidence: float
-    aliases: list[str] = []
+    aliases: list[str] = Field(default_factory=list)
 
 
 class ExtractedRelation(BaseModel):
@@ -202,10 +202,45 @@ class ExtractedRelation(BaseModel):
     relation_type: str
     confidence: float
     subtype: str | None = None
+    value_text: str | None = None
+    value_number: float | None = None
+    value_unit: str | None = None
+    value_kind: str | None = None
+    value_time: str | None = None
     quantity_value: float | str | None = None
     quantity_unit: str | None = None
     quantity_kind: str | None = None
     time_scope: str | None = None
+
+    @model_validator(mode="after")
+    def _sync_value_fields(self) -> "ExtractedRelation":
+        if self.value_text is None and isinstance(self.quantity_value, str):
+            self.value_text = self.quantity_value
+        if self.value_number is None and isinstance(self.quantity_value, (int, float)):
+            self.value_number = float(self.quantity_value)
+
+        if self.quantity_value is None:
+            if self.value_number is not None:
+                self.quantity_value = self.value_number
+            elif self.value_text is not None:
+                self.quantity_value = self.value_text
+
+        if self.value_unit is None and self.quantity_unit is not None:
+            self.value_unit = self.quantity_unit
+        if self.quantity_unit is None and self.value_unit is not None:
+            self.quantity_unit = self.value_unit
+
+        if self.value_kind is None and self.quantity_kind is not None:
+            self.value_kind = self.quantity_kind
+        if self.quantity_kind is None and self.value_kind is not None:
+            self.quantity_kind = self.value_kind
+
+        if self.value_time is None and self.time_scope is not None:
+            self.value_time = self.time_scope
+        if self.time_scope is None and self.value_time is not None:
+            self.time_scope = self.value_time
+
+        return self
 
 
 _SNAKE_RE = re.compile(r"[^a-z0-9]+")
