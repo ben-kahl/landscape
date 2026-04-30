@@ -233,13 +233,13 @@ async def test_write_bumps_entity_access_count(neo4j_driver):
 
 @pytest.mark.asyncio
 async def test_write_bumps_relation_access_count(neo4j_driver):
-    """Each upsert_relation call should increment access_count and update
-    last_accessed on the live edge."""
-    from landscape.storage import neo4j_store
+    """Each repeated add_relation call should increment access_count and update
+    last_accessed on the live memory edge."""
+    from landscape.writeback import add_relation
 
     async with neo4j_driver.session() as session:
         await session.run(
-            "MATCH (:Entity {name: $s})-[r:RELATES_TO {type: $t}]->(:Entity {name: $o}) "
+            "MATCH (:Entity {name: $s})-[r:MEMORY_REL {family: $t}]->(:Entity {name: $o}) "
             "DELETE r",
             s="Reinforce Relation Subj",
             t="USES",
@@ -253,6 +253,8 @@ async def test_write_bumps_relation_access_count(neo4j_driver):
             "MATCH (e:Entity {name: $n}) DETACH DELETE e",
             n="Reinforce Relation Obj",
         )
+
+    from landscape.storage import neo4j_store
 
     await neo4j_store.merge_entity(
         name="Reinforce Relation Subj",
@@ -272,18 +274,21 @@ async def test_write_bumps_relation_access_count(neo4j_driver):
     )
 
     for _ in range(3):
-        await neo4j_store.upsert_relation(
+        await add_relation(
             "Reinforce Relation Subj",
+            "Concept",
             "Reinforce Relation Obj",
+            "Concept",
             "USES",
-            0.9,
-            "phase-3.5-test",
-            created_by="ingest",
+            source="phase-3.5-test",
+            session_id="s-rel",
+            turn_id="t-rel",
         )
 
     async with neo4j_driver.session() as session:
         result = await session.run(
-            "MATCH (:Entity {name: $s})-[r:RELATES_TO {type: $t}]->(:Entity {name: $o}) "
+            "MATCH (:Entity {name: $s})-[r:MEMORY_REL {family: $t}]->(:Entity {name: $o}) "
+            "WHERE r.valid_until IS NULL "
             "RETURN coalesce(r.access_count, 0) AS c, r.last_accessed AS la",
             s="Reinforce Relation Subj",
             t="USES",
@@ -303,6 +308,7 @@ async def test_reasserted_fact_outranks_cold_fact(
     """A repeatedly reasserted fact should rank above an equivalent cold fact."""
     from landscape.config import settings
     from landscape.embeddings import encoder
+    from landscape.memory_graph import AssertionPayload
     from landscape.storage import neo4j_store, qdrant_store
 
     names = ["Reinforce Subject", "Warm Stack", "Cold Stack"]
@@ -324,7 +330,7 @@ async def test_reasserted_fact_outranks_cold_fact(
         model="test",
         created_by="ingest",
     )
-    await neo4j_store.merge_entity(
+    warm_id = await neo4j_store.merge_entity(
         name="Warm Stack",
         entity_type="Concept",
         source_doc="phase-3.5-test",
@@ -332,7 +338,7 @@ async def test_reasserted_fact_outranks_cold_fact(
         model="test",
         created_by="ingest",
     )
-    await neo4j_store.merge_entity(
+    cold_id = await neo4j_store.merge_entity(
         name="Cold Stack",
         entity_type="Concept",
         source_doc="phase-3.5-test",
@@ -362,22 +368,45 @@ async def test_reasserted_fact_outranks_cold_fact(
             ts=fixed_ts,
         )
 
-    await neo4j_store.upsert_relation(
-        "Reinforce Subject",
-        "Cold Stack",
-        "RELATED_TO",
-        0.9,
-        "phase-3.5-test",
-        created_by="ingest",
+    warm_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="phase-3.5-warm",
+            raw_subject_text="Reinforce Subject",
+            raw_relation_text="uses",
+            raw_object_text="Warm Stack",
+            confidence=0.9,
+            family_candidate="USES",
+        )
+    )
+    cold_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="phase-3.5-cold",
+            raw_subject_text="Reinforce Subject",
+            raw_relation_text="uses",
+            raw_object_text="Cold Stack",
+            confidence=0.9,
+            family_candidate="USES",
+        )
+    )
+
+    await neo4j_store.upsert_memory_fact_from_assertion(
+        family="USES",
+        subject_entity_id=subject_id,
+        object_entity_id=cold_id,
+        subtype=None,
+        confidence=0.9,
+        assertion_id=cold_assertion,
     )
     for _ in range(4):
-        await neo4j_store.upsert_relation(
-            "Reinforce Subject",
-            "Warm Stack",
-            "RELATED_TO",
-            0.9,
-            "phase-3.5-test",
-            created_by="ingest",
+        await neo4j_store.upsert_memory_fact_from_assertion(
+            family="USES",
+            subject_entity_id=subject_id,
+            object_entity_id=warm_id,
+            subtype=None,
+            confidence=0.9,
+            assertion_id=warm_assertion,
         )
 
     # Normalize recency so the ranking delta comes from access_count
@@ -386,10 +415,12 @@ async def test_reasserted_fact_outranks_cold_fact(
         await session.run(
             """
             MATCH (:Entity {name: 'Reinforce Subject'})
-                  -[r:RELATES_TO {type: 'RELATED_TO'}]->(:Entity)
-            WHERE r.source_doc = 'phase-3.5-test'
+                  -[r:MEMORY_REL {family: 'USES'}]->(:Entity)
+            WHERE r.valid_until IS NULL
               AND endNode(r).name IN ['Warm Stack', 'Cold Stack']
-            SET r.last_accessed = datetime($ts)
+            MATCH (f:MemoryFact {id: r.memory_fact_id})
+            SET r.last_accessed = datetime($ts),
+                f.last_accessed = datetime($ts)
             """,
             ts=fixed_ts,
         )

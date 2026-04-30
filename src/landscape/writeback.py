@@ -23,9 +23,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from landscape.embeddings import encoder
-from landscape.extraction.schema import normalize_relation_type
-from landscape.extraction.schema import normalize_subtype
 from landscape.extraction.entity_type_coercion import coerce_entity_type
+from landscape.extraction.schema import normalize_relation_type, normalize_subtype
 from landscape.memory_graph.models import AssertionPayload
 from landscape.memory_graph.service import persist_assertion_and_maybe_promote
 from landscape.storage import neo4j_store, qdrant_store
@@ -85,6 +84,7 @@ async def _resolve_entity_for_writeback(
     turn_id: str,
 ) -> AddEntityResult:
     canonical_type, _ = coerce_entity_type(entity_type)
+    await qdrant_store.init_collection()
 
     vector = encoder.encode(f"{name} ({canonical_type})")
 
@@ -316,7 +316,7 @@ async def status_summary() -> StatusSummary:
             OPTIONAL MATCH (d:Document)
             WITH entity_count, count(d) AS doc_count
             OPTIONAL MATCH ()-[r:MEMORY_REL]->()
-            WHERE r.current = true
+            WHERE r.valid_until IS NULL
             RETURN entity_count, doc_count, count(r) AS rel_count
             """
         )
@@ -329,7 +329,7 @@ async def status_summary() -> StatusSummary:
         top_result = await session.run(
             """
             MATCH (e:Entity)-[r:MEMORY_REL]-()
-            WHERE r.current = true
+            WHERE r.valid_until IS NULL
             WITH e.name AS name, e.type AS type,
                  sum(coalesce(r.confidence_agg, 0)) AS reinforcement
             ORDER BY reinforcement DESC

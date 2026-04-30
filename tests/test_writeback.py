@@ -200,7 +200,8 @@ async def test_add_relation_supersedes_when_functional(http_client, neo4j_driver
             await session.run(
                 "MATCH (:Assertion)-[:SUPPORTS]->(f:MemoryFact {family: 'WORKS_FOR'}) "
                 "OPTIONAL MATCH (f)-[:AS_OBJECT]->(o:Entity) "
-                "RETURN o.name AS target, f.current AS current, "
+                "RETURN o.name AS target, f.valid_until AS valid_until, "
+                "(f.valid_until IS NULL) AS current, "
                 "f.created_at AS created_at, f.updated_at AS updated_at "
                 "ORDER BY f.created_at"
             )
@@ -210,10 +211,10 @@ async def test_add_relation_supersedes_when_functional(http_client, neo4j_driver
     new_edge = next((e for e in facts if e["target"] == "Beacon"), None)
 
     assert old_edge is not None, "Old Acme fact must still exist"
-    assert old_edge["current"] is False, "Old fact must be superseded"
+    assert old_edge["valid_until"] is not None, "Old fact must be superseded"
 
     assert new_edge is not None, "New Beacon fact must be created"
-    assert new_edge["current"] is True, "New fact must be live"
+    assert new_edge["valid_until"] is None, "New fact must be live"
 
 
 @pytest.mark.asyncio
@@ -279,7 +280,7 @@ async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_drive
             await session.run(
                 "MATCH (s:Entity {name: 'Alice'})-[r:MEMORY_REL {family: 'WORKS_FOR'}]->"
                 "(o:Entity {name: 'Beacon'}) "
-                "WHERE r.current = true "
+                "WHERE r.valid_until IS NULL "
                 "RETURN count(r) AS cnt"
             )
         ).single()
@@ -742,8 +743,8 @@ async def test_add_relation_endpoint_types_coerce(http_client, neo4j_driver):
 
 @pytest.mark.asyncio
 async def test_add_relation_creates_assertion_and_memory_fact(http_client):
-    from landscape.writeback import add_relation
     from landscape.storage import neo4j_store
+    from landscape.writeback import add_relation
 
     result = await add_relation(
         subject="Alice",
@@ -954,7 +955,7 @@ async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver
         edge_on_canonical = await (
             await session.run(
                 "MATCH (s:Entity)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity) "
-                "WHERE elementId(s) = $sid AND r.current = true "
+                "WHERE elementId(s) = $sid AND r.valid_until IS NULL "
                 "RETURN count(r) AS cnt",
                 sid=robert_id,
             )
@@ -963,7 +964,7 @@ async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver
             await session.run(
                 "MATCH (stub:Entity {name: 'Bob', canonical: false})"
                 "-[r:MEMORY_REL {family: 'WORKS_FOR'}]->() "
-                "WHERE r.current = true "
+                "WHERE r.valid_until IS NULL "
                 "RETURN count(r) AS cnt"
             )
         ).single()
@@ -1024,7 +1025,7 @@ async def test_add_relation_does_not_cross_link_same_surface_name(http_client, n
         all_edges = await (
             await session.run(
                 "MATCH (s:Entity {name: 'Alex'})-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity) "
-                "WHERE r.current = true "
+                "WHERE r.valid_until IS NULL "
                 "RETURN elementId(s) AS sid, s.type AS stype, count(r) AS cnt"
             )
         ).data()
@@ -1035,60 +1036,3 @@ async def test_add_relation_does_not_cross_link_same_surface_name(http_client, n
     assert all_edges[0]["stype"] == "Person", (
         f"The single edge should start from Alex-Person, got type {all_edges[0]['stype']!r}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Unit-level guard tests — no DB connection required
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_upsert_relation_raises_when_only_subject_node_id_given():
-    """Passing only subject_node_id (without object_node_id) must raise ValueError
-    immediately — before any Cypher is executed — so partial ids cannot silently
-    degrade to name-based matching.
-    """
-    from landscape.storage import neo4j_store
-
-    with pytest.raises(ValueError, match="both be provided or both omitted"):
-        await neo4j_store.upsert_relation(
-            subject_node_id="4:abc:1",
-            subject_name="Alice",
-            object_name="Acme",
-            relation_type="WORKS_FOR",
-            confidence=0.9,
-            source_doc="test-doc",
-        )
-
-
-@pytest.mark.asyncio
-async def test_upsert_relation_raises_when_only_object_node_id_given():
-    """Passing only object_node_id (without subject_node_id) must raise ValueError
-    immediately — the symmetric partner of the subject-only test.
-    """
-    from landscape.storage import neo4j_store
-
-    with pytest.raises(ValueError, match="both be provided or both omitted"):
-        await neo4j_store.upsert_relation(
-            object_node_id="4:abc:2",
-            subject_name="Alice",
-            object_name="Acme",
-            relation_type="WORKS_FOR",
-            confidence=0.9,
-            source_doc="test-doc",
-        )
-
-
-@pytest.mark.asyncio
-async def test_upsert_relation_raises_when_relation_type_empty():
-    """An empty relation_type string must raise ValueError immediately."""
-    from landscape.storage import neo4j_store
-
-    with pytest.raises(ValueError, match="relation_type must be a non-empty string"):
-        await neo4j_store.upsert_relation(
-            subject_name="Alice",
-            object_name="Acme",
-            relation_type="",
-            confidence=0.9,
-            source_doc="test-doc",
-        )

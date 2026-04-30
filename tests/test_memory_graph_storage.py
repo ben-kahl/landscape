@@ -158,7 +158,7 @@ async def test_object_keyed_family_supersedes_on_same_slot(neo4j_driver):
         result = await session.run(
             """
             MATCH (f:MemoryFact {family: 'HAS_TITLE', slot_key: $slot_key})
-            RETURN count(*) AS total, sum(CASE WHEN f.current THEN 1 ELSE 0 END) AS live
+            RETURN count(*) AS total, sum(CASE WHEN f.valid_until IS NULL THEN 1 ELSE 0 END) AS live
             """,
             slot_key=expected_slot_key,
         )
@@ -223,7 +223,7 @@ async def test_subtype_keyed_family_supersedes_on_same_slot(neo4j_driver):
         result = await session.run(
             """
             MATCH (f:MemoryFact {family: 'HAS_PREFERENCE', slot_key: $slot_key})
-            RETURN count(*) AS total, sum(CASE WHEN f.current THEN 1 ELSE 0 END) AS live
+            RETURN count(*) AS total, sum(CASE WHEN f.valid_until IS NULL THEN 1 ELSE 0 END) AS live
             """,
             slot_key=expected_slot_key,
         )
@@ -355,35 +355,38 @@ async def test_superseding_single_current_fact_replaces_memory_rel(neo4j_driver)
     )
     explanation = await neo4j_store.get_memory_fact_explanation(second)
     assert explanation["family"] == "WORKS_FOR"
-    assert explanation["current"] is True
+    assert explanation["valid_until"] is None
     assert explanation["object_name"] == "Beacon"
     async with neo4j_driver.session() as session:
         old_fact_result = await session.run(
             """
             MATCH (f:MemoryFact {id: $fact_id})
-            RETURN f.current AS current
+            RETURN f.valid_until AS valid_until,
+                   (f.valid_until IS NULL) AS current
             """,
             fact_id=first,
         )
         old_fact = await old_fact_result.single()
         assert old_fact is not None
-        assert old_fact["current"] is False
+        assert old_fact["valid_until"] is not None
 
         old_rel_result = await session.run(
             """
             MATCH (:Entity {id: $subject_id})-[r:MEMORY_REL {memory_fact_id: $fact_id}]->()
-            RETURN r.current AS current
+            RETURN r.valid_until AS valid_until,
+                   (r.valid_until IS NULL) AS current
             """,
             subject_id=alice_id,
             fact_id=first,
         )
         old_rel = await old_rel_result.single()
         assert old_rel is not None
-        assert old_rel["current"] is False
+        assert old_rel["valid_until"] is not None
 
         current_count_result = await session.run(
             """
-            MATCH (f:MemoryFact {slot_key: $slot_key, current: true})
+            MATCH (f:MemoryFact {slot_key: $slot_key})
+            WHERE f.valid_until IS NULL
             RETURN count(f) AS count
             """,
             slot_key=slot,
@@ -451,11 +454,12 @@ async def test_superseding_single_current_fact_is_idempotent_on_retry(neo4j_driv
     assert retry == second
     explanation = await neo4j_store.get_memory_fact_explanation(retry)
     assert explanation is not None
-    assert explanation["current"] is True
+    assert explanation["valid_until"] is None
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (f:MemoryFact {slot_key: $slot_key, current: true})
+            MATCH (f:MemoryFact {slot_key: $slot_key})
+            WHERE f.valid_until IS NULL
             RETURN count(f) AS count
             """,
             slot_key=slot_key(FAMILY_REGISTRY["WORKS_FOR"], alice_id, beacon_id, None),

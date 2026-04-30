@@ -111,8 +111,10 @@ async def test_add_relation_default_provenance(http_client, neo4j_driver):
                           (o:Entity {name: 'RelObj1'})
             RETURN a.source_kind AS source_kind,
                    a.source_id AS source_id,
-                   f.current AS fact_current,
-                   r.current AS rel_current,
+                   f.valid_until AS fact_valid_until,
+                   (f.valid_until IS NULL) AS fact_current,
+                   r.valid_until AS rel_valid_until,
+                   (r.valid_until IS NULL) AS rel_current,
                    count(r) AS rel_count,
                    count(f) AS fact_count
             """,
@@ -124,6 +126,8 @@ async def test_add_relation_default_provenance(http_client, neo4j_driver):
     assert record is not None
     assert record["source_kind"] == "turn"
     assert record["source_id"] == "s1:t1"
+    assert record["fact_valid_until"] is None
+    assert record["rel_valid_until"] is None
     assert record["fact_current"] is True
     assert record["rel_current"] is True
     assert record["fact_count"] == 1
@@ -170,8 +174,8 @@ async def test_add_relation_turn_assertion_links_are_stable(http_client, neo4j_d
             RETURN count(a) AS assertion_count,
                    count(f) AS fact_count,
                    count(r) AS rel_count,
-                   max(f.current) AS fact_current,
-                   max(r.current) AS rel_current
+                   max(f.valid_until) AS fact_valid_until,
+                   max(r.valid_until) AS rel_valid_until
             """,
             aid=first.assertion_id,
             fid=first.memory_fact_id,
@@ -182,8 +186,8 @@ async def test_add_relation_turn_assertion_links_are_stable(http_client, neo4j_d
     assert record["assertion_count"] == 1
     assert record["fact_count"] == 1
     assert record["rel_count"] == 1
-    assert record["fact_current"] is True
-    assert record["rel_current"] is True
+    assert record["fact_valid_until"] is None
+    assert record["rel_valid_until"] is None
 
 
 @pytest.mark.asyncio
@@ -304,9 +308,11 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
                 """
                 MATCH (f:MemoryFact {id: $fid})
                 OPTIONAL MATCH (s:Entity)-[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]->(o:Entity)
-                RETURN f.current AS fact_current,
+                RETURN f.valid_until AS fact_valid_until,
+                       (f.valid_until IS NULL) AS fact_current,
                        o.name AS target,
-                       r.current AS rel_current
+                       r.valid_until AS rel_valid_until,
+                       (r.valid_until IS NULL) AS rel_current
                 """,
                 fid=first.memory_fact_id,
             )
@@ -316,9 +322,11 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
                 """
                 MATCH (f:MemoryFact {id: $fid})
                 OPTIONAL MATCH (s:Entity)-[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]->(o:Entity)
-                RETURN f.current AS fact_current,
+                RETURN f.valid_until AS fact_valid_until,
+                       (f.valid_until IS NULL) AS fact_current,
                        o.name AS target,
-                       r.current AS rel_current
+                       r.valid_until AS rel_valid_until,
+                       (r.valid_until IS NULL) AS rel_current
                 """,
                 fid=second.memory_fact_id,
             )
@@ -326,7 +334,8 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
         result = await session.run(
             """
             MATCH (f:MemoryFact {id: $fid})
-            RETURN f.current AS current
+            RETURN f.valid_until AS valid_until,
+                   (f.valid_until IS NULL) AS current
             """,
             fid=first.memory_fact_id,
         )
@@ -342,11 +351,11 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
     assert new_fact_rec is not None
     assert old_fact_rec["target"] == old_org_name
     assert new_fact_rec["target"] == new_org_name
-    assert old_fact_rec["fact_current"] is False
+    assert old_fact_rec["fact_valid_until"] is not None
     assert new_fact_rec["fact_current"] is True
-    assert old_fact_rec["rel_current"] is False
+    assert old_fact_rec["rel_valid_until"] is not None
     assert new_fact_rec["rel_current"] is True
-    assert old_fact is not None and old_fact["current"] is False
+    assert old_fact is not None and old_fact["valid_until"] is not None
 
 
 @pytest.mark.asyncio
@@ -359,11 +368,5 @@ async def test_invalid_created_by_raises(http_client, neo4j_driver):
     with pytest.raises(ValueError, match="created_by"):
         await neo4j_store.merge_entity(
             "InvEntity", "PERSON", "prov-inv-doc-1", 0.9, doc_id, "test",
-            created_by="bogus",
-        )
-
-    with pytest.raises(ValueError, match="created_by"):
-        await neo4j_store.upsert_relation(
-            "InvSubj", "InvObj", "LEADS", 0.9, "prov-inv-doc-1",
             created_by="bogus",
         )

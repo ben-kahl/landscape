@@ -1,4 +1,4 @@
-from landscape.storage import neo4j_store, qdrant_store
+from landscape.storage import neo4j_entities, qdrant_store
 
 SIMILARITY_THRESHOLD = 0.85
 # Stricter threshold for cross-type resolution: when the caller passes
@@ -43,13 +43,13 @@ async def resolve_entity(
 
     best = candidates[0]
     canonical_id: str = best.payload["neo4j_node_id"]
-    canonical = await neo4j_store.find_entity_by_element_id(canonical_id)
+    canonical = await neo4j_entities.find_entity_by_element_id(canonical_id)
 
     if canonical is None:
         # Qdrant has a stale entry; treat as new
         return (None, True, None)
 
     if name.lower() != canonical["name"].lower() and name not in canonical["aliases"]:
-        await neo4j_store.add_alias(canonical_id, name, source_doc, best.score)
+        await neo4j_entities.add_alias(canonical_id, name, source_doc, best.score)
 
     return (canonical_id, False, best.score)
