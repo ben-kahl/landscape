@@ -114,7 +114,8 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
         result = await session.run(
             """
             MATCH (d:Document {title: $title})-[:ASSERTS]->(a:Assertion)
-                  -[:SUPPORTS]->(f:MemoryFact {current: true})
+                  -[:SUPPORTS]->(f:MemoryFact)
+            WHERE f.valid_until IS NULL
             RETURN count(*) AS cnt
             """,
             title=TEST_TITLE,
@@ -130,7 +131,7 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
         assert record["cnt"] == 1
 
     # Verify Qdrant: at least entities_created vectors with this source_doc exist,
-    # each with a valid neo4j_node_id. (Stale points from prior runs may inflate the count.)
+    # each with a valid entity_id. (Stale points from prior runs may inflate the count.)
     points, _ = await qdrant_client.scroll(
         collection_name="entities",
         scroll_filter=Filter(
@@ -141,7 +142,7 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
     )
     assert len(points) >= body["entities_created"]
     for point in points:
-        assert point.payload.get("neo4j_node_id"), "Missing neo4j_node_id in Qdrant payload"
+        assert point.payload.get("entity_id"), "Missing entity_id in Qdrant payload"
 
     # Verify chunks collection has entries for this doc
     chunk_points, _ = await qdrant_client.scroll(
@@ -162,7 +163,7 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
 async def test_ingest_promotes_additive_family_into_memory_rel(http_client, neo4j_driver):
     from landscape import pipeline
     from landscape.extraction.chunker import Chunk
-    from landscape.extraction.schema import Extraction, ExtractedEntity, ExtractedRelation
+    from landscape.extraction.schema import ExtractedEntity, ExtractedRelation, Extraction
 
     title = "memory-rel-additive-integration"
     subject_name = "Alice Example"
@@ -233,8 +234,10 @@ async def test_ingest_promotes_additive_family_into_memory_rel(http_client, neo4
             MATCH (d:Document {title: $title})-[:ASSERTS]->(a:Assertion)
                   -[:SUBJECT_ENTITY]->(s:Entity {name: $subject}),
                   (a)-[:OBJECT_ENTITY]->(o:Entity {name: $object}),
-                  (a)-[:SUPPORTS]->(f:MemoryFact {current: true}),
-                  (s)-[r:MEMORY_REL {current: true}]->(o)
+                  (a)-[:SUPPORTS]->(f:MemoryFact),
+                  (s)-[r:MEMORY_REL]->(o)
+            WHERE f.valid_until IS NULL
+              AND r.valid_until IS NULL
             RETURN a.subtype AS subtype,
                    a.quantity_value AS quantity_value,
                    a.quantity_unit AS quantity_unit,

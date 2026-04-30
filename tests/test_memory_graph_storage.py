@@ -5,18 +5,14 @@ from landscape.memory_graph.service import persist_assertion_and_maybe_promote
 from landscape.storage import neo4j_store
 
 
-async def _entity_app_id(neo4j_driver, entity_element_id: str) -> str:
+async def _entity_app_id(neo4j_driver, entity_id: str) -> str:
     async with neo4j_driver.session() as session:
         result = await session.run(
-            """
-            MATCH (e:Entity)
-            WHERE elementId(e) = $eid
-            RETURN e.id AS entity_id
-            """,
-            eid=entity_element_id,
+            "MATCH (e:Entity {id: $eid}) RETURN e.id AS entity_id",
+            eid=entity_id,
         )
         record = await result.single()
-        assert record is not None
+        assert record is not None, f"Entity with id={entity_id!r} not found"
         return record["entity_id"]
 
 
@@ -532,17 +528,14 @@ async def test_bfs_expand_memory_rel_uses_current_edges_only(neo4j_driver):
     assert len(rows) == 1
     row = rows[0]
     assert row["seed_id"] == alice_id
-    assert row["seed_element_id"] == alice
     assert row["target_id"] == beacon_id
-    assert row["target_element_id"] == beacon
     assert row["target_name"] == "Beacon"
     assert row["target_type"] == "Organization"
     assert row["target_access_count"] >= 1
     assert row["target_last_accessed"] is not None
     assert row["distance"] == 1
-    assert row["memory_fact_ids"] == [current_fact]
     assert row["path_memory_fact_ids"] == [current_fact]
-    assert row["edge_families"] == ["WORKS_FOR"]
+    assert row["path_edge_types"] == ["WORKS_FOR"]
     assert len(row["edge_ids"]) == 1
     assert row["edge_confidences"] == [0.95]
     assert row["edge_access_counts"] == [1]
