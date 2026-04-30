@@ -218,7 +218,7 @@ async def _run_killer_demo() -> dict:
         )
         names = [e.name.lower() for e in result.results]
         passed = any(
-            any(exp in n or n in exp for n in names)
+            any(exp in n for n in names)
             for exp in item["expected"]
         )
         token_count = _count_tokens(dataclasses.asdict(result))
@@ -254,6 +254,7 @@ async def _run_supersession() -> dict:
     print("\n=== Section C: Supersession scenarios ===")
     import importlib.util
 
+    # scripts/ is not on sys.path when invoked via `uv run python scripts/bench_ab.py`
     spec = importlib.util.spec_from_file_location(
         "supersession_scenarios",
         pathlib.Path(__file__).resolve().parent / "fixtures" / "supersession_scenarios.py",
@@ -297,9 +298,9 @@ async def _main(args: argparse.Namespace) -> None:
         if r.status_code != 200:
             print(f"ERROR: /healthz returned {r.status_code}", file=sys.stderr)
             sys.exit(1)
-    except httpx.ConnectError:
+    except httpx.RequestError as exc:
         print(
-            f"ERROR: Cannot reach {args.api_url}/healthz — is the stack running?",
+            f"ERROR: Cannot reach {args.api_url}/healthz — {exc}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -318,9 +319,15 @@ async def _main(args: argparse.Namespace) -> None:
     supersession = await _run_supersession()
 
     final_usage = get_usage()
-    response_tokens_total = sum(
-        ep["total_response_tokens"] for ep in final_usage["endpoints"].values()
-    )
+    # Sum per-query response tokens from section results (middleware is bypassed by direct imports)
+    kd_response_tokens = sum(pq["response_tokens"] for pq in killer_demo["per_query"])
+    if longmemeval:
+        lme_response_tokens = round(
+            longmemeval["avg_response_tokens"] * longmemeval["n_questions"]
+        )
+    else:
+        lme_response_tokens = 0
+    response_tokens_total = kd_response_tokens + lme_response_tokens
     ollama_tokens_total = (
         final_usage["ollama"]["total_prompt_tokens"]
         + final_usage["ollama"]["total_completion_tokens"]
