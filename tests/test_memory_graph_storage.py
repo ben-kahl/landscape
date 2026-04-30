@@ -1,6 +1,7 @@
 import pytest
 
 from landscape.memory_graph import FAMILY_REGISTRY, AssertionPayload, fact_key, slot_key
+from landscape.memory_graph.service import persist_assertion_and_maybe_promote
 from landscape.storage import neo4j_store
 
 
@@ -41,6 +42,195 @@ def test_memory_fact_key_modes_follow_family_config():
     )
     assert slot_key(has_pref, "ent-a", "ent-b", "favorite_color") == "HAS_PREFERENCE:ent-a:favorite_color"
     assert fact_key(created, "ent-a", None, "diagram") == "CREATED:ent-a:diagram"
+
+
+@pytest.mark.asyncio
+async def test_value_backed_family_preserves_value_identity_on_promotion(neo4j_driver):
+    doc_id, _ = await neo4j_store.merge_document("hash-happened", "value-backed-test", "text")
+    kickoff = await neo4j_store.merge_entity("Kickoff", "EVENT", "value-backed-test", 0.95, doc_id, "test")
+    payload = AssertionPayload(
+        source_kind="document",
+        source_id="value-backed-test",
+        raw_subject_text="Kickoff",
+        raw_relation_text="happened on",
+        raw_object_text="2026-03-05",
+        confidence=0.95,
+        family_candidate="HAPPENED_ON",
+        value_time="2026-03-05",
+    )
+    promotion = await persist_assertion_and_maybe_promote(
+        payload,
+        source_node_id=doc_id,
+        source_kind="document",
+        subject_entity_id=kickoff,
+        object_entity_id=None,
+        chunk_ids=[],
+    )
+    assert promotion.fact_id is not None
+    assert promotion.outcome == "created"
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (f:MemoryFact {id: $fact_id})
+            RETURN f.fact_key AS fact_key,
+                   f.slot_key AS slot_key,
+                   f.value_text AS value_text,
+                   f.value_time AS value_time,
+                   f.time_scope AS time_scope
+            """,
+            fact_id=promotion.fact_id,
+        )
+        record = await result.single()
+    assert record is not None
+    kickoff_id = await _entity_app_id(neo4j_driver, kickoff)
+    expected_fact_key = fact_key(
+        FAMILY_REGISTRY["HAPPENED_ON"],
+        kickoff_id,
+        None,
+        None,
+        value_text="2026-03-05",
+        value_time="2026-03-05",
+    )
+    expected_slot_key = slot_key(
+        FAMILY_REGISTRY["HAPPENED_ON"],
+        kickoff_id,
+        None,
+        None,
+        value_time="2026-03-05",
+    )
+    assert record["fact_key"] == expected_fact_key
+    assert record["slot_key"] == expected_slot_key
+    assert record["value_text"] == "2026-03-05"
+    assert record["value_time"] == "2026-03-05"
+    assert record["time_scope"] == "2026-03-05"
+
+
+@pytest.mark.asyncio
+async def test_object_keyed_family_supersedes_on_same_slot(neo4j_driver):
+    doc1, _ = await neo4j_store.merge_document("hash-title-1", "object-keyed-test-1", "text")
+    doc2, _ = await neo4j_store.merge_document("hash-title-2", "object-keyed-test-2", "text")
+    alice = await neo4j_store.merge_entity("Alice", "PERSON", "object-keyed-test", 0.95, doc1, "test")
+    atlas = await neo4j_store.merge_entity("Atlas", "ORGANIZATION", "object-keyed-test", 0.95, doc1, "test")
+    first = await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document",
+            source_id="object-keyed-test-1",
+            raw_subject_text="Alice",
+            raw_relation_text="is a senior engineer at",
+            raw_object_text="Atlas",
+            confidence=0.95,
+            family_candidate="HAS_TITLE",
+            subtype="senior_engineer",
+        ),
+        source_node_id=doc1,
+        source_kind="document",
+        subject_entity_id=alice,
+        object_entity_id=atlas,
+        chunk_ids=[],
+    )
+    second = await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document",
+            source_id="object-keyed-test-2",
+            raw_subject_text="Alice",
+            raw_relation_text="is a principal engineer at",
+            raw_object_text="Atlas",
+            confidence=0.96,
+            family_candidate="HAS_TITLE",
+            subtype="principal_engineer",
+        ),
+        source_node_id=doc2,
+        source_kind="document",
+        subject_entity_id=alice,
+        object_entity_id=atlas,
+        chunk_ids=[],
+    )
+    assert first.fact_id is not None
+    assert second.fact_id is not None
+    assert first.outcome == "created"
+    assert second.outcome == "superseded"
+
+    alice_id = await _entity_app_id(neo4j_driver, alice)
+    atlas_id = await _entity_app_id(neo4j_driver, atlas)
+    expected_slot_key = slot_key(FAMILY_REGISTRY["HAS_TITLE"], alice_id, atlas_id, "principal_engineer")
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (f:MemoryFact {family: 'HAS_TITLE', slot_key: $slot_key})
+            RETURN count(*) AS total, sum(CASE WHEN f.current THEN 1 ELSE 0 END) AS live
+            """,
+            slot_key=expected_slot_key,
+        )
+        record = await result.single()
+    assert record is not None
+    assert record["total"] == 2
+    assert record["live"] == 1
+
+
+@pytest.mark.asyncio
+async def test_subtype_keyed_family_supersedes_on_same_slot(neo4j_driver):
+    doc1, _ = await neo4j_store.merge_document("hash-pref-1", "subtype-keyed-test-1", "text")
+    doc2, _ = await neo4j_store.merge_document("hash-pref-2", "subtype-keyed-test-2", "text")
+    alice = await neo4j_store.merge_entity("Alice", "PERSON", "subtype-keyed-test", 0.95, doc1, "test")
+    first = await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document",
+            source_id="subtype-keyed-test-1",
+            raw_subject_text="Alice",
+            raw_relation_text="prefers",
+            raw_object_text="Blue",
+            confidence=0.95,
+            family_candidate="HAS_PREFERENCE",
+            subtype="favorite_color",
+        ),
+        source_node_id=doc1,
+        source_kind="document",
+        subject_entity_id=alice,
+        object_entity_id=None,
+        chunk_ids=[],
+    )
+    second = await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document",
+            source_id="subtype-keyed-test-2",
+            raw_subject_text="Alice",
+            raw_relation_text="prefers",
+            raw_object_text="Green",
+            confidence=0.96,
+            family_candidate="HAS_PREFERENCE",
+            subtype="favorite_color",
+        ),
+        source_node_id=doc2,
+        source_kind="document",
+        subject_entity_id=alice,
+        object_entity_id=None,
+        chunk_ids=[],
+    )
+    assert first.fact_id is not None
+    assert second.fact_id is not None
+    assert first.outcome == "created"
+    assert second.outcome == "superseded"
+
+    alice_id = await _entity_app_id(neo4j_driver, alice)
+    expected_slot_key = slot_key(
+        FAMILY_REGISTRY["HAS_PREFERENCE"],
+        alice_id,
+        None,
+        "favorite_color",
+    )
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (f:MemoryFact {family: 'HAS_PREFERENCE', slot_key: $slot_key})
+            RETURN count(*) AS total, sum(CASE WHEN f.current THEN 1 ELSE 0 END) AS live
+            """,
+            slot_key=expected_slot_key,
+        )
+        record = await result.single()
+    assert record is not None
+    assert record["total"] == 2
+    assert record["live"] == 1
 
 
 @pytest.mark.asyncio

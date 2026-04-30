@@ -538,6 +538,11 @@ async def merge_assertion(payload: AssertionPayload) -> str:
         raw_object_text=payload.raw_object_text,
         subtype=payload.subtype,
         qualifier_payload={
+            "value_text": payload.value_text,
+            "value_number": payload.value_number,
+            "value_unit": payload.value_unit,
+            "value_kind": payload.value_kind,
+            "value_time": payload.value_time,
             "quantity_value": payload.quantity_value,
             "quantity_unit": payload.quantity_unit,
             "quantity_kind": payload.quantity_kind,
@@ -558,6 +563,11 @@ async def merge_assertion(payload: AssertionPayload) -> str:
                           a.family_candidate = $family_candidate,
                           a.confidence = $confidence,
                           a.subtype = $subtype,
+                          a.value_text = $value_text,
+                          a.value_number = $value_number,
+                          a.value_unit = $value_unit,
+                          a.value_kind = $value_kind,
+                          a.value_time = $value_time,
                           a.quantity_value = $quantity_value,
                           a.quantity_unit = $quantity_unit,
                           a.quantity_kind = $quantity_kind,
@@ -574,6 +584,11 @@ async def merge_assertion(payload: AssertionPayload) -> str:
             family_candidate=payload.family_candidate,
             confidence=payload.confidence,
             subtype=payload.subtype,
+            value_text=payload.value_text,
+            value_number=payload.value_number,
+            value_unit=payload.value_unit,
+            value_kind=payload.value_kind,
+            value_time=payload.value_time,
             quantity_value=payload.quantity_value,
             quantity_unit=payload.quantity_unit,
             quantity_kind=payload.quantity_kind,
@@ -667,13 +682,42 @@ async def _create_memory_fact_version_in_tx(
     subject_entity_id: str,
     object_entity_id: str | None,
     subtype: str | None,
+    value_text: str | None,
+    value_number: float | None,
+    value_unit: str | None,
+    value_kind: str | None,
+    value_time: str | None,
+    quantity_value: float | str | None,
+    quantity_unit: str | None,
+    quantity_kind: str | None,
+    time_scope: str | None,
     confidence: float,
     assertion_id: str,
     now: str,
 ) -> str:
     family_cfg = FAMILY_REGISTRY[family]
-    fkey = fact_key(family_cfg, subject_entity_id, object_entity_id, subtype)
-    skey = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+    fkey = fact_key(
+        family_cfg,
+        subject_entity_id,
+        object_entity_id,
+        subtype,
+        value_text=value_text,
+        value_number=value_number,
+        value_unit=value_unit,
+        value_kind=value_kind,
+        value_time=value_time,
+    )
+    skey = slot_key(
+        family_cfg,
+        subject_entity_id,
+        object_entity_id,
+        subtype,
+        value_text=value_text,
+        value_number=value_number,
+        value_unit=value_unit,
+        value_kind=value_kind,
+        value_time=value_time,
+    )
     fact_id = f"fact:{hashlib.sha256(f'{fkey}:{assertion_id}'.encode()).hexdigest()[:20]}"
     result = await tx.run(
         """
@@ -685,6 +729,15 @@ async def _create_memory_fact_version_in_tx(
                       fact.fact_key = $fact_key,
                       fact.slot_key = $slot_key,
                       fact.subtype = $subtype,
+                      fact.value_text = $value_text,
+                      fact.value_number = $value_number,
+                      fact.value_unit = $value_unit,
+                      fact.value_kind = $value_kind,
+                      fact.value_time = $value_time,
+                      fact.quantity_value = $quantity_value,
+                      fact.quantity_unit = $quantity_unit,
+                      fact.quantity_kind = $quantity_kind,
+                      fact.time_scope = $time_scope,
                       fact.current = true,
                       fact.support_count = 1,
                       fact.confidence_agg = $confidence,
@@ -716,6 +769,15 @@ async def _create_memory_fact_version_in_tx(
         fact_key=fkey,
         slot_key=skey,
         subtype=subtype,
+        value_text=value_text,
+        value_number=value_number,
+        value_unit=value_unit,
+        value_kind=value_kind,
+        value_time=value_time,
+        quantity_value=quantity_value,
+        quantity_unit=quantity_unit,
+        quantity_kind=quantity_kind,
+        time_scope=time_scope,
         confidence=confidence,
         now=now,
         subject_entity_id=subject_entity_id,
@@ -759,6 +821,15 @@ async def create_memory_fact_version(
     subject_entity_id: str,
     object_entity_id: str | None,
     subtype: str | None,
+    value_text: str | None = None,
+    value_number: float | None = None,
+    value_unit: str | None = None,
+    value_kind: str | None = None,
+    value_time: str | None = None,
+    quantity_value: float | str | None = None,
+    quantity_unit: str | None = None,
+    quantity_kind: str | None = None,
+    time_scope: str | None = None,
     confidence: float,
     assertion_id: str,
 ) -> str:
@@ -778,6 +849,15 @@ async def create_memory_fact_version(
                 subject_entity_id=subject_entity_id,
                 object_entity_id=object_entity_id,
                 subtype=subtype,
+                value_text=value_text,
+                value_number=value_number,
+                value_unit=value_unit,
+                value_kind=value_kind,
+                value_time=value_time,
+                quantity_value=quantity_value,
+                quantity_unit=quantity_unit,
+                quantity_kind=quantity_kind,
+                time_scope=time_scope,
                 confidence=confidence,
                 assertion_id=assertion_id,
                 now=datetime.now(UTC).isoformat(),
@@ -795,6 +875,15 @@ async def upsert_memory_fact_from_assertion(
     subject_entity_id: str,
     object_entity_id: str | None,
     subtype: str | None,
+    value_text: str | None = None,
+    value_number: float | None = None,
+    value_unit: str | None = None,
+    value_kind: str | None = None,
+    value_time: str | None = None,
+    quantity_value: float | str | None = None,
+    quantity_unit: str | None = None,
+    quantity_kind: str | None = None,
+    time_scope: str | None = None,
     confidence: float,
     assertion_id: str,
 ) -> tuple[str, str]:
@@ -805,7 +894,7 @@ async def upsert_memory_fact_from_assertion(
         if object_entity_id is not None
         else None
     )
-    if family_cfg.slot_mode == "subject":
+    if family_cfg.slot_mode != "additive":
         family_key = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
         driver = get_driver()
         async with driver.session() as session:
@@ -825,6 +914,15 @@ async def upsert_memory_fact_from_assertion(
             subject_entity_id=subject_entity_id,
             object_entity_id=object_entity_id,
             subtype=subtype,
+            value_text=value_text,
+            value_number=value_number,
+            value_unit=value_unit,
+            value_kind=value_kind,
+            value_time=value_time,
+            quantity_value=quantity_value,
+            quantity_unit=quantity_unit,
+            quantity_kind=quantity_kind,
+            time_scope=time_scope,
             confidence=confidence,
             assertion_id=assertion_id,
         )
@@ -834,7 +932,17 @@ async def upsert_memory_fact_from_assertion(
             return fact_id, "superseded"
         return fact_id, "created"
 
-    family_key = fact_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+    family_key = fact_key(
+        family_cfg,
+        subject_entity_id,
+        object_entity_id,
+        subtype,
+        value_text=value_text,
+        value_number=value_number,
+        value_unit=value_unit,
+        value_kind=value_kind,
+        value_time=value_time,
+    )
     driver = get_driver()
     async with driver.session() as session:
         existing_result = await session.run(
@@ -851,6 +959,15 @@ async def upsert_memory_fact_from_assertion(
         subject_entity_id=subject_entity_id,
         object_entity_id=object_entity_id,
         subtype=subtype,
+        value_text=value_text,
+        value_number=value_number,
+        value_unit=value_unit,
+        value_kind=value_kind,
+        value_time=value_time,
+        quantity_value=quantity_value,
+        quantity_unit=quantity_unit,
+        quantity_kind=quantity_kind,
+        time_scope=time_scope,
         confidence=confidence,
         assertion_id=assertion_id,
     )
@@ -877,6 +994,15 @@ async def supersede_single_current_fact(
     subject_entity_id: str,
     object_entity_id: str | None,
     subtype: str | None,
+    value_text: str | None = None,
+    value_number: float | None = None,
+    value_unit: str | None = None,
+    value_kind: str | None = None,
+    value_time: str | None = None,
+    quantity_value: float | str | None = None,
+    quantity_unit: str | None = None,
+    quantity_kind: str | None = None,
+    time_scope: str | None = None,
     confidence: float,
     assertion_id: str,
 ) -> str:
@@ -887,9 +1013,19 @@ async def supersede_single_current_fact(
         else None
     )
     family_cfg = FAMILY_REGISTRY[family]
-    if family_cfg.slot_mode != "subject":
-        raise ValueError(f"family {family!r} is not subject-keyed")
-    skey = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+    if family_cfg.slot_mode == "additive":
+        raise ValueError(f"family {family!r} is not slot-replacing")
+    skey = slot_key(
+        family_cfg,
+        subject_entity_id,
+        object_entity_id,
+        subtype,
+        value_text=value_text,
+        value_number=value_number,
+        value_unit=value_unit,
+        value_kind=value_kind,
+        value_time=value_time,
+    )
     driver = get_driver()
     now = datetime.now(UTC).isoformat()
     async with driver.session() as session:
@@ -922,6 +1058,15 @@ async def supersede_single_current_fact(
                 subject_entity_id=subject_entity_id,
                 object_entity_id=object_entity_id,
                 subtype=subtype,
+                value_text=value_text,
+                value_number=value_number,
+                value_unit=value_unit,
+                value_kind=value_kind,
+                value_time=value_time,
+                quantity_value=quantity_value,
+                quantity_unit=quantity_unit,
+                quantity_kind=quantity_kind,
+                time_scope=time_scope,
                 confidence=confidence,
                 assertion_id=assertion_id,
                 now=now,
