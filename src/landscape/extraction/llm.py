@@ -2,6 +2,7 @@ import ollama
 
 from landscape.config import LLM_PROFILES, settings
 from landscape.extraction.schema import Extraction
+from landscape.middleware.token_counter import increment_ollama_tokens
 
 _SYSTEM_PROMPT = (
     "You are a precise knowledge-graph extractor. Given a passage of text, extract:\n"
@@ -218,5 +219,9 @@ def extract(text: str) -> Extraction:
         ],
         format=Extraction.model_json_schema(),
         think=_thinking_enabled(),
+    )
+    increment_ollama_tokens(
+        prompt_tokens=response.prompt_eval_count or 0,
+        completion_tokens=response.eval_count or 0,
     )
     return Extraction.model_validate_json(response.message.content)

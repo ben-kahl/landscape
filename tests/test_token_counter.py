@@ -128,3 +128,32 @@ async def test_reset_clears_all_state():
     usage = get_usage()
     assert usage["endpoints"] == {}
     assert usage["ollama"]["total_prompt_tokens"] == 0
+
+
+@pytest.mark.unit
+async def test_extract_increments_ollama_tokens(monkeypatch):
+    import ollama as _ollama_lib
+
+    from landscape.extraction import llm
+    from landscape.middleware import token_counter
+
+    class _MockMsg:
+        content = '{"entities":[],"relations":[]}'
+
+    class _MockResponse:
+        prompt_eval_count = 42
+        eval_count = 17
+        message = _MockMsg()
+
+    class _MockClient:
+        def chat(self, **kwargs):
+            return _MockResponse()
+
+    monkeypatch.setattr(_ollama_lib, "Client", lambda host: _MockClient())
+    token_counter.reset_counters()
+
+    llm.extract("some text")
+
+    usage = token_counter.get_usage()
+    assert usage["ollama"]["total_prompt_tokens"] == 42
+    assert usage["ollama"]["total_completion_tokens"] == 17
