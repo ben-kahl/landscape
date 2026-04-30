@@ -1,8 +1,8 @@
 import pytest
 
 from landscape.memory_graph.families import FAMILY_REGISTRY
-from landscape.memory_graph.models import AssertionPayload
 from landscape.memory_graph.ids import alias_id, assertion_id, fact_key, slot_key
+from landscape.memory_graph.models import AssertionPayload
 
 
 def test_alias_id_is_canonical_entity_scoped():

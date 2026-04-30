@@ -4,7 +4,7 @@ import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
-from landscape.memory_graph import AssertionPayload, FAMILY_REGISTRY, fact_key, slot_key
+from landscape.memory_graph import FAMILY_REGISTRY, AssertionPayload, fact_key, slot_key
 from landscape.storage.neo4j_driver import get_driver
 from landscape.storage.neo4j_entities import _resolve_entity_app_id, _resolve_entity_app_ids
 
