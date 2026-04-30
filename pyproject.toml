@@ -10,6 +10,7 @@ dependencies = [
     "sentence-transformers>=3.3",
     "einops>=0.8",
     "ollama>=0.4",
+    "tiktoken>=0.7",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "langchain-core>=0.3",

@@ -8,6 +8,7 @@ from starlette.middleware.authentication import AuthenticationMiddleware
 
 from landscape.api.ingest import router as ingest_router
 from landscape.api.query import router as query_router
+from landscape.middleware.token_counter import TokenCounterMiddleware, metrics_router
 from landscape.embeddings import encoder
 from landscape.mcp_app import mcp
 from landscape.security import mcp_oauth_scope_middleware
@@ -92,6 +93,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Landscape", lifespan=lifespan)
+
+app.add_middleware(TokenCounterMiddleware)
+app.include_router(metrics_router)
 
 app.include_router(ingest_router)
 app.include_router(query_router)
