@@ -221,7 +221,7 @@ def extract(text: str) -> Extraction:
         think=_thinking_enabled(),
     )
     increment_ollama_tokens(
-        prompt_tokens=response.prompt_eval_count or 0,
-        completion_tokens=response.eval_count or 0,
+        prompt_tokens=getattr(response, "prompt_eval_count", 0) or 0,
+        completion_tokens=getattr(response, "eval_count", 0) or 0,
     )
     return Extraction.model_validate_json(response.message.content)
