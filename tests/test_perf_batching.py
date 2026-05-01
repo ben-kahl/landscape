@@ -132,6 +132,10 @@ async def test_retrieve_runs_both_filter_queries_in_parallel():
     ), patch.object(
         query_mod.neo4j_store, "get_chunks_since",
         AsyncMock(side_effect=side_chunk_since),
+    ), patch.object(
+        query_mod,
+        "_hydrate_current_non_traversable_entity_memory",
+        AsyncMock(return_value=([], [])),
     ):
         await query_mod.retrieve(
             "q",

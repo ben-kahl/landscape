@@ -387,6 +387,206 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
 
 @pytest.mark.asyncio
 @pytest.mark.unit
+async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkeypatch):
+    from landscape.retrieval import query
+
+    monkeypatch.setattr(query.encoder, "embed_query", lambda text: [0.1, 0.2])
+    monkeypatch.setattr(query.neo4j_store, "resolve_seed_entity_ids", AsyncMock(return_value=[]))
+
+    class Hit:
+        def __init__(self, entity_id, score):
+            self.score = score
+            self.payload = {"entity_id": entity_id}
+
+    async def fake_search_entities_any_type(vector, limit=10):
+        return [Hit("travel-id", 0.9), Hit("cube-id", 0.88)]
+
+    async def fake_search_chunks(vector, limit=10):
+        return []
+
+    async def fake_get_entities_from_chunks(chunk_ids):
+        return []
+
+    async def fake_hydrate_entities(ids):
+        assert ids == ["travel-id", "cube-id"]
+        return [
+            {
+                "entity_id": "travel-id",
+                "name": "travel",
+                "type": "n",
+                "access_count": 0,
+                "last_accessed": None,
+            },
+            {
+                "entity_id": "cube-id",
+                "name": "packing cube",
+                "type": "n",
+                "access_count": 0,
+                "last_accessed": None,
+            },
+        ]
+
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+        return []
+
+    async def fake_touch_entities(ids, now):
+        return None
+
+    async def fake_touch_relations(ids, now):
+        return None
+
+    async def fake_hydrate_current_entity_memory(entity_ids):
+        assert entity_ids == ["travel-id", "cube-id"]
+        return (
+            [
+                {
+                    "memory_fact_id": "fact-1",
+                    "family": "HAS_ATTRIBUTE",
+                    "valid_until": None,
+                    "current": True,
+                    "fact_key": "fact-key",
+                    "slot_key": "slot-key",
+                    "subtype": "has",
+                    "support_count": 1,
+                    "confidence_agg": 1.0,
+                    "value_text": None,
+                    "value_number": None,
+                    "value_unit": None,
+                    "value_kind": None,
+                    "value_time": None,
+                    "quantity_value": None,
+                    "quantity_unit": None,
+                    "quantity_kind": None,
+                    "time_scope": None,
+                    "subject_entity_id": "travel-id",
+                    "subject_name": "travel",
+                    "subject_type": "n",
+                    "object_entity_id": "cube-id",
+                    "object_name": "packing cube",
+                    "object_type": "n",
+                    "memory_rel_valid_until": None,
+                    "memory_rel_current": True,
+                }
+            ],
+            [
+                {
+                    "memory_fact_id": "fact-1",
+                    "assertion_id": "assert-1",
+                    "source_kind": "document",
+                    "source_id": "doc-1",
+                    "raw_subject_text": "travel",
+                    "raw_relation_text": "HAS_ATTRIBUTE",
+                    "raw_object_text": "packing cube",
+                    "family_candidate": "HAS_ATTRIBUTE",
+                    "confidence": 1.0,
+                    "subtype": "has",
+                    "value_text": None,
+                    "value_number": None,
+                    "value_unit": None,
+                    "value_kind": None,
+                    "value_time": None,
+                    "quantity_value": None,
+                    "quantity_unit": None,
+                    "quantity_kind": None,
+                    "time_scope": None,
+                    "status": "active",
+                    "created_at": "2026-05-01T00:00:00Z",
+                }
+            ],
+        )
+
+    monkeypatch.setattr(
+        query.qdrant_store,
+        "search_entities_any_type",
+        fake_search_entities_any_type,
+    )
+    monkeypatch.setattr(query.qdrant_store, "search_chunks", fake_search_chunks)
+    monkeypatch.setattr(
+        query.neo4j_store,
+        "get_entities_from_chunks",
+        fake_get_entities_from_chunks,
+    )
+    monkeypatch.setattr(query, "_hydrate_entities", fake_hydrate_entities)
+    monkeypatch.setattr(
+        query.neo4j_store, "bfs_expand_memory_rel", fake_bfs_expand_memory_rel
+    )
+    monkeypatch.setattr(query.neo4j_store, "touch_entities", fake_touch_entities)
+    monkeypatch.setattr(query.neo4j_store, "touch_relations", fake_touch_relations)
+    monkeypatch.setattr(
+        query,
+        "_hydrate_current_non_traversable_entity_memory",
+        AsyncMock(side_effect=AssertionError("legacy non-traversable hydrator should not run")),
+    )
+    monkeypatch.setattr(
+        query,
+        "_hydrate_current_entity_memory",
+        fake_hydrate_current_entity_memory,
+        raising=False,
+    )
+
+    result = await query.retrieve("What travel gear did I mention?", reinforce=False)
+
+    travel = next(r for r in result.results if r.name == "travel")
+    cube = next(r for r in result.results if r.name == "packing cube")
+    expected_fact = {
+        "memory_fact_id": "fact-1",
+        "family": "HAS_ATTRIBUTE",
+        "valid_until": None,
+        "current": True,
+        "fact_key": "fact-key",
+        "slot_key": "slot-key",
+        "subtype": "has",
+        "support_count": 1,
+        "confidence_agg": 1.0,
+        "value_text": None,
+        "value_number": None,
+        "value_unit": None,
+        "value_kind": None,
+        "value_time": None,
+        "quantity_value": None,
+        "quantity_unit": None,
+        "quantity_kind": None,
+        "time_scope": None,
+        "subject_entity_id": "travel-id",
+        "subject_name": "travel",
+        "subject_type": "n",
+        "object_entity_id": "cube-id",
+        "object_name": "packing cube",
+        "object_type": "n",
+        "memory_rel_valid_until": None,
+        "memory_rel_current": True,
+    }
+    expected_assertion = {
+        "memory_fact_id": "fact-1",
+        "assertion_id": "assert-1",
+        "source_kind": "document",
+        "source_id": "doc-1",
+        "raw_subject_text": "travel",
+        "raw_relation_text": "HAS_ATTRIBUTE",
+        "raw_object_text": "packing cube",
+        "family_candidate": "HAS_ATTRIBUTE",
+        "confidence": 1.0,
+        "subtype": "has",
+        "value_text": None,
+        "value_number": None,
+        "value_unit": None,
+        "value_kind": None,
+        "value_time": None,
+        "quantity_value": None,
+        "quantity_unit": None,
+        "quantity_kind": None,
+        "time_scope": None,
+        "status": "active",
+        "created_at": "2026-05-01T00:00:00Z",
+    }
+    assert travel.memory_facts == [expected_fact]
+    assert travel.supporting_assertions == [expected_assertion]
+    assert cube.memory_facts == [expected_fact]
+    assert cube.supporting_assertions == [expected_assertion]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
 async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
     from landscape.retrieval import query
 

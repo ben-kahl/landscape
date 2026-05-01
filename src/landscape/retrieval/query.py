@@ -73,7 +73,16 @@ async def _hydrate_memory_path_details(
 async def _hydrate_current_non_traversable_entity_memory(
     entity_ids: list[str],
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    return await neo4j_store.get_current_non_traversable_fact_details_for_entities(entity_ids)
+    # Historical helper name retained for test monkeypatches and call-site
+    # compatibility. The retrieval payload now wants all current adjacent facts,
+    # not only scalar/non-traversable ones.
+    return await neo4j_store.get_current_fact_details_for_entities(entity_ids)
+
+
+async def _hydrate_current_entity_memory(
+    entity_ids: list[str],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    return await _hydrate_current_non_traversable_entity_memory(entity_ids)
 
 
 async def retrieve(
@@ -406,6 +415,10 @@ async def retrieve(
                 if fact_id is None:
                     continue
                 assertions_by_fact_id.setdefault(str(fact_id), []).append(assertion)
+            _VALUE_KEYS = (
+                "value_text", "value_number", "value_unit", "value_kind", "value_time",
+                "quantity_value", "quantity_unit", "quantity_kind", "time_scope",
+            )
             for item in ranked:
                 item.memory_facts = [
                     facts_by_id[fact_id]
@@ -417,6 +430,11 @@ async def retrieve(
                     for fact_id in item.path_memory_fact_ids
                     for assertion in assertions_by_fact_id.get(fact_id, [])
                 ]
+                item.path_edge_quantities = [
+                    {k: facts_by_id[fid].get(k) for k in _VALUE_KEYS}
+                    if fid in facts_by_id else {}
+                    for fid in item.path_memory_fact_ids
+                ]
             log.emit(
                 "path_hydration_completed",
                 hydrated_fact_count=len(memory_facts),
@@ -425,18 +443,21 @@ async def retrieve(
             )
 
         entity_ids_ranked = [item.entity_id for item in ranked]
-        current_scalar_facts, current_scalar_assertions = (
-            await _hydrate_current_non_traversable_entity_memory(entity_ids_ranked)
+        current_entity_facts, current_entity_assertions = (
+            await _hydrate_current_entity_memory(entity_ids_ranked)
         )
-        if current_scalar_facts:
+        if current_entity_facts:
             facts_by_entity_id: dict[str, list[dict[str, object]]] = {}
-            for fact in current_scalar_facts:
-                entity_id = fact.get("subject_entity_id")
-                if entity_id is None:
-                    continue
-                facts_by_entity_id.setdefault(str(entity_id), []).append(fact)
+            for fact in current_entity_facts:
+                linked_entity_ids = {
+                    str(entity_id)
+                    for entity_id in (fact.get("subject_entity_id"), fact.get("object_entity_id"))
+                    if entity_id is not None
+                }
+                for entity_id in linked_entity_ids:
+                    facts_by_entity_id.setdefault(entity_id, []).append(fact)
             assertions_by_fact_id: dict[str, list[dict[str, object]]] = {}
-            for assertion in current_scalar_assertions:
+            for assertion in current_entity_assertions:
                 fact_id = assertion.get("memory_fact_id")
                 if fact_id is None:
                     continue
