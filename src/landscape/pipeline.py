@@ -140,13 +140,18 @@ async def ingest(
                 duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
             )
 
-        # Step 3: extract entities + relations from full text
+        # Step 3: extract entities + relations from each chunk
         stage_started_at = log.set_stage("extraction_completed")
-        extraction = llm.extract(text)
+        all_entities = []
+        all_relations = []
+        for chunk in chunks:
+            chunk_extraction = llm.extract(chunk.text)
+            all_entities.extend(chunk_extraction.entities)
+            all_relations.extend(chunk_extraction.relations)
         log.emit(
             "extraction_completed",
-            entities_extracted=len(extraction.entities),
-            relations_extracted=len(extraction.relations),
+            entities_extracted=len(all_entities),
+            relations_extracted=len(all_relations),
             duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
         )
 
@@ -160,7 +165,7 @@ async def ingest(
         # mentions in the same doc resolve once. Preserves the dedupe the serial
         # loop used to get "for free" from ordered resolution.
         grouped: dict[tuple[str, str], dict] = {}
-        for entity in extraction.entities:
+        for entity in all_entities:
             canonical_entity_type, _ = coerce_entity_type(entity.type)
             etype_subtype = entity.type if canonical_entity_type != entity.type else None
             key = (entity.name.strip().lower(), canonical_entity_type)
@@ -274,7 +279,7 @@ async def ingest(
         relations_created = 0
         relations_reinforced = 0
         relations_superseded = 0
-        for relation in extraction.relations:
+        for relation in all_relations:
             canonical_rel_type, _coerce_score = coerce_rel_type(relation.relation_type)
             subject_entity_id = resolved_entity_ids.get(relation.subject.strip().lower())
             object_entity_id = resolved_entity_ids.get(relation.object.strip().lower())
