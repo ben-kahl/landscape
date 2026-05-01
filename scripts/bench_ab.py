@@ -60,6 +60,27 @@ def _safe_id(raw: str) -> str:
     return raw.replace(":", "-").replace("/", "-").replace(" ", "_")
 
 
+def _load_module_from_path(module_name: str, module_path: pathlib.Path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load module spec for {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    previous = sys.modules.get(module_name)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        if previous is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous
+        raise
+    return module
+
+
 async def _wipe_stack() -> None:
     driver = neo4j_store.get_driver()
     async with driver.session() as session:
@@ -82,6 +103,30 @@ def _format_session(turns: list[dict]) -> str:
         if content:
             lines.append(f"[{role}] {content}")
     return "\n\n".join(lines)
+
+
+def _iter_haystack_sessions(
+    question: dict,
+    *,
+    fallback_prefix: str,
+):
+    raw_sessions = question.get("haystack_sessions") or []
+    parallel_session_ids = question.get("haystack_session_ids") or []
+
+    for idx, session in enumerate(raw_sessions):
+        if isinstance(session, dict):
+            turns = session.get("turns") or []
+            session_id = session.get("session_id")
+        else:
+            turns = session
+            session_id = None
+
+        if session_id is None and idx < len(parallel_session_ids):
+            session_id = parallel_session_ids[idx]
+        if session_id is None:
+            session_id = f"{fallback_prefix}-{idx}"
+
+        yield str(session_id), turns
 
 
 # ---------------------------------------------------------------------------
@@ -111,18 +156,17 @@ async def _run_longmemeval(data_path: pathlib.Path, n_questions: int) -> dict:
         await _wipe_stack()
 
         gold_entity = q.get("answer", "")
-        sessions = q.get("haystack_sessions", [])
 
         t0 = time.perf_counter()
-        for sess in sessions:
-            text = _format_session(sess.get("turns", []))
+        for sid_raw, turns in _iter_haystack_sessions(q, fallback_prefix=f"sess-{i}"):
+            text = _format_session(turns)
             if text.strip():
-                sid = _safe_id(sess.get("session_id", f"sess-{i}"))
+                sid = _safe_id(sid_raw)
                 await pipeline.ingest(text, title=f"lme:{sid}")
         ingest_times.append(time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        result = await retrieve(q["question"], hops=2, limit=10, reinforce=False)
+        result = await retrieve(q["question"], hops=3, limit=10, reinforce=False)
         query_times.append(time.perf_counter() - t0)
 
         names = [e.name.lower() for e in result.results]
@@ -252,15 +296,10 @@ async def _run_killer_demo() -> dict:
 
 async def _run_supersession() -> dict:
     print("\n=== Section C: Supersession scenarios ===")
-    import importlib.util
-
-    # scripts/ is not on sys.path when invoked via `uv run python scripts/bench_ab.py`
-    spec = importlib.util.spec_from_file_location(
+    mod = _load_module_from_path(
         "supersession_scenarios",
         pathlib.Path(__file__).resolve().parent / "fixtures" / "supersession_scenarios.py",
     )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
     run_all_scenarios = mod.run_all_scenarios
 
     results = await run_all_scenarios()
