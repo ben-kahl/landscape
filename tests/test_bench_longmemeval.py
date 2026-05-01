@@ -14,24 +14,42 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
 def _make_result(entities=(), chunks=()):
     """Build a minimal RetrieveResult-like object for testing."""
-    return SimpleNamespace(results=list(entities), chunks=list(chunks))
+    return SimpleNamespace(
+        results=list(entities),
+        chunks=list(chunks),
+        touched_entity_ids=[e.entity_id for e in entities if hasattr(e, "entity_id")],
+    )
 
 
 def _entity(name, type_, path_edge_types=(), path_edge_quantities=()):
     return SimpleNamespace(
         name=name,
         type=type_,
+        score=0.9,
+        entity_id=f"{name.lower().replace(' ', '-')}-id",
+        path_memory_fact_ids=[],
         path_edge_types=list(path_edge_types),
+        path_edge_subtypes=[None] * len(path_edge_types),
         path_edge_quantities=list(path_edge_quantities),
+        memory_facts=[],
+        supporting_assertions=[],
     )
 
 
 def _chunk(text, source_doc="session-1"):
-    return SimpleNamespace(text=text, source_doc=source_doc)
+    return SimpleNamespace(
+        text=text,
+        source_doc=source_doc,
+        doc_id="doc-1",
+        position=0,
+        score=0.8,
+    )
 
 
 @pytest.mark.unit
 def test_format_search_result_includes_entities_and_chunks():
+    import json
+
     from bench_longmemeval import _format_search_result
 
     result = _make_result(
@@ -41,16 +59,19 @@ def test_format_search_result_includes_entities_and_chunks():
         ],
         chunks=[_chunk("Alice joined Atlas Corp last year.", "session-42")],
     )
-    out = _format_search_result(result)
-    assert "Alice (Person)" in out
-    assert "Atlas Corp (Organization)" in out
-    assert "WORKS_FOR" in out
-    assert "Alice joined Atlas Corp last year." in out
-    assert "session-42" in out
+    out = json.loads(_format_search_result(result))
+    names = [r["name"] for r in out["results"]]
+    assert "Alice" in names
+    assert "Atlas Corp" in names
+    assert out["results"][1]["path_edge_types"] == ["WORKS_FOR"]
+    assert out["chunks"][0]["text"] == "Alice joined Atlas Corp last year."
+    assert out["chunks"][0]["source_doc"] == "session-42"
 
 
 @pytest.mark.unit
 def test_format_search_result_renders_edge_quantities():
+    import json
+
     from bench_longmemeval import _format_search_result
 
     qty = {"quantity_value": 3, "quantity_unit": None,
@@ -58,17 +79,19 @@ def test_format_search_result_renders_edge_quantities():
     result = _make_result(
         entities=[_entity("bike", "Object", ["OWNS"], [qty])],
     )
-    out = _format_search_result(result)
-    assert "quantity=3" in out
+    out = json.loads(_format_search_result(result))
+    assert out["results"][0]["path_edge_quantities"][0]["quantity_value"] == 3
 
 
 @pytest.mark.unit
 def test_format_search_result_no_chunks_omits_section():
+    import json
+
     from bench_longmemeval import _format_search_result
 
     result = _make_result(entities=[_entity("Alice", "Person")])
-    out = _format_search_result(result)
-    assert "Source Passages" not in out
+    out = json.loads(_format_search_result(result))
+    assert out["chunks"] == []
 
 
 @pytest.mark.unit
