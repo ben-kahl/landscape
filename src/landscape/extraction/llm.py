@@ -207,6 +207,11 @@ def _thinking_enabled() -> bool | None:
     return profile.thinking if profile is not None else None
 
 
+def _num_ctx() -> int:
+    profile = LLM_PROFILES.get(settings.llm_profile)
+    return profile.num_ctx if profile is not None else 8192
+
+
 def extract(text: str) -> Extraction:
     client = ollama.Client(host=settings.ollama_url)
     prompt = f"{_SYSTEM_PROMPT}\n\n{text}"
@@ -219,6 +224,7 @@ def extract(text: str) -> Extraction:
         ],
         format=Extraction.model_json_schema(),
         think=_thinking_enabled(),
+        options={"num_ctx": _num_ctx()},
     )
     increment_ollama_tokens(
         prompt_tokens=getattr(response, "prompt_eval_count", 0) or 0,
