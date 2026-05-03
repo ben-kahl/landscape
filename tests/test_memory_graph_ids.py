@@ -98,3 +98,42 @@ def test_assertion_payload_rejects_conflicting_dual_value_fields():
             value_time="2026-03-05",
             time_scope="2026-03-04",
         )
+
+
+def test_fact_key_differs_for_negated_and_positive():
+    from landscape.memory_graph.families import FAMILY_REGISTRY
+    from landscape.memory_graph.ids import fact_key
+    cfg = FAMILY_REGISTRY["WORKS_FOR"]
+    positive = fact_key(cfg, "ent-alice", "ent-acme", None, negated=False)
+    negative = fact_key(cfg, "ent-alice", "ent-acme", None, negated=True)
+    assert positive != negative
+    assert "negated" in negative
+    assert "negated" not in positive
+
+
+def test_slot_key_same_for_negated_and_positive_subject_keyed():
+    from landscape.memory_graph.families import FAMILY_REGISTRY
+    from landscape.memory_graph.ids import slot_key
+    cfg = FAMILY_REGISTRY["WORKS_FOR"]  # subject-keyed
+    positive_slot = slot_key(cfg, "ent-alice", "ent-acme", None, negated=False)
+    negative_slot = slot_key(cfg, "ent-alice", "ent-acme", None, negated=True)
+    assert positive_slot == negative_slot
+    assert positive_slot == "WORKS_FOR:ent-alice"
+
+
+def test_slot_key_same_for_negated_and_positive_object_keyed():
+    from landscape.memory_graph.families import FAMILY_REGISTRY
+    from landscape.memory_graph.ids import slot_key
+    cfg = FAMILY_REGISTRY["HAS_TITLE"]  # object-keyed
+    positive_slot = slot_key(cfg, "ent-alice", "ent-acme", "engineer", negated=False)
+    negative_slot = slot_key(cfg, "ent-alice", "ent-acme", "engineer", negated=True)
+    assert positive_slot == negative_slot
+
+
+def test_slot_key_same_for_negated_and_positive_subtype_keyed():
+    from landscape.memory_graph.families import FAMILY_REGISTRY
+    from landscape.memory_graph.ids import slot_key
+    cfg = FAMILY_REGISTRY["HAS_PREFERENCE"]  # subtype-keyed
+    positive_slot = slot_key(cfg, "ent-user", "ent-dynamo", "database", negated=False)
+    negative_slot = slot_key(cfg, "ent-user", "ent-dynamo", "database", negated=True)
+    assert positive_slot == negative_slot

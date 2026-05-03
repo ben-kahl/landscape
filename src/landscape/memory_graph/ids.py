@@ -67,6 +67,7 @@ def fact_key(
     object_entity_id: str | None,
     subtype: str | None,
     *,
+    negated: bool = False,
     value_text: str | None = None,
     value_number: float | None = None,
     value_unit: str | None = None,
@@ -78,6 +79,8 @@ def fact_key(
         parts.append(object_entity_id)
     if subtype is not None:
         parts.append(subtype)
+    if negated:
+        parts.append("negated")
     parts.extend(
         _encode_value_parts(
             value_text=value_text,
@@ -96,6 +99,7 @@ def slot_key(
     object_entity_id: str | None,
     subtype: str | None,
     *,
+    negated: bool = False,
     value_text: str | None = None,
     value_number: float | None = None,
     value_unit: str | None = None,
@@ -123,6 +127,7 @@ def slot_key(
                 subject_entity_id,
                 object_entity_id,
                 subtype,
+                negated=False,
                 value_text=value_text,
                 value_number=value_number,
                 value_unit=value_unit,
@@ -130,11 +135,13 @@ def slot_key(
                 value_time=value_time,
             )
         return ":".join(part for part in (family.family, subject_entity_id, subtype) if part)
+    # additive: slot_key == fact_key (includes negated so positive/negative are distinct slots)
     return fact_key(
         family,
         subject_entity_id,
         object_entity_id,
         subtype,
+        negated=negated,
         value_text=value_text,
         value_number=value_number,
         value_unit=value_unit,

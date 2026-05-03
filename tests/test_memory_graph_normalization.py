@@ -118,3 +118,48 @@ def test_extracted_relation_negated_true():
         subject="Alice", object="Acme", relation_type="WORKS_FOR", confidence=0.9, negated=True
     )
     assert r.negated is True
+
+
+def test_normalize_assertion_threads_negated_true():
+    from landscape.memory_graph.models import AssertionPayload
+    from landscape.memory_graph.normalization import normalize_assertion
+    payload = AssertionPayload(
+        source_kind="document",
+        source_id="doc-1",
+        raw_subject_text="Alice",
+        raw_relation_text="does not work for",
+        raw_object_text="Acme",
+        confidence=0.9,
+        family_candidate="WORKS_FOR",
+        negated=True,
+    )
+    result = normalize_assertion(
+        payload,
+        subject_entity_id="ent-alice",
+        object_entity_id="ent-acme",
+    )
+    assert result.promotable is True
+    assert result.negated is True
+    assert "negated" in result.fact_key
+    assert "negated" not in result.slot_key
+
+
+def test_normalize_assertion_negated_false_by_default():
+    from landscape.memory_graph.models import AssertionPayload
+    from landscape.memory_graph.normalization import normalize_assertion
+    payload = AssertionPayload(
+        source_kind="document",
+        source_id="doc-1",
+        raw_subject_text="Alice",
+        raw_relation_text="works for",
+        raw_object_text="Acme",
+        confidence=0.9,
+        family_candidate="WORKS_FOR",
+    )
+    result = normalize_assertion(
+        payload,
+        subject_entity_id="ent-alice",
+        object_entity_id="ent-acme",
+    )
+    assert result.negated is False
+    assert "negated" not in result.fact_key

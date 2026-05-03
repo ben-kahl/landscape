@@ -23,6 +23,7 @@ class NormalizationResult:
     time_scope: str | None
     fact_key: str | None
     slot_key: str | None
+    negated: bool = False
 
 
 def normalize_assertion(
@@ -131,11 +132,13 @@ def normalize_assertion(
         quantity_unit=quantity_unit,
         quantity_kind=quantity_kind,
         time_scope=time_scope,
+        negated=payload.negated,
         fact_key=fact_key(
             config,
             subject_entity_id,
             object_entity_id,
             payload.subtype,
+            negated=payload.negated,
             value_text=value_text,
             value_number=value_number,
             value_unit=value_unit,
@@ -147,6 +150,7 @@ def normalize_assertion(
             subject_entity_id,
             object_entity_id,
             payload.subtype,
+            negated=False,
             value_text=value_text,
             value_number=value_number,
             value_unit=value_unit,
