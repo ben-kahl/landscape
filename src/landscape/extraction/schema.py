@@ -8,12 +8,6 @@ from pydantic import BaseModel, Field, model_validator
 # synonym drift (e.g. WORKS_FOR / EMPLOYED_BY / CURRENTLY_WORKS_AT all
 # describing the same semantic relation) — see the "Known limitations"
 # section in CLAUDE.md for the broader problem and the path forward.
-#
-# Transitional note: OWNS and DEPENDS_ON are first-class in the redesign
-# family registry, but the current extraction pipeline still normalizes raw
-# OWNS -> LEADS and raw DEPENDS_ON -> USES. That mismatch is intentional for
-# now and will be removed when the family registry becomes the write-path
-# source of truth.
 RELATION_VOCAB: frozenset[str] = frozenset(
     {
         # Original v1
@@ -102,7 +96,6 @@ RELATION_SYNONYMS: dict[str, str] = {
     "HEADS": "LEADS",
     "DIRECTS": "LEADS",
     "OVERSEES": "LEADS",
-    "OWNS": "LEADS",
     # MEMBER_OF family
     "PART_OF": "MEMBER_OF",
     "IN_TEAM": "MEMBER_OF",
@@ -114,7 +107,6 @@ RELATION_SYNONYMS: dict[str, str] = {
     "AUTHORIZED": "APPROVED",
     "RATIFIED": "APPROVED",
     # USES family
-    "DEPENDS_ON": "USES",
     "BUILT_ON": "USES",
     "RUNS_ON": "USES",
     "POWERED_BY": "USES",
@@ -211,6 +203,7 @@ class ExtractedRelation(BaseModel):
     quantity_unit: str | None = None
     quantity_kind: str | None = None
     time_scope: str | None = None
+    negated: bool = False
 
     @model_validator(mode="after")
     def _sync_value_fields(self) -> "ExtractedRelation":

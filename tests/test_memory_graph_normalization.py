@@ -104,3 +104,17 @@ def test_subtype_keyed_missing_subtype_does_not_collapse_to_subject_slot():
     )
     assert result.promotable is True
     assert result.slot_key == "HAS_PREFERENCE:ent-alice:ent-blue"
+
+
+def test_extracted_relation_negated_defaults_false():
+    from landscape.extraction.schema import ExtractedRelation
+    r = ExtractedRelation(subject="Alice", object="Acme", relation_type="WORKS_FOR", confidence=0.9)
+    assert r.negated is False
+
+
+def test_extracted_relation_negated_true():
+    from landscape.extraction.schema import ExtractedRelation
+    r = ExtractedRelation(
+        subject="Alice", object="Acme", relation_type="WORKS_FOR", confidence=0.9, negated=True
+    )
+    assert r.negated is True
