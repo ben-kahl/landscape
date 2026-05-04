@@ -253,7 +253,7 @@ async def test_ingest_promotes_additive_family_into_memory_rel(http_client, neo4
         record = await result.single()
 
     assert record is not None
-    assert record["subtype"] == "owns"
+    assert record["subtype"] is None  # OWNS is canonical; no subtype spill
     assert record["quantity_value"] == 1
     assert record["quantity_unit"] == "instance"
     assert record["quantity_kind"] == "count"
