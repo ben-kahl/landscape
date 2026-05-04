@@ -65,7 +65,7 @@ graph TD
 |---|---|
 | Text ingestion | LLM extraction, chunking, entity resolution, Neo4j writes, Qdrant writes |
 | Hybrid retrieval | Vector search, graph expansion, merge/rank, recency and distance scoring |
-| Temporal memory | Supersession-aware retrieval for functional relationship conflicts |
+| Temporal memory | Supersession-aware retrieval for functional conflicts; negative-polarity facts stored and surfaced distinctly |
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
 | Agent access | MCP server, conversation history, LangChain retriever, FastAPI, local CLI |
 | Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval smoke harness |
@@ -291,7 +291,7 @@ Results are printed as a Markdown table. On the killer-demo corpus, hybrid retri
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design rationale.
 Three limitations worth calling out here before phase 4:
 
-**Rel-type synonym drift.** Small local LLMs are non-deterministic about relationship type phrasing (`WORKS_FOR` vs `EMPLOYED_BY`). Landscape uses a closed vocabulary of 18 canonical types (with subtype annotations for richer semantics) and a `normalize_relation_type()` normalizer, but truly novel types pass through unchanged and will not trigger supersession. Demos that rely on temporal conflict resolution should use hand-constructed corpora.
+**Rel-type synonym drift.** Small local LLMs are non-deterministic about relationship type phrasing (`WORKS_FOR` vs `EMPLOYED_BY`). Landscape uses a closed vocabulary of 22 canonical types (with subtype annotations for richer semantics) and a `normalize_relation_type()` normalizer, but truly novel types pass through unchanged and will not trigger supersession. Demos that rely on temporal conflict resolution should use hand-constructed corpora.
 
 **MCP tool-call reliability.** LLM agents invoking `add_relation` may invent relationship types outside the canonical vocabulary. These are stored as-is and do not trigger supersession rules. Monitor the `status` tool output for unexpected rel types in a live session.
 

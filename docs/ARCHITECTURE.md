@@ -137,6 +137,15 @@ This keeps provenance intact while ensuring retrieval only walks live facts.
 Non-conflicting facts remain additive, and superseded versions stay available
 for audit and temporal reasoning without appearing in the current graph view.
 
+Negated facts ("Alice does not work for Acme") are stored as distinct
+`MemoryFact` nodes with `negated=true` rather than being dropped or merged
+with their positive counterparts. For non-additive families, a negated
+assertion triggers cross-polarity supersession, retiring the live positive
+fact. For additive families, the same slot-match logic applies per
+subject-object pair. The `negated` flag propagates onto `MEMORY_REL` edges so
+callers can distinguish "Alice works for Acme" from "Alice does not work for
+Acme" during retrieval.
+
 ## Relationship Vocabulary
 
 Local LLMs are useful extractors, but they can vary relationship labels across
@@ -150,7 +159,7 @@ Examples:
 | `EMPLOYED_BY` | `WORKS_FOR` |
 | `MANAGES` | `LEADS` |
 | `PART_OF` | `MEMBER_OF` |
-| `BUILT_WITH` | `USES` |
+| `BUILT_ON` | `USES` |
 
 Unknown relationship types are preserved rather than dropped. That protects
 novel semantics, but it also means unknown near-synonyms may not participate in
