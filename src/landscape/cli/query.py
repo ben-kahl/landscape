@@ -56,7 +56,7 @@ async def handle_query(args: argparse.Namespace) -> int:
                     label = f"NOT {edge}" if neg else edge
                     path_parts.append(f"-[{label}]->")
                 path_parts.append(f"{item.name} [{item.type}]")
-                path_str = f"(seed) " + " ".join(path_parts)
+                path_str = "(seed) " + " ".join(path_parts)
             else:
                 path_str = f"(seed) {item.name} [{item.type}]"
             neg_flag = " [NEGATED]" if any(item.path_edge_negated) else ""
