@@ -27,6 +27,7 @@ class RetrievedEntity:
     path_edge_ids: list[str] = field(default_factory=list)
     path_edge_types: list[str] = field(default_factory=list)
     path_edge_subtypes: list[str | None] = field(default_factory=list)
+    path_edge_negated: list[bool] = field(default_factory=list)
     path_edge_quantities: list[dict[str, object | None]] = field(default_factory=list)
     path_memory_fact_ids: list[str] = field(default_factory=list)
     memory_facts: list[dict[str, object]] = field(default_factory=list)
@@ -318,6 +319,7 @@ async def retrieve(
                     path_edge_ids=list(row.get("edge_ids") or []),
                     path_edge_types=path_edge_types,
                     path_edge_subtypes=list(row.get("edge_subtypes") or []),
+                    path_edge_negated=list(row.get("path_edge_negated") or []),
                     path_edge_quantities=list(row.get("edge_quantities") or []),
                     path_memory_fact_ids=path_memory_fact_ids,
                 )

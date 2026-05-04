@@ -775,3 +775,32 @@ async def test_additive_coexistence_unaffected_by_negation(neo4j_driver):
     redis_fact = next(f for f in current if f["obj"] == redis)
     assert kafka_fact["negated"] is False
     assert redis_fact["negated"] is True
+
+
+@pytest.mark.asyncio
+async def test_negated_fact_surfaces_in_retrieval_output(neo4j_driver):
+    """A negated MemoryFact must appear with negated=True in get_current_fact_details_for_entities."""
+    from landscape.storage.neo4j_memory import get_current_fact_details_for_entities
+
+    doc_id, _ = await neo4j_store.merge_document("hash-surf", "surf-test", "text")
+    alice = await neo4j_store.merge_entity(
+        "Alice", "Person", "surf-test", 0.9, doc_id, "test"
+    )
+    acme = await neo4j_store.merge_entity(
+        "Acme", "Organization", "surf-test", 0.9, doc_id, "test"
+    )
+
+    await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document", source_id="surf-test",
+            raw_subject_text="Alice", raw_relation_text="does not work for",
+            raw_object_text="Acme", confidence=0.9, family_candidate="WORKS_FOR",
+            negated=True,
+        ),
+        source_node_id=doc_id, source_kind="document",
+        subject_entity_id=alice, object_entity_id=acme, chunk_ids=[],
+    )
+
+    facts, _ = await get_current_fact_details_for_entities([alice])
+    assert len(facts) == 1
+    assert facts[0]["negated"] is True

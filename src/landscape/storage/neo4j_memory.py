@@ -24,6 +24,7 @@ async def get_memory_fact_explanation(memory_fact_id: str) -> dict[str, Any] | N
                    fact.subtype AS subtype,
                    fact.support_count AS support_count,
                    fact.confidence_agg AS confidence_agg,
+                   fact.negated AS negated,
                    subject.id AS subject_entity_id,
                    subject.name AS subject_name,
                    subject.type AS subject_type,
@@ -66,6 +67,7 @@ async def get_memory_fact_details_batch(
                    fact.subtype AS subtype,
                    fact.support_count AS support_count,
                    fact.confidence_agg AS confidence_agg,
+                   coalesce(fact.negated, false) AS negated,
                    fact.value_text AS value_text,
                    fact.value_number AS value_number,
                    fact.value_unit AS value_unit,
@@ -141,9 +143,6 @@ async def get_current_fact_details_for_entities(
             WHERE subject.id IN $entity_ids
               AND fact.valid_until IS NULL
             OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
-            OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: fact.id}]->(object)
-            WITH subject, fact, object, rel
-            WHERE rel IS NULL
             OPTIONAL MATCH (a:Assertion)-[:SUPPORTS]->(fact)
             WITH subject, fact, object, collect(DISTINCT a) AS assertions
             RETURN fact.id AS memory_fact_id,
@@ -155,6 +154,7 @@ async def get_current_fact_details_for_entities(
                    fact.subtype AS subtype,
                    fact.support_count AS support_count,
                    fact.confidence_agg AS confidence_agg,
+                   coalesce(fact.negated, false) AS negated,
                    fact.value_text AS value_text,
                    fact.value_number AS value_number,
                    fact.value_unit AS value_unit,
@@ -243,7 +243,8 @@ async def bfs_expand_memory_rel(
       [r IN rels | r.subtype] AS edge_subtypes,
       [r IN rels | coalesce(r.confidence_agg, 0.0)] AS edge_confidences,
       [r IN rels | coalesce(r.access_count, 0)] AS edge_access_counts,
-      [r IN rels | r.last_accessed] AS edge_last_accessed
+      [r IN rels | r.last_accessed] AS edge_last_accessed,
+      [r IN rels | coalesce(r.negated, false)] AS path_edge_negated
     """
     driver = get_driver()
     async with driver.session() as session:
