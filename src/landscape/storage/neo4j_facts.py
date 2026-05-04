@@ -264,7 +264,9 @@ async def upsert_memory_fact_from_assertion(
         else None
     )
     if family_cfg.slot_mode != "additive":
-        family_key = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype, negated=False)
+        family_key = slot_key(
+            family_cfg, subject_entity_id, object_entity_id, subtype, negated=False
+        )
         driver = get_driver()
         async with driver.session() as session:
             current_result = await session.run(
@@ -315,9 +317,10 @@ async def upsert_memory_fact_from_assertion(
         if family_cfg.object_kind == "entity" and object_entity_id is not None:
             opp_result = await session.run(
                 """
-                MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(old:MemoryFact {family: $family})
+                MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(old:MemoryFact)
                 MATCH (old)-[:AS_OBJECT]->(object:Entity {id: $object_entity_id})
-                WHERE old.valid_until IS NULL
+                WHERE old.family = $family
+                  AND old.valid_until IS NULL
                   AND coalesce(old.negated, false) = $opposite_negated
                 RETURN old.id AS old_fact_id
                 LIMIT 1
@@ -327,11 +330,14 @@ async def upsert_memory_fact_from_assertion(
                 object_entity_id=object_entity_id,
                 opposite_negated=opposite_negated,
             )
-        elif family_cfg.object_kind == "value" and (value_text is not None or value_number is not None):
+        elif family_cfg.object_kind == "value" and (
+            value_text is not None or value_number is not None
+        ):
             opp_result = await session.run(
                 """
-                MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(old:MemoryFact {family: $family})
-                WHERE old.valid_until IS NULL
+                MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(old:MemoryFact)
+                WHERE old.family = $family
+                  AND old.valid_until IS NULL
                   AND coalesce(old.negated, false) = $opposite_negated
                   AND (
                     ($value_text IS NOT NULL AND old.value_text = $value_text) OR

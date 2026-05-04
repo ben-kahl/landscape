@@ -756,6 +756,7 @@ def test_ingest_log_sink_writes_jsonl_to_process_scoped_file(tmp_path):
 async def test_ingest_passes_negated_to_assertion_payload():
     """Negated relation extracted from a chunk should produce AssertionPayload(negated=True)."""
     from unittest.mock import AsyncMock, MagicMock, patch
+
     from landscape import pipeline
 
     negated_relation = MagicMock()

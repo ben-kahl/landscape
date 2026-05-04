@@ -779,7 +779,7 @@ async def test_additive_coexistence_unaffected_by_negation(neo4j_driver):
 
 @pytest.mark.asyncio
 async def test_negated_fact_surfaces_in_retrieval_output(neo4j_driver):
-    """A negated MemoryFact must appear with negated=True in get_current_fact_details_for_entities."""
+    """Negated MemoryFact must appear with negated=True in get_current_fact_details_for_entities."""
     from landscape.storage.neo4j_memory import get_current_fact_details_for_entities
 
     doc_id, _ = await neo4j_store.merge_document("hash-surf", "surf-test", "text")
