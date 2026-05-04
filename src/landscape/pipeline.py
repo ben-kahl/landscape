@@ -12,6 +12,8 @@ from landscape.extraction.chunker import chunk_text
 from landscape.extraction.entity_type_coercion import coerce_entity_type
 from landscape.extraction.rel_type_coercion import coerce_rel_type
 from landscape.extraction.schema import normalize_subtype
+from landscape.memory_graph.models import AssertionPayload
+from landscape.memory_graph.service import persist_assertion_and_maybe_promote
 from landscape.observability import IngestLogContext, create_ingest_log_context
 from landscape.storage import neo4j_store, qdrant_store
 
@@ -95,6 +97,7 @@ async def ingest(
         # Step 2: chunk + embed chunks (batched)
         stage_started_at = log.set_stage("chunking_completed")
         chunks = chunk_text(text)
+        chunk_ids: list[str] = []
         log.emit(
             "chunking_completed",
             chunk_count=len(chunks),
@@ -102,7 +105,6 @@ async def ingest(
         )
         chunks_created = 0
         if chunks:
-            chunk_ids: list[str] = []
             for chunk in chunks:
                 chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()
                 chunk_ids.append(
@@ -138,13 +140,18 @@ async def ingest(
                 duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
             )
 
-        # Step 3: extract entities + relations from full text
+        # Step 3: extract entities + relations from each chunk
         stage_started_at = log.set_stage("extraction_completed")
-        extraction = llm.extract(text)
+        all_entities = []
+        all_relations = []
+        for chunk in chunks:
+            chunk_extraction = llm.extract(chunk.text)
+            all_entities.extend(chunk_extraction.entities)
+            all_relations.extend(chunk_extraction.relations)
         log.emit(
             "extraction_completed",
-            entities_extracted=len(extraction.entities),
-            relations_extracted=len(extraction.relations),
+            entities_extracted=len(all_entities),
+            relations_extracted=len(all_relations),
             duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
         )
 
@@ -158,7 +165,7 @@ async def ingest(
         # mentions in the same doc resolve once. Preserves the dedupe the serial
         # loop used to get "for free" from ordered resolution.
         grouped: dict[tuple[str, str], dict] = {}
-        for entity in extraction.entities:
+        for entity in all_entities:
             canonical_entity_type, _ = coerce_entity_type(entity.type)
             etype_subtype = entity.type if canonical_entity_type != entity.type else None
             key = (entity.name.strip().lower(), canonical_entity_type)
@@ -206,11 +213,19 @@ async def ingest(
         )
 
         stage_started_at = log.set_stage("entity_writes_completed")
+        resolved_entity_ids: dict[str, str] = {}
+        ambiguous_entity_names: set[str] = set()
         for key, vector, (canonical_id, is_new, _sim) in zip(
             group_keys, vectors, resolutions, strict=True
         ):
             g = grouped[key]
-            if is_new:
+            surface_name = g["name"].strip().lower()
+            existing_entity = (
+                None
+                if is_new or canonical_id is None
+                else await neo4j_store.find_entity_by_app_id(canonical_id)
+            )
+            if is_new or existing_entity is None:
                 canonical_id = await neo4j_store.merge_entity(
                     name=g["name"],
                     entity_type=g["canonical_entity_type"],
@@ -223,7 +238,7 @@ async def ingest(
                     subtype=g["subtype"],
                 )
                 await qdrant_store.upsert_entity(
-                    neo4j_element_id=canonical_id,
+                    entity_id=canonical_id,
                     name=g["name"],
                     entity_type=g["canonical_entity_type"],
                     source_doc=title,
@@ -241,6 +256,17 @@ async def ingest(
 
             if turn_element_id is not None:
                 await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id)
+
+            if surface_name in ambiguous_entity_names:
+                pass
+            elif (
+                surface_name in resolved_entity_ids
+                and resolved_entity_ids[surface_name] != canonical_id
+            ):
+                ambiguous_entity_names.add(surface_name)
+                resolved_entity_ids.pop(surface_name, None)
+            else:
+                resolved_entity_ids[surface_name] = canonical_id
         log.emit(
             "entity_writes_completed",
             entities_created=entities_created,
@@ -248,41 +274,48 @@ async def ingest(
             duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
         )
 
-        # Step 5: relation upsert with supersession
+        # Step 5: assertion persistence + fact promotion
         stage_started_at = log.set_stage("relation_upserts_completed")
         relations_created = 0
         relations_reinforced = 0
         relations_superseded = 0
-        for relation in extraction.relations:
+        for relation in all_relations:
             canonical_rel_type, _coerce_score = coerce_rel_type(relation.relation_type)
-            # If coercion changed the rel type, preserve the LLM's original
-            # phrasing as the subtype — captures nuance even when the LLM didn't
-            # produce an explicit subtype field. Explicit subtype (step 3 schema)
-            # still wins when present.
+            subject_entity_id = resolved_entity_ids.get(relation.subject.strip().lower())
+            object_entity_id = resolved_entity_ids.get(relation.object.strip().lower())
             raw_upper = (relation.relation_type or "").strip().upper().replace(" ", "_")
             subtype_source = relation.subtype or (
                 raw_upper if raw_upper and raw_upper != canonical_rel_type else None
             )
-            canonical_subtype = normalize_subtype(subtype_source)
-            outcome, _ = await neo4j_store.upsert_relation(
-                subject_name=relation.subject,
-                object_name=relation.object,
-                relation_type=canonical_rel_type,
+            payload = AssertionPayload(
+                source_kind="document",
+                source_id=doc_id,
+                raw_subject_text=relation.subject,
+                raw_relation_text=relation.relation_type,
+                raw_object_text=relation.object,
                 confidence=relation.confidence,
-                source_doc=title,
-                session_id=session_id,
-                turn_id=turn_id,
-                subtype=canonical_subtype,
+                family_candidate=canonical_rel_type,
+                subtype=normalize_subtype(subtype_source),
                 quantity_value=relation.quantity_value,
                 quantity_unit=relation.quantity_unit,
                 quantity_kind=relation.quantity_kind,
                 time_scope=relation.time_scope,
+                negated=relation.negated,
+                chunk_refs=[(cid, None, None) for cid in chunk_ids],
             )
-            if outcome == "created":
+            promotion = await persist_assertion_and_maybe_promote(
+                payload,
+                source_node_id=doc_id,
+                source_kind="document",
+                subject_entity_id=subject_entity_id,
+                object_entity_id=object_entity_id,
+                chunk_ids=chunk_ids,
+            )
+            if promotion.outcome == "created":
                 relations_created += 1
-            elif outcome == "reinforced":
+            elif promotion.outcome == "reinforced":
                 relations_reinforced += 1
-            elif outcome == "superseded":
+            elif promotion.outcome == "superseded":
                 relations_superseded += 1
         log.emit(
             "relation_upserts_completed",

@@ -39,7 +39,7 @@ async def test_init_collection_uses_configured_dims(model_name, expected_dims):
     from landscape.storage import qdrant_store
 
     fake_client = MagicMock()
-    fake_client.get_collections = AsyncMock(return_value=MagicMock(collections=[]))
+    fake_client.get_collection = AsyncMock(return_value=MagicMock())
     fake_client.create_collection = AsyncMock()
 
     with patch.object(qdrant_store, "get_client", return_value=fake_client), \
@@ -89,12 +89,12 @@ async def test_retrieve_runs_both_filter_queries_in_parallel():
     # `if not seed_sims` return is bypassed.
     fake_hit = MagicMock(spec=ScoredPoint)
     fake_hit.score = 0.9
-    fake_hit.payload = {"neo4j_node_id": "e1"}
+    fake_hit.payload = {"entity_id": "e1"}
 
-    # _hydrate_entities and bfs_expand must be patched to prevent real Neo4j
+    # _hydrate_entities and bfs_expand_memory_rel must be patched to prevent real Neo4j
     # connections while allowing the function to reach the filter block.
     fake_entity_row = {
-        "eid": "e1",
+        "entity_id": "e1",
         "name": "FakeEntity",
         "type": "Person",
         "access_count": 0,
@@ -110,13 +110,15 @@ async def test_retrieve_runs_both_filter_queries_in_parallel():
     ), patch.object(
         query_mod.encoder, "embed_query", return_value=[0.0] * 4,
     ), patch.object(
+        query_mod.neo4j_store, "resolve_seed_entity_ids", AsyncMock(return_value=[]),
+    ), patch.object(
         query_mod.neo4j_store, "get_entities_from_chunks",
         AsyncMock(return_value=[]),
     ), patch(
         "landscape.retrieval.query._hydrate_entities",
         AsyncMock(return_value=[fake_entity_row]),
     ), patch.object(
-        query_mod.neo4j_store, "bfs_expand",
+        query_mod.neo4j_store, "bfs_expand_memory_rel",
         AsyncMock(return_value=[]),
     ), patch.object(
         query_mod.neo4j_store, "get_entities_in_conversation",
@@ -130,6 +132,10 @@ async def test_retrieve_runs_both_filter_queries_in_parallel():
     ), patch.object(
         query_mod.neo4j_store, "get_chunks_since",
         AsyncMock(side_effect=side_chunk_since),
+    ), patch.object(
+        query_mod,
+        "_hydrate_current_non_traversable_entity_memory",
+        AsyncMock(return_value=([], [])),
     ):
         await query_mod.retrieve(
             "q",
@@ -178,6 +184,10 @@ async def test_retrieve_runs_seed_searches_in_parallel():
         return_value=[0.0] * 4,
     ), patch.object(
         query_mod.neo4j_store,
+        "resolve_seed_entity_ids",
+        AsyncMock(return_value=[]),
+    ), patch.object(
+        query_mod.neo4j_store,
         "get_entities_from_chunks",
         AsyncMock(return_value=[]),
     ):
@@ -206,7 +216,7 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
 
     # Seed the retrieval with a single entity hit so reinforce runs.
     fake_hit = MagicMock()
-    fake_hit.payload = {"neo4j_node_id": "e1"}
+    fake_hit.payload = {"entity_id": "e1"}
     fake_hit.score = 0.9
 
     with patch.object(
@@ -223,11 +233,15 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
         return_value=[0.0] * 4,
     ), patch.object(
         query_mod.neo4j_store,
+        "resolve_seed_entity_ids",
+        AsyncMock(return_value=[]),
+    ), patch.object(
+        query_mod.neo4j_store,
         "get_entities_from_chunks",
         AsyncMock(return_value=[]),
     ), patch.object(
         query_mod.neo4j_store,
-        "bfs_expand",
+        "bfs_expand_memory_rel",
         AsyncMock(return_value=[]),
     ), patch.object(
         query_mod,
@@ -235,7 +249,7 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
         AsyncMock(
             return_value=[
                 {
-                    "eid": "e1",
+                    "entity_id": "e1",
                     "name": "E1",
                     "type": "T",
                     "access_count": 0,
@@ -243,6 +257,10 @@ async def test_retrieve_runs_reinforcement_writes_in_parallel():
                 }
             ]
         ),
+    ), patch.object(
+        query_mod,
+        "_hydrate_current_non_traversable_entity_memory",
+        AsyncMock(return_value=([], [])),
     ), patch.object(
         query_mod.neo4j_store,
         "touch_entities",
@@ -331,16 +349,20 @@ async def test_ingest_batch_encodes_entities_once():
 
     extraction = MagicMock(entities=fake_entities, relations=[])
 
-    with patch.object(pipeline, "chunk_text", return_value=[]), \
+    fake_chunk = MagicMock(text="some doc", index=0)
+    with patch.object(pipeline, "chunk_text", return_value=[fake_chunk]), \
          patch.object(pipeline.neo4j_store, "merge_document",
                       AsyncMock(return_value=("doc1", True))), \
+         patch.object(pipeline.neo4j_store, "create_chunk",
+                      AsyncMock(return_value="ch0")), \
          patch.object(pipeline.encoder, "embed_documents",
-                      return_value=[[0.0] * 4 for _ in range(5)]) as batch_encode, \
+                      side_effect=lambda texts: [[0.0] * 4 for _ in texts]) as batch_encode, \
          patch.object(pipeline.encoder, "encode", return_value=[0.0] * 4), \
          patch.object(pipeline.resolver, "resolve_entity",
                       AsyncMock(return_value=(None, True, None))), \
          patch.object(pipeline.neo4j_store, "merge_entity",
                       AsyncMock(side_effect=[f"ent{i}" for i in range(5)])), \
+         patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()), \
          patch.object(pipeline.qdrant_store, "upsert_entity", AsyncMock()), \
          patch.object(pipeline.llm, "extract", return_value=extraction):
         await pipeline.ingest(text="some doc", title="t")
@@ -372,16 +394,20 @@ async def test_ingest_dedupes_identical_entity_mentions_before_resolving():
 
     resolve_mock = AsyncMock(return_value=(None, True, None))
 
-    with patch.object(pipeline, "chunk_text", return_value=[]), \
+    fake_chunk = MagicMock(text="some doc", index=0)
+    with patch.object(pipeline, "chunk_text", return_value=[fake_chunk]), \
          patch.object(pipeline.neo4j_store, "merge_document",
                       AsyncMock(return_value=("doc1", True))), \
+         patch.object(pipeline.neo4j_store, "create_chunk",
+                      AsyncMock(return_value="ch0")), \
          patch.object(pipeline.encoder, "embed_documents",
-                      return_value=[[0.0] * 4]), \
+                      side_effect=lambda texts: [[0.0] * 4 for _ in texts]), \
          patch.object(pipeline.encoder, "encode", return_value=[0.0] * 4), \
          patch.object(pipeline.resolver, "resolve_entity", resolve_mock), \
          patch.object(pipeline.neo4j_store, "merge_entity",
                       AsyncMock(return_value="ent1")), \
          patch.object(pipeline.neo4j_store, "link_entity_to_doc", AsyncMock()), \
+         patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()), \
          patch.object(pipeline.qdrant_store, "upsert_entity", AsyncMock()), \
          patch.object(pipeline.llm, "extract", return_value=extraction):
         await pipeline.ingest(text="some doc", title="t")
@@ -409,16 +435,20 @@ async def test_ingest_dedupes_whitespace_variants_of_same_entity():
 
     resolve_mock = AsyncMock(return_value=(None, True, None))
 
-    with patch.object(pipeline, "chunk_text", return_value=[]), \
+    fake_chunk = MagicMock(text="some doc", index=0)
+    with patch.object(pipeline, "chunk_text", return_value=[fake_chunk]), \
          patch.object(pipeline.neo4j_store, "merge_document",
                       AsyncMock(return_value=("doc1", True))), \
+         patch.object(pipeline.neo4j_store, "create_chunk",
+                      AsyncMock(return_value="ch0")), \
          patch.object(pipeline.encoder, "embed_documents",
-                      return_value=[[0.0] * 4]), \
+                      side_effect=lambda texts: [[0.0] * 4 for _ in texts]), \
          patch.object(pipeline.encoder, "encode", return_value=[0.0] * 4), \
          patch.object(pipeline.resolver, "resolve_entity", resolve_mock), \
          patch.object(pipeline.neo4j_store, "merge_entity",
                       AsyncMock(return_value="ent1")), \
          patch.object(pipeline.neo4j_store, "link_entity_to_doc", AsyncMock()), \
+         patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()), \
          patch.object(pipeline.qdrant_store, "upsert_entity", AsyncMock()), \
          patch.object(pipeline.llm, "extract", return_value=extraction):
         await pipeline.ingest(text="some doc", title="t")

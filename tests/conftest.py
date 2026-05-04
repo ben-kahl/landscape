@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 # The docker stack already holds most of the GPU (Ollama + app-gpu's encoder);
@@ -21,6 +22,27 @@ os.environ.setdefault("NEO4J_USER", "neo4j")
 os.environ.setdefault("NEO4J_PASSWORD", "landscape-dev")
 os.environ.setdefault("QDRANT_URL", QDRANT_URL)
 os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
+
+
+async def _wait_for_qdrant_collection_absent(
+    client: AsyncQdrantClient,
+    collection_name: str,
+    *,
+    timeout_s: float = 10.0,
+    poll_interval_s: float = 0.1,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while True:
+        existing = await client.get_collections()
+        names = {c.name for c in existing.collections}
+        if collection_name not in names:
+            return
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(
+                f"Timed out waiting for Qdrant collection {collection_name!r} to disappear; "
+                f"still present in {sorted(names)}"
+            )
+        await asyncio.sleep(poll_interval_s)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -67,6 +89,7 @@ async def _isolated_test(request):
             for coll in (qdrant_store.COLLECTION, qdrant_store.CHUNKS_COLLECTION):
                 if coll in names:
                     await qclient.delete_collection(coll)
+                    await _wait_for_qdrant_collection_absent(qclient, coll)
         finally:
             await qclient.close()
 

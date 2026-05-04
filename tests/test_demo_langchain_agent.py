@@ -29,11 +29,11 @@ async def test_search_memory_separates_graph_facts_from_chunk_context(monkeypatc
             return [
                 Document(
                     page_content="Alice now works for Atlas Corp.",
-                    metadata={"kind": "entity", "neo4j_id": "entity-1"},
+                    metadata={"kind": "entity", "entity_id": "entity-1"},
                 ),
                 Document(
                     page_content="Alice moved to Austin last month.",
-                    metadata={"kind": "chunk", "chunk_neo4j_id": "chunk-1"},
+                    metadata={"kind": "chunk", "chunk_id": "chunk-1"},
                 ),
             ]
 

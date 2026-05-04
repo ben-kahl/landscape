@@ -65,36 +65,12 @@ graph TD
 |---|---|
 | Text ingestion | LLM extraction, chunking, entity resolution, Neo4j writes, Qdrant writes |
 | Hybrid retrieval | Vector search, graph expansion, merge/rank, recency and distance scoring |
-| Temporal memory | Supersession-aware retrieval for functional relationship conflicts |
+| Temporal memory | Supersession-aware retrieval for functional conflicts; negative-polarity facts stored and surfaced distinctly |
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
 | Agent access | MCP server, conversation history, LangChain retriever, FastAPI, local CLI |
 | Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval smoke harness |
 | Phase 3.5 hardening | In progress: ranking tuning, benchmark hardening, relation normalization, resolver improvements |
 | Phase 4 | Next major feature area: expanded ingestion paths for documents, integrations, conversations, and multimodal memory |
-
-## Phase 3.5 Exit Criteria
-
-Phase 3.5 is the transition point before phase 4. Do not start phase 4 scope until this gate is satisfied.
-
-### CI Required
-
-- `uv sync --extra dev`
-- `uv run ruff check src tests`
-- `uv run pytest -m "unit or smoke"`
-
-### Local Required
-
-- `docker compose up -d`
-- `uv run pytest -m "integration and not external"`
-- `uv run python scripts/demo_mcp_session.py`
-- `uv run python scripts/demo_langchain_agent.py`
-- `uv sync --extra dev --extra bench`
-- `uv run python scripts/bench_retrieval.py` and `uv run python scripts/bench_chromadb.py` run successfully.
-
-### Exit Condition
-
-- Phase 3.5 is complete only when every CI Required command passes in the configured CI environment and every Local Required check passes locally.
-- That completion point is the handoff into phase 4.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design rationale, data
 model details, benchmark notes, and known limitations.
@@ -315,20 +291,11 @@ Results are printed as a Markdown table. On the killer-demo corpus, hybrid retri
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design rationale.
 Three limitations worth calling out here before phase 4:
 
-**Rel-type synonym drift.** Small local LLMs are non-deterministic about relationship type phrasing (`WORKS_FOR` vs `EMPLOYED_BY`). Landscape uses a closed vocabulary of 18 canonical types (with subtype annotations for richer semantics) and a `normalize_relation_type()` normalizer, but truly novel types pass through unchanged and will not trigger supersession. Demos that rely on temporal conflict resolution should use hand-constructed corpora.
+**Rel-type synonym drift.** Small local LLMs are non-deterministic about relationship type phrasing (`WORKS_FOR` vs `EMPLOYED_BY`). Landscape uses a closed vocabulary of 22 canonical types (with subtype annotations for richer semantics) and a `normalize_relation_type()` normalizer, but truly novel types pass through unchanged and will not trigger supersession. Demos that rely on temporal conflict resolution should use hand-constructed corpora.
 
 **MCP tool-call reliability.** LLM agents invoking `add_relation` may invent relationship types outside the canonical vocabulary. These are stored as-is and do not trigger supersession rules. Monitor the `status` tool output for unexpected rel types in a live session.
 
 **Entity resolver type-match strictness.** The resolver requires entity type agreement before merging; an agent that writes `("Sarah", "PERSON")` when the ingestion pipeline stored `("Sarah", "Employee")` will create a duplicate node rather than resolving to the existing one.
-
-## Pre-phase-4 checklist
-
-- Align `AGENTS.md`, `README.md`, and `docs/ARCHITECTURE.md` to the implemented system.
-- Keep MCP/API/CLI documentation accurate as interfaces evolve.
-- Add automatic agent-conversation ingestion so useful memory can be captured without requiring explicit fact write-back for every conversational detail.
-- Harden the benchmark story so it is clear what is proven by killer-demo and what is still smoke-only in LongMemEval.
-- Track reasoning-quality gaps explicitly: relation-direction normalization, semantic rel-type clustering, and stronger cross-type entity resolution.
-- Keep phase 4 scoped to new ingestion modes and integrations rather than mixing it with unrelated cleanup.
 
 ## License
 

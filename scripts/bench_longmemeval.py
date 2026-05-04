@@ -97,42 +97,39 @@ def _format_session(session_turns: list[dict]) -> str:
 
 
 def _format_search_result(result) -> str:
-    """Render a RetrieveResult as the context block an agent sees from search().
+    """Serialize a RetrieveResult as the JSON an agent receives from the MCP search tool.
 
-    Mirrors the MCP search tool output: entities with relationship paths and
-    edge quantities, followed by labelled source passages.
+    Matches the exact output of mcp_app.search() so the answer generation model
+    sees the same contract as a real agent.
     """
-    parts = ["## Entities"]
-    for r in result.results:
-        line = f"- {r.name} ({r.type})"
-        if r.path_edge_types:
-            edges = []
-            quantities = r.path_edge_quantities or [{}] * len(r.path_edge_types)
-            for rel_type, qty in zip(r.path_edge_types, quantities):
-                edge = rel_type
-                if qty:
-                    value = qty.get("quantity_value")
-                    unit = qty.get("quantity_unit")
-                    kind = qty.get("quantity_kind")
-                    scope = qty.get("time_scope")
-                    qparts = []
-                    if value is not None:
-                        label = str(kind) if kind else "quantity"
-                        qparts.append(f"{label}={value}" + (f" {unit}" if unit else ""))
-                    if scope:
-                        qparts.append(f"scope={scope}")
-                    if qparts:
-                        edge = f"{edge} {{{', '.join(qparts)}}}"
-                edges.append(edge)
-            line += f" [via {' → '.join(edges)}]"
-        parts.append(line)
-
-    if result.chunks:
-        parts.append("\n## Source Passages")
-        for c in result.chunks:
-            parts.append(f"[{c.source_doc}]\n{c.text}")
-
-    return "\n".join(parts)
+    output = {
+        "results": [
+            {
+                "name": r.name,
+                "type": r.type,
+                "score": round(r.score, 6),
+                "path_memory_fact_ids": r.path_memory_fact_ids,
+                "path_edge_types": r.path_edge_types,
+                "path_edge_subtypes": r.path_edge_subtypes,
+                "path_edge_quantities": r.path_edge_quantities,
+                "memory_facts": r.memory_facts,
+                "supporting_assertions": r.supporting_assertions,
+            }
+            for r in result.results
+        ],
+        "touched_entity_count": len(result.touched_entity_ids),
+        "chunks": [
+            {
+                "text": c.text,
+                "source_doc": c.source_doc,
+                "doc_id": c.doc_id,
+                "position": c.position,
+                "score": round(c.score, 6),
+            }
+            for c in result.chunks
+        ],
+    }
+    return json.dumps(output)
 
 
 def _parse_judge_response(raw: str) -> dict:
@@ -177,8 +174,11 @@ def _generate_answer(client, model_id: str, result, question: str) -> str:
     print(f"Context being passed to bedrock: {context}\n")
     prompt = (
         "You are answering a question about a person's memories and experiences.\n"
-        "Use only the context below. If the context does not contain enough information "
-        'to answer, respond with exactly: "I don\'t have that information."\n\n'
+        "The context below is JSON returned by a knowledge graph search tool. "
+        "Each result has a name, type, graph path (path_edge_types), structured facts "
+        "(memory_facts), and supporting assertions. Use only the context below. "
+        'If the context does not contain enough information to answer, respond with exactly: '
+        '"I don\'t have that information."\n\n'
         f"Context:\n{context}\n\n"
         f"Question: {question}\n\n"
         "Answer concisely in one or two sentences."
@@ -275,7 +275,7 @@ async def _run_question(
     query_s = time.time() - query_t0
 
     top_names = [r.name for r in result.results]
-    top_ids = [r.neo4j_id for r in result.results]
+    top_ids = [r.entity_id for r in result.results]
     hit = any(eid in gold_entity_ids for eid in top_ids if eid)
 
     row: dict = {

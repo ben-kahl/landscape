@@ -141,7 +141,6 @@ async def test_other_string_synonyms_short_circuit(http_client):
 
     cases = [
         ("MANAGES", "LEADS"),
-        ("DEPENDS_ON", "USES"),
         ("FOUNDED", "CREATED"),
         ("BASED_IN", "LOCATED_IN"),
     ]

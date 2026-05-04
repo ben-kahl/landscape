@@ -135,7 +135,7 @@ def _entity_to_document(entity: RetrievedEntity) -> Document:
 
     metadata: dict[str, Any] = {
         "kind": "entity",
-        "neo4j_id": entity.neo4j_id,
+        "entity_id": entity.entity_id,
         "name": entity.name,
         "type": entity.type,
         "distance": entity.distance,
@@ -156,7 +156,7 @@ def _chunk_to_document(chunk: RetrievedChunk) -> Document:
         page_content=chunk.text,
         metadata={
             "kind": "chunk",
-            "chunk_neo4j_id": chunk.chunk_neo4j_id,
+            "chunk_id": chunk.chunk_id,
             "doc_id": chunk.doc_id,
             "source_doc": chunk.source_doc,
             "position": chunk.position,

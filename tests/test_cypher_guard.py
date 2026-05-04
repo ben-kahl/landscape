@@ -35,13 +35,13 @@ def test_allowed_simple_match():
 @pytest.mark.unit
 def test_allowed_multi_hop_match():
     """2. Multi-hop relationship pattern."""
-    allowed("MATCH (a)-[r:RELATES_TO*1..3]->(b) RETURN a, r, b")
+    allowed("MATCH (a)-[r:MEMORY_REL*1..3]->(b) RETURN a, r, b")
 
 @pytest.mark.unit
 def test_allowed_match_with_aggregation():
     """3. MATCH with WITH and aggregations."""
     allowed(
-        "MATCH (e:Entity)-[r:RELATES_TO]->(o:Entity) "
+        "MATCH (e:Entity)-[r:MEMORY_REL]->(o:Entity) "
         "WITH e, count(r) AS degree "
         "RETURN e.name, degree ORDER BY degree DESC LIMIT 5"
     )

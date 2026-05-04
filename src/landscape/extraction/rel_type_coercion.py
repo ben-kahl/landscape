@@ -5,9 +5,9 @@ Small local LLMs (Llama 3.1) are non-deterministic about relation
 phrasing. The string-synonym map in schema.normalize_relation_type
 catches obvious cases (EMPLOYED_BY -> WORKS_FOR) but misses semantic
 near-misses (LOCATED_IN for an org change). This module embeds the
-incoming rel_type, compares against precomputed embeddings of the 10
-canonical types, and coerces to the nearest canonical type above a
-cosine threshold.
+incoming rel_type, compares against precomputed embeddings of the
+expanded canonical vocabulary, and coerces to the nearest canonical
+type above a cosine threshold.
 
 Algorithm
 ---------
@@ -131,6 +131,22 @@ CANONICAL_DESCRIPTORS: dict[str, str] = {
     "LIVES_IN": (
         "LIVES_IN — home address, residence, lives at, currently resides in, "
         "household location"
+    ),
+    "WORKS_ON": (
+        "WORKS_ON — works on a project, assigned to task, involved in work, "
+        "contributing to initiative"
+    ),
+    "MAINTAINS": (
+        "MAINTAINS — maintains system, supports infrastructure, looks after, "
+        "operates and keeps running"
+    ),
+    "OWNS": (
+        "OWNS — owns asset, owns company, owns property, has ownership of, "
+        "holds title to"
+    ),
+    "DEPENDS_ON": (
+        "DEPENDS_ON — depends on technology, relies on, built on, powered by, "
+        "uses as a dependency"
     ),
 }
 

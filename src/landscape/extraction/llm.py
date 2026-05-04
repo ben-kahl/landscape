@@ -2,6 +2,7 @@ import ollama
 
 from landscape.config import LLM_PROFILES, settings
 from landscape.extraction.schema import Extraction
+from landscape.middleware.token_counter import increment_ollama_tokens
 
 _SYSTEM_PROMPT = (
     "You are a precise knowledge-graph extractor. Given a passage of text, extract:\n"
@@ -23,15 +24,24 @@ _SYSTEM_PROMPT = (
     "- Include only relationships between entities you have identified.\n"
     "- Use SCREAMING_SNAKE_CASE for relation_type.\n"
     "- CRITICAL — choose relation_type ONLY from this closed vocabulary:\n"
-    "  WORKS_FOR, LEADS, MEMBER_OF, REPORTS_TO, APPROVED, USES, BELONGS_TO,\n"
-    "  LOCATED_IN, CREATED, RELATED_TO, HAS_TITLE, HAS_PREFERENCE, HAS_ATTRIBUTE,\n"
-    "  FAMILY_OF, RECOMMENDED, DISCUSSED, HAPPENED_ON, LIVES_IN.\n"
+    "  WORKS_FOR, LEADS, MEMBER_OF, WORKS_ON, MAINTAINS, OWNS, REPORTS_TO,\n"
+    "  APPROVED, USES, DEPENDS_ON, BELONGS_TO, LOCATED_IN, CREATED, RELATED_TO,\n"
+    "  HAS_TITLE, HAS_PREFERENCE, HAS_ATTRIBUTE, FAMILY_OF, RECOMMENDED,\n"
+    "  DISCUSSED, HAPPENED_ON, LIVES_IN.\n"
     "  Synonym hints:\n"
     "    'employed by'/'hired by'/'works at' → WORKS_FOR\n"
-    "    'manages'/'heads'/'owns a project' → LEADS\n"
+    "    'manages'/'heads' → LEADS\n"
     "    'part of a team' → MEMBER_OF\n"
+    "    'is working on'/'is assigned to'/'contributing to' → WORKS_ON\n"
+    "      (subject=Person/Team, object=Project/Task; use over LEADS when no ownership implied)\n"
+    "    'maintains'/'keeps running'/'responsible for upkeep of' → MAINTAINS\n"
+    "      (subject=Person/Team, object=System/Service/Codebase)\n"
+    "    'owns'/'is the owner of'/'has ownership of' → OWNS\n"
+    "      (asset/feature/codebase ownership; not org hierarchy — use BELONGS_TO for that)\n"
     "    'signed off on'/'authorized' → APPROVED\n"
-    "    'depends on'/'built on' → USES\n"
+    "    'uses as a tool or library'/'built on'/'runs on' → USES\n"
+    "    'depends on'/'requires'/'cannot function without' → DEPENDS_ON\n"
+    "      (hard runtime/build dependency; stronger than USES)\n"
     "    'subsidiary of'/'owned by an org' → BELONGS_TO\n"
     "    'based in' (org/office) → LOCATED_IN\n"
     "    'authored'/'built'/'founded' → CREATED\n"
@@ -59,6 +69,15 @@ _SYSTEM_PROMPT = (
     "  quantity_kind=duration; three bikes → quantity_value=3,\n"
     "  quantity_unit=bike, quantity_kind=count. Keep relation_type in the closed\n"
     "  vocabulary; quantities are edge qualifiers, not new relation types.\n"
+    "- NEGATION — when a sentence negates a relationship, set negated: true and keep\n"
+    "  the same relation_type from the closed vocab. Do NOT invent a 'NOT_' relation_type.\n"
+    "  Negation markers: 'does not', 'doesn't', 'isn't', 'no longer', 'never', 'stopped',\n"
+    "  'has not', 'haven't', 'wasn't', 'won't'.\n"
+    "  Examples:\n"
+    "    'Alice does not work for Acme' → relation_type: WORKS_FOR, negated: true\n"
+    "    'Project X no longer depends on Redis' → relation_type: DEPENDS_ON, negated: true\n"
+    "    'We do not recommend DynamoDB' → relation_type: RECOMMENDED, negated: true\n"
+    "    'Bob said we did not discuss Project Beta' → relation_type: DISCUSSED, negated: true\n"
     "- Return strict JSON matching the schema. No prose, no markdown fences.\n"
     "\n"
     "--- EXAMPLE 1 ---\n"
@@ -206,6 +225,11 @@ def _thinking_enabled() -> bool | None:
     return profile.thinking if profile is not None else None
 
 
+def _num_ctx() -> int:
+    profile = LLM_PROFILES.get(settings.llm_profile)
+    return profile.num_ctx if profile is not None else 8192
+
+
 def extract(text: str) -> Extraction:
     client = ollama.Client(host=settings.ollama_url)
     prompt = f"{_SYSTEM_PROMPT}\n\n{text}"
@@ -218,5 +242,10 @@ def extract(text: str) -> Extraction:
         ],
         format=Extraction.model_json_schema(),
         think=_thinking_enabled(),
+        options={"num_ctx": _num_ctx()},
+    )
+    increment_ollama_tokens(
+        prompt_tokens=getattr(response, "prompt_eval_count", 0) or 0,
+        completion_tokens=getattr(response, "eval_count", 0) or 0,
     )
     return Extraction.model_validate_json(response.message.content)

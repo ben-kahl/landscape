@@ -22,8 +22,8 @@ Landscape has four main layers:
 The ingestion path extracts structured facts from free text and writes them to
 both storage systems. The retrieval path starts from a semantic query, finds
 candidate entities and chunks in Qdrant, expands from matched entities through
-Neo4j, deduplicates results, and ranks them with vector, graph-distance, and
-recency signals.
+Neo4j, deduplicates results, and ranks them with vector, graph-distance, fact
+currentness, and recency signals.
 
 ## Data Model
 
@@ -33,41 +33,45 @@ Primary node labels:
 
 | Label | Purpose |
 |---|---|
-| `Entity` | Named people, organizations, projects, tools, locations, concepts, and artifacts |
+| `Entity` | Canonical people, organizations, projects, tools, locations, concepts, and artifacts |
 | `Document` | Source document metadata and ingestion provenance |
 | `Chunk` | Source text spans with positions and embedding references |
 | `Conversation` | Agent/user session container |
 | `Turn` | Individual conversation turns used for session-scoped memory |
+| `Assertion` | Raw extracted statement anchored to a document or turn |
+| `MemoryFact` | Normalized, queryable fact version used for supersession and retrieval |
+| `Alias` | Alternate surface form linked to a canonical entity |
 
 Primary relationships:
 
 | Relationship | Purpose |
 |---|---|
-| `RELATES_TO` | Extracted subject-predicate-object fact |
-| `EXTRACTED_FROM` | Provenance from facts/entities to source chunks or documents |
-| `MENTIONED_IN` | Conversation turn references |
+| `EXTRACTED_FROM` | Entity-to-document provenance from ingest |
+| `MENTIONED_IN` | Entity-to-turn provenance for conversation memory |
 | `INGESTED_IN` | Document-to-turn write provenance |
-| `SAME_AS` | Entity-resolution link |
+| `HAS_TURN` | Conversation-to-turn containment |
+| `ASSERTS` | Document/turn source to raw assertion |
+| `MENTIONS_CHUNK` | Assertion-to-chunk provenance |
+| `SUBJECT_ENTITY` | Assertion subject binding |
+| `OBJECT_ENTITY` | Assertion object binding |
+| `SUPPORTS` | Assertion to normalized memory fact |
+| `AS_SUBJECT` | Entity to memory fact subject binding |
+| `AS_OBJECT` | Memory fact to entity object binding |
+| `MEMORY_REL` | Traversable, current fact edge used by retrieval |
+| `SAME_AS` | Alias-to-canonical entity resolution link |
 
-`RELATES_TO` edges carry the important memory properties:
+The redesigned graph separates raw extraction from queryable memory:
 
-- `type`: canonical relationship type, such as `WORKS_FOR`, `LEADS`, or `USES`
-- `subtype`: optional natural-language qualifier for richer semantics
-- `confidence`: extraction confidence
-- `source_docs`: provenance trail
-- `valid_from` and `valid_until`: temporal validity
-- `quantity_value`, `quantity_unit`, `quantity_kind`, `time_scope`: numeric and
-  temporal qualifiers
+- `Assertion` stores the source-anchored statement exactly as extracted.
+- `MemoryFact` stores the normalized family/subtype form used by ranking,
+  supersession, and traversal.
+- `MEMORY_REL` is the live graph edge the retriever expands across. It carries
+  the current fact state plus the normalized family metadata.
 
-Quantified relation fields preserve facts such as:
-
-- "Eric watched 8 hours of Netflix today"
-- "Maya owns three bikes"
-- "The contract is worth $500"
-- "The team meets twice per week"
-
-These stay attached to the graph edge instead of being lost during
-subject-predicate-object extraction.
+This split preserves provenance while avoiding the old one-edge-does-everything
+model. A single source can yield multiple assertions, and a single assertion
+can support a normalized fact that later gets superseded without losing the
+original evidence trail.
 
 ### Qdrant
 
@@ -122,18 +126,25 @@ path directly.
 
 ## Supersession Model
 
-Landscape supports temporal updates through valid-time properties on relation
-edges. When a new fact conflicts with a live functional relationship, the old
-edge receives `valid_until` and the new edge becomes current.
+Supersession is modeled at the `MemoryFact` layer, not on raw assertions.
+`Assertion` records remain immutable source evidence. When a newer extraction
+conflicts with an existing current fact, Landscape creates a new versioned
+`MemoryFact`, marks the prior version superseded, and keeps historical
+`MEMORY_REL` edges with `current = false` while traversal only follows the
+current edges.
 
-Only functional relationship types trigger this behavior by default. For
-example, `WORKS_FOR` and `REPORTS_TO` are treated as at-most-one-current-value
-per subject, while `USES`, `APPROVED`, and `LOCATED_IN` are additive because a
-project can use several tools, a person can approve several items, and an
-organization can have several locations.
+This keeps provenance intact while ensuring retrieval only walks live facts.
+Non-conflicting facts remain additive, and superseded versions stay available
+for audit and temporal reasoning without appearing in the current graph view.
 
-This avoids a common graph-memory failure mode where a second true fact
-incorrectly deletes or hides the first true fact.
+Negated facts ("Alice does not work for Acme") are stored as distinct
+`MemoryFact` nodes with `negated=true` rather than being dropped or merged
+with their positive counterparts. For non-additive families, a negated
+assertion triggers cross-polarity supersession, retiring the live positive
+fact. For additive families, the same slot-match logic applies per
+subject-object pair. The `negated` flag propagates onto `MEMORY_REL` edges so
+callers can distinguish "Alice works for Acme" from "Alice does not work for
+Acme" during retrieval.
 
 ## Relationship Vocabulary
 
@@ -148,7 +159,7 @@ Examples:
 | `EMPLOYED_BY` | `WORKS_FOR` |
 | `MANAGES` | `LEADS` |
 | `PART_OF` | `MEMBER_OF` |
-| `BUILT_WITH` | `USES` |
+| `BUILT_ON` | `USES` |
 
 Unknown relationship types are preserved rather than dropped. That protects
 novel semantics, but it also means unknown near-synonyms may not participate in
