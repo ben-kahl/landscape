@@ -54,5 +54,6 @@ async def persist_assertion_and_maybe_promote(
         time_scope=normalized.time_scope,
         confidence=payload.confidence,
         assertion_id=assertion_id,
+        negated=normalized.negated,
     )
     return PersistenceResult(assertion_id=assertion_id, fact_id=fact_id, outcome=outcome)

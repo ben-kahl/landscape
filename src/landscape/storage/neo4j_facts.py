@@ -49,6 +49,7 @@ async def _create_memory_fact_version_in_tx(
     time_scope: str | None,
     confidence: float,
     assertion_id: str,
+    negated: bool,
     now: str,
 ) -> str:
     family_cfg = FAMILY_REGISTRY[family]
@@ -57,6 +58,7 @@ async def _create_memory_fact_version_in_tx(
         subject_entity_id,
         object_entity_id,
         subtype,
+        negated=negated,
         value_text=value_text,
         value_number=value_number,
         value_unit=value_unit,
@@ -68,6 +70,7 @@ async def _create_memory_fact_version_in_tx(
         subject_entity_id,
         object_entity_id,
         subtype,
+        negated=False,
         value_text=value_text,
         value_number=value_number,
         value_unit=value_unit,
@@ -85,6 +88,7 @@ async def _create_memory_fact_version_in_tx(
                       fact.fact_key = $fact_key,
                       fact.slot_key = $slot_key,
                       fact.subtype = $subtype,
+                      fact.negated = $negated,
                       fact.value_text = $value_text,
                       fact.value_number = $value_number,
                       fact.value_unit = $value_unit,
@@ -128,6 +132,7 @@ async def _create_memory_fact_version_in_tx(
         fact_key=fkey,
         slot_key=skey,
         subtype=subtype,
+        negated=negated,
         value_text=value_text,
         value_number=value_number,
         value_unit=value_unit,
@@ -161,6 +166,7 @@ async def _materialize_memory_rel_in_tx(tx, memory_fact_id: str, now: str) -> No
                 r.valid_until = null,
                 r.confidence_agg = fact.confidence_agg,
                 r.subtype = fact.subtype,
+                r.negated = coalesce(fact.negated, false),
                 r.subject_entity_id = subject.id,
                 r.object_entity_id = object.id,
                 r.access_count = coalesce(fact.access_count, 0),
@@ -192,6 +198,7 @@ async def create_memory_fact_version(
     time_scope: str | None = None,
     confidence: float,
     assertion_id: str,
+    negated: bool = False,
 ) -> str:
     subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
     object_entity_id = (
@@ -220,6 +227,7 @@ async def create_memory_fact_version(
                 time_scope=time_scope,
                 confidence=confidence,
                 assertion_id=assertion_id,
+                negated=negated,
                 now=datetime.now(UTC).isoformat(),
             )
             await tx.commit()
@@ -246,6 +254,7 @@ async def upsert_memory_fact_from_assertion(
     time_scope: str | None = None,
     confidence: float,
     assertion_id: str,
+    negated: bool = False,
 ) -> tuple[str, str]:
     family_cfg = FAMILY_REGISTRY[family]
     subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
@@ -255,7 +264,7 @@ async def upsert_memory_fact_from_assertion(
         else None
     )
     if family_cfg.slot_mode != "additive":
-        family_key = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype)
+        family_key = slot_key(family_cfg, subject_entity_id, object_entity_id, subtype, negated=False)
         driver = get_driver()
         async with driver.session() as session:
             current_result = await session.run(
@@ -286,6 +295,7 @@ async def upsert_memory_fact_from_assertion(
             time_scope=time_scope,
             confidence=confidence,
             assertion_id=assertion_id,
+            negated=negated,
         )
         if fact_id in current_fact_ids:
             return fact_id, "reinforced"
@@ -293,11 +303,13 @@ async def upsert_memory_fact_from_assertion(
             return fact_id, "superseded"
         return fact_id, "created"
 
+    # Additive path (cross-polarity supersession handled explicitly in Task 5)
     family_key = fact_key(
         family_cfg,
         subject_entity_id,
         object_entity_id,
         subtype,
+        negated=negated,
         value_text=value_text,
         value_number=value_number,
         value_unit=value_unit,
@@ -331,6 +343,7 @@ async def upsert_memory_fact_from_assertion(
         time_scope=time_scope,
         confidence=confidence,
         assertion_id=assertion_id,
+        negated=negated,
     )
     await materialize_memory_rel(fact_id)
     return fact_id, "reinforced" if existing_record is not None else "created"
@@ -366,6 +379,7 @@ async def supersede_single_current_fact(
     time_scope: str | None = None,
     confidence: float,
     assertion_id: str,
+    negated: bool = False,
 ) -> str:
     subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
     object_entity_id = (
@@ -381,6 +395,7 @@ async def supersede_single_current_fact(
         subject_entity_id,
         object_entity_id,
         subtype,
+        negated=False,
         value_text=value_text,
         value_number=value_number,
         value_unit=value_unit,
@@ -431,6 +446,7 @@ async def supersede_single_current_fact(
                 time_scope=time_scope,
                 confidence=confidence,
                 assertion_id=assertion_id,
+                negated=negated,
                 now=now,
             )
 

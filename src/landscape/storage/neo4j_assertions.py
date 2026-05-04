@@ -27,6 +27,7 @@ async def merge_assertion(payload: AssertionPayload) -> str:
             "quantity_unit": payload.quantity_unit,
             "quantity_kind": payload.quantity_kind,
             "time_scope": payload.time_scope,
+            "negated": payload.negated,
         },
         chunk_refs=payload.chunk_refs,
     )
@@ -43,6 +44,7 @@ async def merge_assertion(payload: AssertionPayload) -> str:
                           a.family_candidate = $family_candidate,
                           a.confidence = $confidence,
                           a.subtype = $subtype,
+                          a.negated = $negated,
                           a.value_text = $value_text,
                           a.value_number = $value_number,
                           a.value_unit = $value_unit,
@@ -64,6 +66,7 @@ async def merge_assertion(payload: AssertionPayload) -> str:
             family_candidate=payload.family_candidate,
             confidence=payload.confidence,
             subtype=payload.subtype,
+            negated=payload.negated,
             value_text=payload.value_text,
             value_number=payload.value_number,
             value_unit=payload.value_unit,

@@ -553,3 +553,68 @@ async def test_bfs_expand_memory_rel_uses_current_edges_only(neo4j_driver):
     assert row["edge_access_counts"] == [1]
     assert row["edge_last_accessed"][0] is not None
     assert all(row["target_id"] != acme_id for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_subject_keyed_cross_polarity_supersession(neo4j_driver):
+    """Positive WORKS_FOR then negative WORKS_FOR should supersede the positive."""
+    doc_id, _ = await neo4j_store.merge_document("hash-xpol-1", "xpol-test", "text")
+    alice = await neo4j_store.merge_entity(
+        "Alice", "Person", "xpol-test", 0.9, doc_id, "test"
+    )
+    acme = await neo4j_store.merge_entity(
+        "Acme", "Organization", "xpol-test", 0.9, doc_id, "test"
+    )
+
+    positive_payload = AssertionPayload(
+        source_kind="document",
+        source_id="xpol-test",
+        raw_subject_text="Alice",
+        raw_relation_text="works for",
+        raw_object_text="Acme",
+        confidence=0.9,
+        family_candidate="WORKS_FOR",
+        negated=False,
+    )
+    pos_result = await persist_assertion_and_maybe_promote(
+        positive_payload,
+        source_node_id=doc_id,
+        source_kind="document",
+        subject_entity_id=alice,
+        object_entity_id=acme,
+        chunk_ids=[],
+    )
+    assert pos_result.outcome == "created"
+
+    negative_payload = AssertionPayload(
+        source_kind="document",
+        source_id="xpol-test",
+        raw_subject_text="Alice",
+        raw_relation_text="does not work for",
+        raw_object_text="Acme",
+        confidence=0.9,
+        family_candidate="WORKS_FOR",
+        negated=True,
+    )
+    neg_result = await persist_assertion_and_maybe_promote(
+        negative_payload,
+        source_node_id=doc_id,
+        source_kind="document",
+        subject_entity_id=alice,
+        object_entity_id=acme,
+        chunk_ids=[],
+    )
+    assert neg_result.outcome == "superseded"
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (f:MemoryFact {family: 'WORKS_FOR'})
+            WHERE f.valid_until IS NULL
+            RETURN f.negated AS negated, f.id AS fact_id
+            """,
+        )
+        current_facts = [dict(r) async for r in result]
+
+    assert len(current_facts) == 1
+    assert current_facts[0]["negated"] is True
