@@ -749,3 +749,55 @@ def test_ingest_log_sink_writes_jsonl_to_process_scoped_file(tmp_path):
     assert first["event"] == "ingest_started"
     assert second["event"] == "ingest_completed"
     assert second["title"] == "sink-doc"
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_ingest_passes_negated_to_assertion_payload():
+    """Negated relation extracted from a chunk should produce AssertionPayload(negated=True)."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from landscape import pipeline
+
+    negated_relation = MagicMock()
+    negated_relation.subject = "Alice"
+    negated_relation.object = "Acme"
+    negated_relation.relation_type = "WORKS_FOR"
+    negated_relation.confidence = 0.9
+    negated_relation.subtype = None
+    negated_relation.value_text = None
+    negated_relation.value_number = None
+    negated_relation.value_unit = None
+    negated_relation.value_kind = None
+    negated_relation.value_time = None
+    negated_relation.quantity_value = None
+    negated_relation.quantity_unit = None
+    negated_relation.quantity_kind = None
+    negated_relation.time_scope = None
+    negated_relation.negated = True
+
+    extraction = MagicMock(entities=[], relations=[negated_relation])
+    captured_payloads = []
+
+    async def capture_persist(payload, **kwargs):
+        captured_payloads.append(payload)
+        from landscape.memory_graph.service import PersistenceResult
+        return PersistenceResult(assertion_id="a1", fact_id=None, outcome="created")
+
+    fake_chunk = MagicMock(text="Alice does not work for Acme", index=0)
+    with patch.object(pipeline, "chunk_text", return_value=[fake_chunk]), \
+         patch.object(pipeline.neo4j_store, "merge_document",
+                      AsyncMock(return_value=("doc1", True))), \
+         patch.object(pipeline.neo4j_store, "create_chunk",
+                      AsyncMock(return_value="ch0")), \
+         patch.object(pipeline.encoder, "embed_documents",
+                      side_effect=lambda texts: [[0.0] * 4 for _ in texts]), \
+         patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()), \
+         patch.object(pipeline.llm, "extract", return_value=extraction), \
+         patch("landscape.pipeline.coerce_rel_type",
+               side_effect=lambda rel_type: (rel_type, 1.0)), \
+         patch("landscape.pipeline.persist_assertion_and_maybe_promote",
+               AsyncMock(side_effect=capture_persist)):
+        await pipeline.ingest(text="Alice does not work for Acme", title="t")
+
+    assert len(captured_payloads) == 1
+    assert captured_payloads[0].negated is True

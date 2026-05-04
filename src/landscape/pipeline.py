@@ -300,6 +300,7 @@ async def ingest(
                 quantity_unit=relation.quantity_unit,
                 quantity_kind=relation.quantity_kind,
                 time_scope=relation.time_scope,
+                negated=relation.negated,
                 chunk_refs=[(cid, None, None) for cid in chunk_ids],
             )
             promotion = await persist_assertion_and_maybe_promote(
