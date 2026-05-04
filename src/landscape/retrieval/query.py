@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import perf_counter
+from typing import Literal
 
 from landscape.embeddings import encoder
 from landscape.observability import RetrievalLogContext, create_retrieval_log_context
@@ -21,6 +22,27 @@ _CHUNK_ENTITY_SIM_DISCOUNT = 0.7
 
 
 @dataclass
+class PathNode:
+    name: str
+    type: str
+
+
+@dataclass
+class PathEdge:
+    type: str
+    negated: bool = False
+    subtype: str | None = None
+    memory_fact_id: str | None = None
+    quantities: dict[str, object | None] = field(default_factory=dict)
+
+
+@dataclass
+class EntityPath:
+    nodes: list[PathNode] = field(default_factory=list)
+    edges: list[PathEdge] = field(default_factory=list)
+
+
+@dataclass
 class RetrievedEntity:
     entity_id: str
     name: str
@@ -31,11 +53,8 @@ class RetrievedEntity:
     edge_confidence: float
     score: float
     path_edge_ids: list[str] = field(default_factory=list)
-    path_edge_types: list[str] = field(default_factory=list)
-    path_edge_subtypes: list[str | None] = field(default_factory=list)
-    path_edge_negated: list[bool] = field(default_factory=list)
-    path_edge_quantities: list[dict[str, object | None]] = field(default_factory=list)
-    path_memory_fact_ids: list[str] = field(default_factory=list)
+    path: EntityPath = field(default_factory=EntityPath)
+    retrieval_mode: Literal["vector", "graph"] = "vector"
     memory_facts: list[dict[str, object]] = field(default_factory=list)
     supporting_assertions: list[dict[str, object]] = field(default_factory=list)
 
