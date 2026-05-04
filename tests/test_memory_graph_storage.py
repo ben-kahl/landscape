@@ -619,3 +619,159 @@ async def test_subject_keyed_cross_polarity_supersession(neo4j_driver):
 
     assert len(current_facts) == 1
     assert current_facts[0]["negated"] is True
+
+
+@pytest.mark.asyncio
+async def test_additive_entity_cross_polarity_supersession(neo4j_driver):
+    """Positive USES then negative USES on same subject+object should supersede the positive."""
+    doc_id, _ = await neo4j_store.merge_document("hash-add-ent", "add-ent-test", "text")
+    project = await neo4j_store.merge_entity(
+        "Project X", "Project", "add-ent-test", 0.9, doc_id, "test"
+    )
+    redis = await neo4j_store.merge_entity(
+        "Redis", "Technology", "add-ent-test", 0.9, doc_id, "test"
+    )
+    kafka = await neo4j_store.merge_entity(
+        "Kafka", "Technology", "add-ent-test", 0.9, doc_id, "test"
+    )
+
+    pos_redis = await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document", source_id="add-ent-test",
+            raw_subject_text="Project X", raw_relation_text="uses", raw_object_text="Redis",
+            confidence=0.9, family_candidate="USES", negated=False,
+        ),
+        source_node_id=doc_id, source_kind="document",
+        subject_entity_id=project, object_entity_id=redis, chunk_ids=[],
+    )
+    pos_kafka = await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document", source_id="add-ent-test",
+            raw_subject_text="Project X", raw_relation_text="uses", raw_object_text="Kafka",
+            confidence=0.9, family_candidate="USES", negated=False,
+        ),
+        source_node_id=doc_id, source_kind="document",
+        subject_entity_id=project, object_entity_id=kafka, chunk_ids=[],
+    )
+    assert pos_redis.outcome == "created"
+    assert pos_kafka.outcome == "created"
+
+    neg_redis = await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document", source_id="add-ent-test",
+            raw_subject_text="Project X", raw_relation_text="no longer uses",
+            raw_object_text="Redis", confidence=0.9, family_candidate="USES", negated=True,
+        ),
+        source_node_id=doc_id, source_kind="document",
+        subject_entity_id=project, object_entity_id=redis, chunk_ids=[],
+    )
+    assert neg_redis.outcome == "superseded"
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (e:Entity {id: $project_id})-[:AS_SUBJECT]->(f:MemoryFact {family: 'USES'})
+            WHERE f.valid_until IS NULL
+            RETURN f.negated AS negated, f.object_entity_id AS obj
+            ORDER BY f.object_entity_id
+            """,
+            project_id=project,
+        )
+        current = [dict(r) async for r in result]
+
+    assert len(current) == 2
+    redis_fact = next(f for f in current if f["obj"] == redis)
+    kafka_fact = next(f for f in current if f["obj"] == kafka)
+    assert redis_fact["negated"] is True
+    assert kafka_fact["negated"] is False
+
+
+@pytest.mark.asyncio
+async def test_additive_value_cross_polarity_supersession(neo4j_driver):
+    """Positive RECOMMENDED then negative RECOMMENDED on same subject+value should supersede."""
+    doc_id, _ = await neo4j_store.merge_document("hash-add-val", "add-val-test", "text")
+    team = await neo4j_store.merge_entity(
+        "Platform Team", "Team", "add-val-test", 0.9, doc_id, "test"
+    )
+
+    pos = await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document", source_id="add-val-test",
+            raw_subject_text="Platform Team", raw_relation_text="recommended",
+            raw_object_text="Redis", confidence=0.9, family_candidate="RECOMMENDED",
+            value_text="Redis", negated=False,
+        ),
+        source_node_id=doc_id, source_kind="document",
+        subject_entity_id=team, object_entity_id=None, chunk_ids=[],
+    )
+    assert pos.outcome == "created"
+
+    neg = await persist_assertion_and_maybe_promote(
+        AssertionPayload(
+            source_kind="document", source_id="add-val-test",
+            raw_subject_text="Platform Team", raw_relation_text="no longer recommends",
+            raw_object_text="Redis", confidence=0.9, family_candidate="RECOMMENDED",
+            value_text="Redis", negated=True,
+        ),
+        source_node_id=doc_id, source_kind="document",
+        subject_entity_id=team, object_entity_id=None, chunk_ids=[],
+    )
+    assert neg.outcome == "superseded"
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (e:Entity {id: $team_id})-[:AS_SUBJECT]->(f:MemoryFact {family: 'RECOMMENDED'})
+            WHERE f.valid_until IS NULL
+            RETURN f.negated AS negated
+            """,
+            team_id=team,
+        )
+        current = [dict(r) async for r in result]
+
+    assert len(current) == 1
+    assert current[0]["negated"] is True
+
+
+@pytest.mark.asyncio
+async def test_additive_coexistence_unaffected_by_negation(neo4j_driver):
+    """Negating USES Redis must not affect the live USES Kafka fact."""
+    doc_id, _ = await neo4j_store.merge_document("hash-coex", "coex-test", "text")
+    project = await neo4j_store.merge_entity(
+        "Project Y", "Project", "coex-test", 0.9, doc_id, "test"
+    )
+    redis = await neo4j_store.merge_entity(
+        "Redis", "Technology", "coex-test", 0.9, doc_id, "test"
+    )
+    kafka = await neo4j_store.merge_entity(
+        "Kafka", "Technology", "coex-test", 0.9, doc_id, "test"
+    )
+
+    for obj, neg in [(redis, False), (kafka, False), (redis, True)]:
+        await persist_assertion_and_maybe_promote(
+            AssertionPayload(
+                source_kind="document", source_id="coex-test",
+                raw_subject_text="Project Y", raw_relation_text="uses",
+                raw_object_text="target", confidence=0.9,
+                family_candidate="USES", negated=neg,
+            ),
+            source_node_id=doc_id, source_kind="document",
+            subject_entity_id=project, object_entity_id=obj, chunk_ids=[],
+        )
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (e:Entity {id: $project_id})-[:AS_SUBJECT]->(f:MemoryFact {family: 'USES'})
+            WHERE f.valid_until IS NULL
+            RETURN f.negated AS negated, f.object_entity_id AS obj
+            """,
+            project_id=project,
+        )
+        current = [dict(r) async for r in result]
+
+    assert len(current) == 2
+    kafka_fact = next(f for f in current if f["obj"] == kafka)
+    redis_fact = next(f for f in current if f["obj"] == redis)
+    assert kafka_fact["negated"] is False
+    assert redis_fact["negated"] is True

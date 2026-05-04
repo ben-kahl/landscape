@@ -303,7 +303,78 @@ async def upsert_memory_fact_from_assertion(
             return fact_id, "superseded"
         return fact_id, "created"
 
-    # Additive path (cross-polarity supersession handled explicitly in Task 5)
+    # Additive path with cross-polarity supersession
+    opposite_negated = not negated
+    driver = get_driver()
+    now = datetime.now(UTC).isoformat()
+
+    # Check for a live opposite-polarity fact on the same (subject, family, object/value)
+    # and retire it if found.
+    opposite_fact_id: str | None = None
+    async with driver.session() as session:
+        if family_cfg.object_kind == "entity" and object_entity_id is not None:
+            opp_result = await session.run(
+                """
+                MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(old:MemoryFact {family: $family})
+                MATCH (old)-[:AS_OBJECT]->(object:Entity {id: $object_entity_id})
+                WHERE old.valid_until IS NULL
+                  AND coalesce(old.negated, false) = $opposite_negated
+                RETURN old.id AS old_fact_id
+                LIMIT 1
+                """,
+                subject_entity_id=subject_entity_id,
+                family=family,
+                object_entity_id=object_entity_id,
+                opposite_negated=opposite_negated,
+            )
+        elif family_cfg.object_kind == "value" and (value_text is not None or value_number is not None):
+            opp_result = await session.run(
+                """
+                MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(old:MemoryFact {family: $family})
+                WHERE old.valid_until IS NULL
+                  AND coalesce(old.negated, false) = $opposite_negated
+                  AND (
+                    ($value_text IS NOT NULL AND old.value_text = $value_text) OR
+                    ($value_number IS NOT NULL AND old.value_number = $value_number)
+                  )
+                RETURN old.id AS old_fact_id
+                LIMIT 1
+                """,
+                subject_entity_id=subject_entity_id,
+                family=family,
+                opposite_negated=opposite_negated,
+                value_text=value_text,
+                value_number=value_number,
+            )
+        else:
+            opp_result = None
+
+        if opp_result is not None:
+            opp_record = await opp_result.single()
+            opposite_fact_id = opp_record["old_fact_id"] if opp_record is not None else None
+
+    if opposite_fact_id is not None:
+        async with driver.session() as session:
+            tx = await session.begin_transaction()
+            try:
+                await tx.run(
+                    """
+                    MATCH (old:MemoryFact {id: $old_fact_id})
+                    SET old.valid_until = $now,
+                        old.updated_at = $now
+                    WITH old
+                    OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: $old_fact_id}]-()
+                    SET r.valid_until = $now,
+                        r.updated_at = $now
+                    """,
+                    old_fact_id=opposite_fact_id,
+                    now=now,
+                )
+                await tx.commit()
+            except Exception:
+                await tx.rollback()
+                raise
+
     family_key = fact_key(
         family_cfg,
         subject_entity_id,
@@ -316,7 +387,6 @@ async def upsert_memory_fact_from_assertion(
         value_kind=value_kind,
         value_time=value_time,
     )
-    driver = get_driver()
     async with driver.session() as session:
         existing_result = await session.run(
             """
@@ -346,7 +416,11 @@ async def upsert_memory_fact_from_assertion(
         negated=negated,
     )
     await materialize_memory_rel(fact_id)
-    return fact_id, "reinforced" if existing_record is not None else "created"
+    if existing_record is not None:
+        return fact_id, "reinforced"
+    if opposite_fact_id is not None:
+        return fact_id, "superseded"
+    return fact_id, "created"
 
 
 async def materialize_memory_rel(memory_fact_id: str) -> None:
