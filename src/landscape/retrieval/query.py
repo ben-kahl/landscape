@@ -13,6 +13,12 @@ from landscape.retrieval.scoring import (
 )
 from landscape.storage import neo4j_store, qdrant_store
 
+# Entity vectors directly match the query; chunk→entity linkage is coarser
+# (document-level, many entities per chunk). Discount chunk-propagated similarity
+# so direct entity hits retain precedence in the score. max() means entities that
+# ARE in the entity search results keep their full score regardless.
+_CHUNK_ENTITY_SIM_DISCOUNT = 0.7
+
 
 @dataclass
 class RetrievedEntity:
@@ -186,7 +192,9 @@ async def retrieve(
                 (chunk_score_by_id.get(cid, 0.0) for cid in src_chunk_ids),
                 default=0.0,
             )
-            seed_sims[entity_id] = max(seed_sims.get(entity_id, 0.0), best)
+            seed_sims[entity_id] = max(
+                seed_sims.get(entity_id, 0.0), best * _CHUNK_ENTITY_SIM_DISCOUNT
+            )
         log.emit(
             "chunk_entity_propagation_completed",
             propagated_entity_count=len(chunk_entities),
