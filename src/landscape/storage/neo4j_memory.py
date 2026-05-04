@@ -24,7 +24,7 @@ async def get_memory_fact_explanation(memory_fact_id: str) -> dict[str, Any] | N
                    fact.subtype AS subtype,
                    fact.support_count AS support_count,
                    fact.confidence_agg AS confidence_agg,
-                   fact.negated AS negated,
+                   coalesce(fact.negated, false) AS negated,
                    subject.id AS subject_entity_id,
                    subject.name AS subject_name,
                    subject.type AS subject_type,

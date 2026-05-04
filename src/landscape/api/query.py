@@ -34,6 +34,7 @@ class QueryResultItem(BaseModel):
     path_edge_types: list[str]
     path_edge_subtypes: list[str | None] = Field(default_factory=list)
     path_edge_quantities: list[dict[str, object | None]] = Field(default_factory=list)
+    path_edge_negated: list[bool] = Field(default_factory=list)
     memory_facts: list[dict[str, object]] = Field(default_factory=list)
     supporting_assertions: list[dict[str, object]] = Field(default_factory=list)
 
@@ -90,6 +91,7 @@ async def query_endpoint(req: QueryRequest, auth: AgentPrincipal) -> QueryRespon
                 path_edge_types=r.path_edge_types,
                 path_edge_subtypes=r.path_edge_subtypes,
                 path_edge_quantities=r.path_edge_quantities,
+                path_edge_negated=r.path_edge_negated,
                 memory_facts=r.memory_facts,
                 supporting_assertions=r.supporting_assertions,
             )
