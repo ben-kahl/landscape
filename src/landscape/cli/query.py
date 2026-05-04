@@ -48,11 +48,29 @@ async def handle_query(args: argparse.Namespace) -> int:
             print("No results.")
             return 0
         for index, item in enumerate(result.results, start=1):
-            path = " -> ".join(item.path_edge_types) if item.path_edge_types else "(seed)"
+            if item.path_edge_types:
+                edges = item.path_edge_types
+                negated = item.path_edge_negated or [False] * len(edges)
+                path_parts: list[str] = []
+                for edge, neg in zip(edges, negated):
+                    label = f"NOT {edge}" if neg else edge
+                    path_parts.append(f"-[{label}]->")
+                path_parts.append(f"{item.name} [{item.type}]")
+                path_str = f"(seed) " + " ".join(path_parts)
+            else:
+                path_str = f"(seed) {item.name} [{item.type}]"
+            neg_flag = " [NEGATED]" if any(item.path_edge_negated) else ""
             print(
-                f"{index}. {item.name} [{item.type}] "
-                f"score={item.score:.4f} distance={item.distance} path={path}"
+                f"{index}. {item.name} [{item.type}]{neg_flag} "
+                f"score={item.score:.4f} distance={item.distance}"
             )
+            print(f"   path: {path_str}")
+        if result.chunks:
+            print()
+            print("Relevant chunks:")
+            for chunk in result.chunks:
+                preview = chunk.text[:120].replace("\n", " ")
+                print(f"  [{chunk.source_doc}] {preview}")
         return 0
     finally:
         await close_runtime(neo4j_store, qdrant_store)

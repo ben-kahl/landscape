@@ -86,18 +86,18 @@ async def vector_only_retrieve(query: str, limit: int) -> list[dict]:
     seen: dict[str, float] = {}
     for h in entity_hits:
         p = h.payload or {}
-        nid = p.get("neo4j_node_id")
+        nid = p.get("entity_id")
         if nid:
             seen[nid] = max(seen.get(nid, 0.0), float(h.score))
 
     chunk_ids = [
-        h.payload["chunk_neo4j_id"]
+        h.payload["chunk_id"]
         for h in chunk_hits
-        if h.payload and h.payload.get("chunk_neo4j_id")
+        if h.payload and h.payload.get("chunk_id")
     ]
     chunk_ents = await neo4j_store.get_entities_from_chunks(chunk_ids)
     for ent in chunk_ents:
-        seen.setdefault(ent["eid"], 0.0)
+        seen.setdefault(ent["entity_id"], 0.0)
 
     if not seen:
         return []
@@ -105,8 +105,8 @@ async def vector_only_retrieve(query: str, limit: int) -> list[dict]:
     driver = neo4j_store.get_driver()
     async with driver.session() as session:
         result = await session.run(
-            "MATCH (e:Entity) WHERE elementId(e) IN $ids AND e.canonical = true "
-            "RETURN elementId(e) AS eid, e.name AS name",
+            "MATCH (e:Entity) WHERE e.id IN $ids AND e.canonical = true "
+            "RETURN e.id AS eid, e.name AS name",
             ids=list(seen.keys()),
         )
         rows = [dict(r) async for r in result]
@@ -122,8 +122,8 @@ async def graph_only_retrieve(query: str, limit: int) -> list[dict]:
         result = await session.run(
             "MATCH (e:Entity) WHERE toLower(e.name) CONTAINS toLower($q) "
             "AND e.canonical = true "
-            "RETURN elementId(e) AS eid, e.name AS name LIMIT 5",
-            q=query.split()[-1],  # crude last-word heuristic
+            "RETURN e.id AS eid, e.name AS name LIMIT 5",
+            q=query.split()[-1].rstrip("?!.,;:"),
         )
         seeds = [dict(r) async for r in result]
 
@@ -131,7 +131,7 @@ async def graph_only_retrieve(query: str, limit: int) -> list[dict]:
         return []
 
     seed_ids = [s["eid"] for s in seeds]
-    expansions = await neo4j_store.bfs_expand(seed_ids, max_hops=3)
+    expansions = await neo4j_store.bfs_expand_memory_rel(seed_ids, max_hops=3)
 
     seen: dict[str, str] = {s["eid"]: s["name"] for s in seeds}
     for row in expansions:
