@@ -609,10 +609,11 @@ async def test_subject_keyed_cross_polarity_supersession(neo4j_driver):
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
-            MATCH (f:MemoryFact {family: 'WORKS_FOR'})
+            MATCH (e:Entity {id: $alice_id})-[:AS_SUBJECT]->(f:MemoryFact {family: 'WORKS_FOR'})
             WHERE f.valid_until IS NULL
             RETURN f.negated AS negated, f.id AS fact_id
             """,
+            alice_id=alice,
         )
         current_facts = [dict(r) async for r in result]
 
