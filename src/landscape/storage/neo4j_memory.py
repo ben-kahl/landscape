@@ -231,12 +231,16 @@ async def bfs_expand_memory_rel(
       AND ALL(r IN rels WHERE r.valid_until IS NULL)
     RETURN
       seed.id AS seed_id,
+      seed.name AS seed_name,
+      seed.type AS seed_type,
       target.id AS target_id,
       target.name AS target_name,
       target.type AS target_type,
       coalesce(target.access_count, 0) AS target_access_count,
       target.last_accessed AS target_last_accessed,
       length(path) AS distance,
+      [n IN nodes(path) | n.name] AS path_node_names,
+      [n IN nodes(path) | n.type] AS path_node_types,
       [r IN rels | r.memory_fact_id] AS path_memory_fact_ids,
       [r IN rels | elementId(r)] AS edge_ids,
       [r IN rels | r.family] AS path_edge_types,

@@ -54,3 +54,12 @@ def test_retrieved_entity_graph_mode():
     )
     assert entity.retrieval_mode == "graph"
     assert entity.path.edges[0].type == "USES"
+
+
+@pytest.mark.unit
+def test_entity_path_invariant_violated_raises():
+    with pytest.raises(ValueError, match="EntityPath invariant violated"):
+        EntityPath(
+            nodes=[PathNode("Aurora", "PROJECT")],
+            edges=[PathEdge(type="USES"), PathEdge(type="LEADS")],
+        )
