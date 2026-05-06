@@ -19,7 +19,7 @@ def render_path(path: EntityPath) -> str:
 
     parts = [f"({path.nodes[0].name})"]
     for edge, node in zip(path.edges, path.nodes[1:]):
-        label = f"NOT {edge.type}" if edge.negated else edge.type
+        label = f"NOT {edge.type}" if edge.negated else edge.type  # subtype intentionally omitted; available in structured path
         parts.append(f"-[{label}]->")
         parts.append(f"{node.name} [{node.type}]")
 

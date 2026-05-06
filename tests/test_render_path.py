@@ -51,3 +51,12 @@ def test_render_path_negated_edge():
 def test_render_path_empty_path():
     path = EntityPath(nodes=[], edges=[])
     assert render_path(path) == "(unknown)"
+
+
+@pytest.mark.unit
+def test_render_path_ignores_subtype():
+    path = EntityPath(
+        nodes=[PathNode("Eric", "PERSON"), PathNode("Netflix", "TECHNOLOGY")],
+        edges=[PathEdge(type="DISCUSSION", subtype="watched")],
+    )
+    assert render_path(path) == "(Eric) -[DISCUSSION]-> Netflix [TECHNOLOGY]"
