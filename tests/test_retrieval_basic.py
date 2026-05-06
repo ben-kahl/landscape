@@ -301,6 +301,15 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
                     "object_type": "TECHNOLOGY",
                     "memory_rel_valid_until": None,
                     "memory_rel_current": True,
+                    "value_text": None,
+                    "value_number": None,
+                    "value_unit": None,
+                    "value_kind": None,
+                    "value_time": None,
+                    "quantity_value": 10,
+                    "quantity_unit": "hour",
+                    "quantity_kind": "duration",
+                    "time_scope": "last_month",
                 }
             ],
             [
@@ -355,6 +364,17 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
     assert netflix.path.nodes[0].name == "Eric"
     assert netflix.path.nodes[1].name == "Netflix"
     assert netflix.retrieval_mode == "graph"
+    assert netflix.path.edges[0].quantities == {
+        "value_text": None,
+        "value_number": None,
+        "value_unit": None,
+        "value_kind": None,
+        "value_time": None,
+        "quantity_value": 10,
+        "quantity_unit": "hour",
+        "quantity_kind": "duration",
+        "time_scope": "last_month",
+    }
     assert netflix.memory_facts == [
         {
             "memory_fact_id": "fact-1",
@@ -374,6 +394,15 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
             "object_type": "TECHNOLOGY",
             "memory_rel_valid_until": None,
             "memory_rel_current": True,
+            "value_text": None,
+            "value_number": None,
+            "value_unit": None,
+            "value_kind": None,
+            "value_time": None,
+            "quantity_value": 10,
+            "quantity_unit": "hour",
+            "quantity_kind": "duration",
+            "time_scope": "last_month",
         }
     ]
     assert netflix.supporting_assertions == [

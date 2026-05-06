@@ -478,7 +478,7 @@ async def retrieve(
                 assertions_by_fact_id.setdefault(str(fact_id), []).append(assertion)
             for item in ranked:
                 edge_fact_ids = [
-                    e.memory_fact_id for e in item.path.edges if e.memory_fact_id
+                    e.memory_fact_id for e in item.path.edges if e.memory_fact_id is not None
                 ]
                 item.memory_facts = [
                     facts_by_id[fid] for fid in edge_fact_ids if fid in facts_by_id
@@ -489,7 +489,7 @@ async def retrieve(
                     for assertion in assertions_by_fact_id.get(fid, [])
                 ]
                 for edge in item.path.edges:
-                    if edge.memory_fact_id and edge.memory_fact_id in facts_by_id:
+                    if edge.memory_fact_id is not None and edge.memory_fact_id in facts_by_id:
                         fact = facts_by_id[edge.memory_fact_id]
                         edge.quantities = {k: fact.get(k) for k in _VALUE_KEYS}
             log.emit(
