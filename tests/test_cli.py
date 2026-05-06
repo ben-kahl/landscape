@@ -356,6 +356,7 @@ def test_query_command_threads_debug_flag(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "1. Project Atlas [PROJECT]" in output
     assert "via=vector" in output
+    assert "path: (Project Atlas) [direct match]" in output
 
 
 @pytest.fixture
