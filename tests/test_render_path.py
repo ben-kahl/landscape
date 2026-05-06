@@ -1,4 +1,5 @@
 import pytest
+
 from landscape.retrieval.query import EntityPath, PathEdge, PathNode
 from landscape.retrieval.render import render_path
 

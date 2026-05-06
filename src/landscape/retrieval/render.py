@@ -8,7 +8,8 @@ def render_path(path: EntityPath) -> str:
     Examples:
         - Direct hit (no edges): "(Qdrant) [direct match]"
         - One hop: "(Eric) -[DISCUSSION]-> Netflix [TECHNOLOGY]"
-        - Two hops: "(Project Aurora) -[USES]-> PostgreSQL [TECHNOLOGY] -[APPROVED_BY]-> Maya Chen [PERSON]"
+        - Two hops: 
+        "(Project Aurora) -[USES]-> PostgreSQL [TECHNOLOGY] -[APPROVED_BY]-> Maya Chen [PERSON]"
         - Negated edge: "(Alice) -[NOT WORKS_FOR]-> Acme Corp [ORGANIZATION]"
         - Empty path: "(unknown)"
     """
@@ -19,7 +20,8 @@ def render_path(path: EntityPath) -> str:
 
     parts = [f"({path.nodes[0].name})"]
     for edge, node in zip(path.edges, path.nodes[1:]):
-        label = f"NOT {edge.type}" if edge.negated else edge.type  # subtype intentionally omitted; available in structured path
+        # subtype intentionally omitted; available in structured path
+        label = f"NOT {edge.type}" if edge.negated else edge.type
         parts.append(f"-[{label}]->")
         parts.append(f"{node.name} [{node.type}]")
 
