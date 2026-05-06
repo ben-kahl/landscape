@@ -42,7 +42,7 @@ class EntityPath:
     edges: list[PathEdge] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if self.edges and len(self.nodes) != len(self.edges) + 1:
+        if len(self.nodes) > 0 and len(self.nodes) != len(self.edges) + 1:
             raise ValueError(
                 f"EntityPath invariant violated: {len(self.nodes)} nodes, "
                 f"{len(self.edges)} edges (expected nodes == edges + 1)"
