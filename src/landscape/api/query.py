@@ -28,9 +28,9 @@ class PathNodeModel(BaseModel):
 
 class PathEdgeModel(BaseModel):
     type: str
-    negated: bool
-    subtype: str | None
-    memory_fact_id: str | None
+    negated: bool = False
+    subtype: str | None = None
+    memory_fact_id: str | None = None
     quantities: dict[str, object | None] = Field(default_factory=dict)
 
 
