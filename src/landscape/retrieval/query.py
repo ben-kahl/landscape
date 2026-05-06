@@ -20,6 +20,11 @@ from landscape.storage import neo4j_store, qdrant_store
 # ARE in the entity search results keep their full score regardless.
 _CHUNK_ENTITY_SIM_DISCOUNT = 0.7
 
+_VALUE_KEYS = (
+    "value_text", "value_number", "value_unit", "value_kind", "value_time",
+    "quantity_value", "quantity_unit", "quantity_kind", "time_scope",
+)
+
 
 @dataclass
 class PathNode:
@@ -472,22 +477,21 @@ async def retrieve(
                     continue
                 assertions_by_fact_id.setdefault(str(fact_id), []).append(assertion)
             for item in ranked:
-                item_fact_ids = [
-                    e.memory_fact_id
-                    for e in item.path.edges
-                    if e.memory_fact_id is not None
+                edge_fact_ids = [
+                    e.memory_fact_id for e in item.path.edges if e.memory_fact_id
                 ]
                 item.memory_facts = [
-                    facts_by_id[fact_id]
-                    for fact_id in item_fact_ids
-                    if fact_id in facts_by_id
+                    facts_by_id[fid] for fid in edge_fact_ids if fid in facts_by_id
                 ]
                 item.supporting_assertions = [
                     assertion
-                    for fact_id in item_fact_ids
-                    for assertion in assertions_by_fact_id.get(fact_id, [])
+                    for fid in edge_fact_ids
+                    for assertion in assertions_by_fact_id.get(fid, [])
                 ]
-                # NOTE: edge.quantities writeback is deferred to Task 3.
+                for edge in item.path.edges:
+                    if edge.memory_fact_id and edge.memory_fact_id in facts_by_id:
+                        fact = facts_by_id[edge.memory_fact_id]
+                        edge.quantities = {k: fact.get(k) for k in _VALUE_KEYS}
             log.emit(
                 "path_hydration_completed",
                 hydrated_fact_count=len(memory_facts),
