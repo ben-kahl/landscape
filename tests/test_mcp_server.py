@@ -573,7 +573,10 @@ async def test_search_returns_results_shape(http_client):
         assert "name" in first
         assert "type" in first
         assert "score" in first
-        assert "path_edge_types" in first
+        assert "path" in first
+        assert "nodes" in first["path"]
+        assert "edges" in first["path"]
+        assert "retrieval_mode" in first
 
 
 @pytest.mark.unit
