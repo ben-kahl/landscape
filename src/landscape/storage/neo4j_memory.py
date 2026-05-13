@@ -32,7 +32,7 @@ async def get_memory_fact_explanation(memory_fact_id: str) -> dict[str, Any] | N
                    object.name AS object_name,
                    object.type AS object_type,
                    rel.valid_until AS memory_rel_valid_until,
-                   (rel.valid_until IS NULL) AS memory_rel_current
+                   (rel IS NOT NULL AND rel.valid_until IS NULL) AS memory_rel_current
             """,
             fact_id=memory_fact_id,
         )
@@ -84,7 +84,7 @@ async def get_memory_fact_details_batch(
                    object.name AS object_name,
                    object.type AS object_type,
                    rel.valid_until AS memory_rel_valid_until,
-                   (rel.valid_until IS NULL) AS memory_rel_current,
+                   (rel IS NOT NULL AND rel.valid_until IS NULL) AS memory_rel_current,
                    [a IN assertions WHERE a IS NOT NULL | {
                      assertion_id: a.id,
                      source_kind: a.source_kind,
@@ -143,8 +143,9 @@ async def get_current_fact_details_for_entities(
             WHERE subject.id IN $entity_ids
               AND fact.valid_until IS NULL
             OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
+            OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: fact.id}]->(object)
             OPTIONAL MATCH (a:Assertion)-[:SUPPORTS]->(fact)
-            WITH subject, fact, object, collect(DISTINCT a) AS assertions
+            WITH subject, fact, object, rel, collect(DISTINCT a) AS assertions
             RETURN fact.id AS memory_fact_id,
                    fact.family AS family,
                    fact.valid_until AS valid_until,
@@ -170,8 +171,8 @@ async def get_current_fact_details_for_entities(
                    object.id AS object_entity_id,
                    object.name AS object_name,
                    object.type AS object_type,
-                   null AS memory_rel_valid_until,
-                   false AS memory_rel_current,
+                   rel.valid_until AS memory_rel_valid_until,
+                   (rel IS NOT NULL AND rel.valid_until IS NULL) AS memory_rel_current,
                    [a IN assertions WHERE a IS NOT NULL | {
                      assertion_id: a.id,
                      source_kind: a.source_kind,
