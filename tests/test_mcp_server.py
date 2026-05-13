@@ -1207,6 +1207,42 @@ def test_render_fact_zero_value_number_renders():
 
 
 @pytest.mark.unit
+def test_render_fact_unary_attribute_with_value():
+    """Unary HAS_ATTRIBUTE facts have no object entity — render value bare."""
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(
+        _fact(
+            family="HAS_ATTRIBUTE",
+            subject_name="Project Sentinel",
+            subject_type="Project",
+            object_entity_id=None,
+            object_name=None,
+            object_type=None,
+            value_number=8,
+            value_kind="count",
+        )
+    )
+    assert text == "Project Sentinel [Project] -[HAS_ATTRIBUTE]-> 8"
+
+
+@pytest.mark.unit
+def test_render_fact_unary_attribute_no_value():
+    """Unary fact with no object AND no value renders an honest placeholder."""
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(
+        _fact(
+            family="HAS_ATTRIBUTE",
+            object_entity_id=None,
+            object_name=None,
+            object_type=None,
+        )
+    )
+    assert text.endswith("(no object)")
+
+
+@pytest.mark.unit
 def test_build_compact_output_dedupes_identical_fact_text():
     from landscape.mcp_app import _build_compact_output
     from landscape.retrieval.query import RetrievalResult, RetrievedEntity

@@ -135,12 +135,18 @@ def _render_fact(fact: dict) -> str:
         rel = f"NOT {rel}"
     subj_name = fact.get("subject_name") or "?"
     subj_type = fact.get("subject_type") or "?"
+    value = _value_suffix(fact)
+    # Unary attribute facts (e.g. HAS_ATTRIBUTE with a count) have no object
+    # entity — only a numeric/text value. Render as subject -[rel]-> value
+    # rather than the misleading "? [?]" placeholder.
+    if fact.get("object_entity_id") is None and fact.get("object_name") is None:
+        bare = value.removeprefix(" = ")
+        if bare:
+            return f"{subj_name} [{subj_type}] -[{rel}]-> {bare}"
+        return f"{subj_name} [{subj_type}] -[{rel}]-> (no object)"
     obj_name = fact.get("object_name") or "?"
     obj_type = fact.get("object_type") or "?"
-    return (
-        f"{subj_name} [{subj_type}] -[{rel}]-> {obj_name} [{obj_type}]"
-        + _value_suffix(fact)
-    )
+    return f"{subj_name} [{subj_type}] -[{rel}]-> {obj_name} [{obj_type}]{value}"
 
 
 def _build_compact_output(result, *, chunk_preview_chars: int = 200) -> dict:
