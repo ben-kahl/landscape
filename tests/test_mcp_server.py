@@ -568,12 +568,14 @@ async def test_search_returns_results_shape(http_client):
     assert "results" in data
     assert "touched_entity_count" in data
     assert isinstance(data["results"], list)
+    assert "facts" in data
     if data["results"]:
         first = data["results"][0]
         assert "name" in first
         assert "type" in first
         assert "score" in first
-        assert "path_edge_types" in first
+        assert "path" in first
+        assert "fact_ids" in first
 
 
 @pytest.mark.unit
@@ -1085,5 +1087,5 @@ async def test_search_returns_chunks(http_client):
     assert len(data["chunks"]) <= 3
 
     for chunk in data["chunks"]:
-        for key in ("text", "source_doc", "doc_id", "position", "score"):
+        for key in ("preview", "source", "score"):
             assert key in chunk, f"Chunk missing key '{key}': {chunk}"
