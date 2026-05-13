@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from starlette.middleware.authentication import AuthenticationMiddleware
 
-from landscape.api.ingest import router as ingest_router
 from landscape.api.hooks import router as hooks_router
+from landscape.api.ingest import router as ingest_router
 from landscape.api.query import router as query_router
 from landscape.embeddings import encoder
 from landscape.mcp_app import mcp
