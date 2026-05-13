@@ -17,8 +17,29 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import AnyHttpUrl
 
 from landscape.config import settings
+from landscape.retrieval.render import (
+    build_compact_payload as _build_compact_output,
+)
+from landscape.retrieval.render import (
+    render_fact as _render_fact,
+)
+from landscape.retrieval.render import (
+    render_path as _render_path,
+)
+from landscape.retrieval.render import (
+    value_suffix as _value_suffix,
+)
 from landscape.security import require_current_scope
 from landscape.storage.oauth_provider import LandscapeOAuthProvider
+
+# Re-export for tests and downstream callers that imported these names from
+# mcp_app before the helpers moved into landscape.retrieval.render.
+__all__ = [
+    "_render_path",
+    "_render_fact",
+    "_value_suffix",
+    "_build_compact_output",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -96,155 +117,6 @@ def _schedule_auto_ingestion(
     return task
 
 
-def _render_path(item) -> str:
-    """Mirror the CLI's (seed) -[REL]-> name [Type] rendering."""
-    if not item.path_edge_types:
-        return f"(seed) {item.name} [{item.type}]"
-    negated = item.path_edge_negated or [False] * len(item.path_edge_types)
-    subtypes = item.path_edge_subtypes or [None] * len(item.path_edge_types)
-    parts: list[str] = []
-    for edge, neg, sub in zip(item.path_edge_types, negated, subtypes, strict=False):
-        label = edge if not sub else f"{edge}/{sub}"
-        if neg:
-            label = f"NOT {label}"
-        parts.append(f"-[{label}]->")
-    parts.append(f"{item.name} [{item.type}]")
-    return "(seed) " + " ".join(parts)
-
-
-def _value_suffix(fact: dict) -> str:
-    """Render the populated value/quantity field on a memory fact, if any."""
-    if (vt := fact.get("value_text")) not in (None, ""):
-        return f' = "{vt}"'
-    if (vn := fact.get("value_number")) is not None:
-        unit = fact.get("value_unit") or ""
-        return f" = {vn}{(' ' + unit) if unit else ''}"
-    if (vtime := fact.get("value_time")) not in (None, ""):
-        return f" = {vtime}"
-    if (qv := fact.get("quantity_value")) is not None:
-        unit = fact.get("quantity_unit") or ""
-        return f" = {qv}{(' ' + unit) if unit else ''}"
-    return ""
-
-
-def _render_fact(fact: dict) -> str:
-    family = fact.get("family") or "RELATES_TO"
-    subtype = fact.get("subtype")
-    rel = family if not subtype else f"{family}/{subtype}"
-    if fact.get("negated"):
-        rel = f"NOT {rel}"
-    subj_name = fact.get("subject_name") or "?"
-    subj_type = fact.get("subject_type") or "?"
-    value = _value_suffix(fact)
-    # Unary attribute facts (e.g. HAS_ATTRIBUTE with a count) have no object
-    # entity — only a numeric/text value. Render as subject -[rel]-> value
-    # rather than the misleading "? [?]" placeholder.
-    if fact.get("object_entity_id") is None and fact.get("object_name") is None:
-        bare = value.removeprefix(" = ")
-        if bare:
-            return f"{subj_name} [{subj_type}] -[{rel}]-> {bare}"
-        return f"{subj_name} [{subj_type}] -[{rel}]-> (no object)"
-    obj_name = fact.get("object_name") or "?"
-    obj_type = fact.get("object_type") or "?"
-    return f"{subj_name} [{subj_type}] -[{rel}]-> {obj_name} [{obj_type}]{value}"
-
-
-def _build_compact_output(result, *, chunk_preview_chars: int = 200) -> dict:
-    """Compact, agent-friendly search payload.
-
-    - Dedupes memory_facts across ranked entities (each fact emitted once).
-    - Each result references facts by id; full fact text lives in `facts`.
-    - Drops supporting_assertions (audit trail; not needed to answer queries).
-    - Strips null value/quantity columns; renders populated ones inline.
-    """
-    facts_by_id: dict[str, dict] = {}
-    fact_order: list[str] = []
-    # Collapse memory_facts whose rendered text is identical (multiple
-    # MemoryFact nodes can express the same assertion at different
-    # confidences). First-seen id is canonical; later ids alias to it.
-    canonical_by_text: dict[str, str] = {}
-    alias_to_canonical: dict[str, str] = {}
-
-    def _absorb(fact: dict) -> str | None:
-        fid = fact.get("memory_fact_id")
-        if not fid:
-            return None
-        fid = str(fid)
-        if fid in alias_to_canonical:
-            return alias_to_canonical[fid]
-        if fid in facts_by_id:
-            return fid
-        text = _render_fact(fact)
-        existing = canonical_by_text.get(text)
-        if existing is not None:
-            alias_to_canonical[fid] = existing
-            prev = facts_by_id[existing]
-            prev["confidence_agg"] = max(
-                float(prev.get("confidence_agg") or 0.0),
-                float(fact.get("confidence_agg") or 0.0),
-            )
-            prev["support_count"] = int(prev.get("support_count") or 1) + int(
-                fact.get("support_count") or 1
-            )
-            return existing
-        canonical_by_text[text] = fid
-        facts_by_id[fid] = dict(fact)
-        fact_order.append(fid)
-        return fid
-
-    compact_results = []
-    for rank, r in enumerate(result.results, start=1):
-        fact_ids: list[str] = []
-        seen_local: set[str] = set()
-        for fact in r.memory_facts:
-            fid = _absorb(fact)
-            if fid and fid not in seen_local:
-                seen_local.add(fid)
-                fact_ids.append(fid)
-        compact_results.append(
-            {
-                "rank": rank,
-                "name": r.name,
-                "type": r.type,
-                "score": round(r.score, 4),
-                "distance": r.distance,
-                "path": _render_path(r),
-                "fact_ids": fact_ids,
-            }
-        )
-
-    facts_out = []
-    for fid in fact_order:
-        fact = facts_by_id[fid]
-        entry: dict = {
-            "id": fid,
-            "text": _render_fact(fact),
-            "confidence": round(float(fact.get("confidence_agg") or 0.0), 3),
-        }
-        if fact.get("negated"):
-            entry["negated"] = True
-        if (sc := fact.get("support_count")) and sc != 1:
-            entry["support"] = sc
-        facts_out.append(entry)
-
-    chunks_out = []
-    for c in result.chunks:
-        preview = c.text[:chunk_preview_chars].replace("\n", " ").strip()
-        chunks_out.append(
-            {
-                "source": c.source_doc,
-                "preview": preview,
-                "score": round(c.score, 4),
-            }
-        )
-
-    return {
-        "query": result.query,
-        "results": compact_results,
-        "facts": facts_out,
-        "chunks": chunks_out,
-        "touched_entity_count": len(result.touched_entity_ids),
-    }
 
 
 @mcp.tool()

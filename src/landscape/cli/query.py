@@ -4,6 +4,7 @@ import argparse
 
 from landscape.cli.runtime import close_runtime
 from landscape.observability import ensure_query_cli_logging
+from landscape.retrieval.render import render_fact, render_path
 
 
 def _get_runtime():
@@ -47,24 +48,21 @@ async def handle_query(args: argparse.Namespace) -> int:
         if not result.results:
             print("No results.")
             return 0
+        seen_fact_ids: set[str] = set()
         for index, item in enumerate(result.results, start=1):
-            if item.path_edge_types:
-                edges = item.path_edge_types
-                negated = item.path_edge_negated or [False] * len(edges)
-                path_parts: list[str] = []
-                for edge, neg in zip(edges, negated):
-                    label = f"NOT {edge}" if neg else edge
-                    path_parts.append(f"-[{label}]->")
-                path_parts.append(f"{item.name} [{item.type}]")
-                path_str = "(seed) " + " ".join(path_parts)
-            else:
-                path_str = f"(seed) {item.name} [{item.type}]"
             neg_flag = " [NEGATED]" if any(item.path_edge_negated) else ""
             print(
                 f"{index}. {item.name} [{item.type}]{neg_flag} "
                 f"score={item.score:.4f} distance={item.distance}"
             )
-            print(f"   path: {path_str}")
+            print(f"   path: {render_path(item)}")
+            for fact in item.memory_facts:
+                fid = str(fact.get("memory_fact_id") or "")
+                if fid in seen_fact_ids:
+                    continue
+                seen_fact_ids.add(fid)
+                conf = float(fact.get("confidence_agg") or 0.0)
+                print(f"     fact: {render_fact(fact)}  (c={conf:.2f})")
         if result.chunks:
             print()
             print("Relevant chunks:")
