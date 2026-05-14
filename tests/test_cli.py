@@ -270,7 +270,12 @@ def test_seed_killer_demo_threads_debug_flag(monkeypatch, tmp_path, capsys):
 
 def test_query_command_threads_debug_flag(monkeypatch, capsys):
     from landscape.cli import query as query_cli
-    from landscape.retrieval.query import RetrievalResult, RetrievedEntity
+    from landscape.retrieval.query import (
+        EntityPath,
+        PathNode,
+        RetrievalResult,
+        RetrievedEntity,
+    )
 
     class FakeQueryRetrieve:
         def __init__(self):
@@ -312,6 +317,11 @@ def test_query_command_threads_debug_flag(monkeypatch, capsys):
                         reinforcement=0.0,
                         edge_confidence=0.0,
                         score=1.0,
+                        path=EntityPath(
+                            nodes=[PathNode("Project Atlas", "PROJECT")],
+                            edges=[],
+                        ),
+                        retrieval_mode="vector",
                     )
                 ],
                 touched_entity_ids=["atlas-id"],
@@ -345,6 +355,8 @@ def test_query_command_threads_debug_flag(monkeypatch, capsys):
     ]
     output = capsys.readouterr().out
     assert "1. Project Atlas [PROJECT]" in output
+    assert "via=vector" in output
+    assert "path: (Project Atlas) [direct match]" in output
 
 
 @pytest.fixture

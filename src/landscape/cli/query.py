@@ -50,12 +50,16 @@ async def handle_query(args: argparse.Namespace) -> int:
             return 0
         seen_fact_ids: set[str] = set()
         for index, item in enumerate(result.results, start=1):
-            neg_flag = " [NEGATED]" if any(item.path_edge_negated) else ""
+            neg_flag = (
+                " [NEGATED]"
+                if any(edge.negated for edge in item.path.edges)
+                else ""
+            )
             print(
                 f"{index}. {item.name} [{item.type}]{neg_flag} "
-                f"score={item.score:.4f} distance={item.distance}"
+                f"score={item.score:.4f} distance={item.distance} via={item.retrieval_mode}"
             )
-            print(f"   path: {render_path(item)}")
+            print(f"   path: {render_path(item.path)}")
             for fact in item.memory_facts:
                 fid = str(fact.get("memory_fact_id") or "")
                 if fid in seen_fact_ids:

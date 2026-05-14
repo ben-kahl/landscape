@@ -106,6 +106,33 @@ env file also sets `ALLOW_REMOTE_MODEL_CODE=true`. If you switch to a model
 like `sentence-transformers/all-MiniLM-L6-v2`, you can remove that flag and
 keep remote model code disabled.
 
+### Test database isolation
+
+Stack-backed tests use a separate Neo4j/Qdrant Compose stack by default so test
+cleanup does not wipe your local development memory:
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+uv run pytest
+```
+
+Default test endpoints:
+
+| Service | Test endpoint | Live dev endpoint |
+|---|---|---|
+| Neo4j Bolt | `bolt://localhost:17687` | `bolt://localhost:7687` |
+| Neo4j Browser | `http://localhost:17474` | `http://localhost:7474` |
+| Qdrant HTTP | `http://localhost:16333` | `http://localhost:6333` |
+| Qdrant gRPC | `localhost:16334` | `localhost:6334` |
+
+Override the test services with `LANDSCAPE_TEST_NEO4J_URI`,
+`LANDSCAPE_TEST_NEO4J_USER`, `LANDSCAPE_TEST_NEO4J_PASSWORD`, and
+`LANDSCAPE_TEST_QDRANT_URL`. Tests refuse to wipe the live default Neo4j/Qdrant
+ports unless `LANDSCAPE_ALLOW_LIVE_TEST_WIPE=1` is set deliberately.
+
+Ollama still defaults to `http://localhost:11434`; tests do not wipe Ollama
+state.
+
 If the script selects Docker-managed Ollama, pull the default model once:
 
 ```bash
@@ -265,6 +292,39 @@ writes, or Qdrant writes.
 `capture_turn` is the MCP-first safety-net path for ordinary conversation
 memory. `remember` remains the explicit synchronous document-ingest tool, and
 `add_entity` / `add_relation` remain the precise structured write-back tools.
+
+### Agent hook conversation capture
+
+Most agent MCP clients do not stream their full conversation transcript to MCP
+servers automatically. For set-and-forget capture, use the checked-in hook
+adapters to call Landscape's HTTP hook receiver:
+
+```text
+POST http://127.0.0.1:8000/hooks/conversation-turn
+```
+
+The receiver accepts `{client, session_id, turn_id, role, text}`, applies the
+same eligibility checks as `capture_turn`, and schedules background ingestion.
+It requires the same bearer auth as the other FastAPI write endpoints, so hook
+processes should export:
+
+```bash
+export LANDSCAPE_API_TOKEN="<oauth access token with agent scope>"
+export LANDSCAPE_HOOK_URL="http://127.0.0.1:8000/hooks/conversation-turn"
+```
+
+Hook examples live under `hooks/`:
+
+| Client | Files | Notes |
+|---|---|---|
+| Claude Code | `hooks/claude-code/settings.example.json` | Copy or merge into `.claude/settings.json` or `~/.claude/settings.json`. Captures user prompts and the latest assistant transcript turn on `Stop`. |
+| Codex | `hooks/codex/config.example.toml`, `hooks/codex/hooks.example.json` | Enable `codex_hooks`, then copy or merge hooks into `.codex/` or `~/.codex/`. Captures prompt and stop hook payloads when Codex exposes them. |
+| OpenCode | `hooks/opencode/landscape-conversation.js` | Copy into `.opencode/plugins/` or `~/.config/opencode/plugins/`. Captures `message.updated` events. |
+
+All examples call `scripts/landscape_capture_hook.py`, which normalizes each
+client's hook payload before posting to Landscape. Keep using MCP `remember`
+for deliberate document ingestion; hooks are intended for low-friction
+conversation memory.
 
 ### MCP transport note
 

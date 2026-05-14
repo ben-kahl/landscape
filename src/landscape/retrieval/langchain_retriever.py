@@ -105,29 +105,18 @@ def _format_quantity(quantity: dict[str, object | None]) -> str:
 
 
 def _entity_to_document(entity: RetrievedEntity) -> Document:
-    # Zip subtype list (may be empty/shorter on old edges) against types so
-    # display stays stable when a path includes pre-subtype edges.
-    subtypes = entity.path_edge_subtypes or [None] * len(entity.path_edge_types)
-    if len(subtypes) < len(entity.path_edge_types):
-        subtypes = list(subtypes) + [None] * (len(entity.path_edge_types) - len(subtypes))
-    quantities = entity.path_edge_quantities or [{} for _ in entity.path_edge_types]
-    if len(quantities) < len(entity.path_edge_types):
-        quantities = list(quantities) + [
-            {} for _ in range(len(entity.path_edge_types) - len(quantities))
-        ]
-
     path_parts = []
-    for rel_type, subtype, quantity in zip(entity.path_edge_types, subtypes, quantities):
-        edge = _format_edge(rel_type, subtype)
-        rendered_quantity = _format_quantity(quantity)
-        if rendered_quantity:
-            edge = f"{edge} {{{rendered_quantity}}}"
-        path_parts.append(edge)
-    path = " → ".join(path_parts) if path_parts else ""
+    for edge in entity.path.edges:
+        edge_str = _format_edge(edge.type, edge.subtype)
+        quantity_str = _format_quantity(edge.quantities)
+        if quantity_str:
+            edge_str = f"{edge_str} {{{quantity_str}}}"
+        path_parts.append(edge_str)
+    path_display = " → ".join(path_parts) if path_parts else ""
 
     header = f"{entity.name} ({entity.type})"
-    if entity.distance > 0 and path:
-        content = f"{header} [{entity.distance} hops via {path}]"
+    if entity.distance > 0 and path_display:
+        content = f"{header} [{entity.distance} hops via {path_display}]"
     elif entity.distance > 0:
         content = f"{header} [{entity.distance} hops]"
     else:
@@ -144,9 +133,20 @@ def _entity_to_document(entity: RetrievedEntity) -> Document:
         "reinforcement": entity.reinforcement,
         "edge_confidence": entity.edge_confidence,
         "path_edge_ids": entity.path_edge_ids,
-        "path_edge_types": entity.path_edge_types,
-        "path_edge_subtypes": entity.path_edge_subtypes,
-        "path_edge_quantities": entity.path_edge_quantities,
+        "retrieval_mode": entity.retrieval_mode,
+        "path": {
+            "nodes": [{"name": n.name, "type": n.type} for n in entity.path.nodes],
+            "edges": [
+                {
+                    "type": e.type,
+                    "negated": e.negated,
+                    "subtype": e.subtype,
+                    "memory_fact_id": e.memory_fact_id,
+                    "quantities": e.quantities,
+                }
+                for e in entity.path.edges
+            ],
+        },
     }
     return Document(page_content=content, metadata=metadata)
 

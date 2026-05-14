@@ -17,10 +17,12 @@ Assertions are lenient on entity name variants ('Alice' vs 'Alice Chen') the
 way test_killer_demo handles Maya/Maya Chen.
 """
 import asyncio
+import os
 import pathlib
 
 import pytest
 import pytest_asyncio
+from stack_config import assert_safe_to_wipe, resolve_test_stack_config
 
 pytestmark = [pytest.mark.integration, pytest.mark.external]
 
@@ -73,6 +75,8 @@ async def _wait_for_qdrant_collection_present(
 
 async def _wipe_all(neo4j_driver, qdrant_client) -> None:
     from landscape.storage import qdrant_store
+
+    assert_safe_to_wipe(resolve_test_stack_config(os.environ), os.environ)
 
     async with neo4j_driver.session() as session:
         await session.run("MATCH (n) DETACH DELETE n")

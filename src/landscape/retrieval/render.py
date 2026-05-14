@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from landscape.retrieval.query import EntityPath
+
 
 def value_suffix(fact: dict) -> str:
     """Render the populated value/quantity field on a memory fact, if any.
@@ -59,30 +61,29 @@ def render_fact(fact: dict) -> str:
     return f"{subj_name} [{subj_type}] -[{rel}]-> {obj_name} [{obj_type}]{value}"
 
 
-def render_path(item: Any) -> str:
-    """`(seed) -[REL]-> -[REL]-> name [Type]` for a RetrievedEntity.
+def render_path(path: EntityPath) -> str:
+    """Render an EntityPath as a human-readable string.
 
-    Mirrors the path semantics the CLI has been using, with subtype and
-    negation annotations on each edge."""
-    edge_types = list(getattr(item, "path_edge_types", []) or [])
-    if not edge_types:
-        return f"(seed) {item.name} [{item.type}]"
-    negated = list(getattr(item, "path_edge_negated", []) or [False] * len(edge_types))
-    subtypes = list(getattr(item, "path_edge_subtypes", []) or [None] * len(edge_types))
-    # Pad in case any of these arrays is shorter than edge_types.
-    while len(negated) < len(edge_types):
-        negated.append(False)
-    while len(subtypes) < len(edge_types):
-        subtypes.append(None)
+    Examples:
+        - Empty path: "(unknown)"
+        - Direct hit (no edges): "(Qdrant) [direct match]"
+        - One hop: "(Eric) -[DISCUSSION]-> Netflix [TECHNOLOGY]"
+        - Multi-hop:
+          "(Project Aurora) -[USES]-> PostgreSQL [TECHNOLOGY] -[APPROVED_BY]-> Maya Chen [PERSON]"
+        - Negated edge: "(Alice) -[NOT WORKS_FOR]-> Acme Corp [ORGANIZATION]"
+    """
+    if not path.nodes:
+        return "(unknown)"
+    if not path.edges:
+        return f"({path.nodes[0].name}) [direct match]"
 
-    parts: list[str] = []
-    for edge, neg, sub in zip(edge_types, negated, subtypes, strict=False):
-        label = edge if not sub else f"{edge}/{sub}"
-        if neg:
-            label = f"NOT {label}"
+    parts = [f"({path.nodes[0].name})"]
+    for edge, node in zip(path.edges, path.nodes[1:], strict=False):
+        # subtype intentionally omitted; available in structured path
+        label = f"NOT {edge.type}" if edge.negated else edge.type
         parts.append(f"-[{label}]->")
-    parts.append(f"{item.name} [{item.type}]")
-    return "(seed) " + " ".join(parts)
+        parts.append(f"{node.name} [{node.type}]")
+    return " ".join(parts)
 
 
 def build_compact_payload(result: Any, *, chunk_preview_chars: int = 200) -> dict:
@@ -142,7 +143,7 @@ def build_compact_payload(result: Any, *, chunk_preview_chars: int = 200) -> dic
                 "type": r.type,
                 "score": round(r.score, 4),
                 "distance": r.distance,
-                "path": render_path(r),
+                "path": render_path(r.path),
                 "fact_ids": fact_ids,
             }
         )

@@ -1,0 +1,35 @@
+services:
+  neo4j-test:
+    image: neo4j:2026.03.1
+    ports:
+      - "17474:7474"
+      - "17687:7687"
+    volumes:
+      - neo4j_test_data:/data
+    environment:
+      NEO4J_AUTH: neo4j/landscape-test
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_db_tx__log_rotation_retention__policy: "100M size"
+      NEO4J_db_checkpoint_interval_time: "15m"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7474"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant-test:
+    image: qdrant/qdrant:latest
+    ports:
+      - "16333:6333"
+      - "16334:6334"
+    volumes:
+      - qdrant_test_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  neo4j_test_data:
+  qdrant_test_storage:

@@ -22,15 +22,34 @@ def _make_result(entities=(), chunks=()):
 
 
 def _entity(name, type_, path_edge_types=(), path_edge_quantities=()):
+    """Build a minimal RetrievedEntity-like object for testing.
+
+    path_edge_types maps to PathEdge.type; path_edge_quantities maps to
+    PathEdge.quantities (first edge only, for backward-compat with old tests).
+    """
+    # Build PathNode/PathEdge-like SimpleNamespaces so render_path can traverse them.
+    nodes = [SimpleNamespace(name=name, type=type_)]
+    edges = []
+    for i, et in enumerate(path_edge_types):
+        qty = path_edge_quantities[i] if i < len(path_edge_quantities) else {}
+        edges.append(SimpleNamespace(
+            type=et,
+            negated=False,
+            subtype=None,
+            memory_fact_id=None,
+            quantities=qty,
+        ))
+        nodes.append(SimpleNamespace(name=f"related-{i}", type="Unknown"))
+
+    path = SimpleNamespace(nodes=nodes, edges=edges)
+
     return SimpleNamespace(
         name=name,
         type=type_,
         score=0.9,
         entity_id=f"{name.lower().replace(' ', '-')}-id",
-        path_memory_fact_ids=[],
-        path_edge_types=list(path_edge_types),
-        path_edge_subtypes=[None] * len(path_edge_types),
-        path_edge_quantities=list(path_edge_quantities),
+        retrieval_mode="vector",
+        path=path,
         memory_facts=[],
         supporting_assertions=[],
     )
@@ -63,7 +82,9 @@ def test_format_search_result_includes_entities_and_chunks():
     names = [r["name"] for r in out["results"]]
     assert "Alice" in names
     assert "Atlas Corp" in names
-    assert out["results"][1]["path_edge_types"] == ["WORKS_FOR"]
+    assert out["results"][1]["path"]["edges"][0]["type"] == "WORKS_FOR"
+    assert out["results"][1]["retrieval_mode"] == "vector"
+    assert "path_str" in out["results"][1]
     assert out["chunks"][0]["text"] == "Alice joined Atlas Corp last year."
     assert out["chunks"][0]["source_doc"] == "session-42"
 
@@ -80,7 +101,7 @@ def test_format_search_result_renders_edge_quantities():
         entities=[_entity("bike", "Object", ["OWNS"], [qty])],
     )
     out = json.loads(_format_search_result(result))
-    assert out["results"][0]["path_edge_quantities"][0]["quantity_value"] == 3
+    assert out["results"][0]["path"]["edges"][0]["quantities"]["quantity_value"] == 3
 
 
 @pytest.mark.unit

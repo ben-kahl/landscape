@@ -10,10 +10,12 @@ This is the central Phase 2 proof: hybrid retrieval should answer 1-, 2-,
 and 3-hop questions over a corpus where the answer requires traversing
 multiple documents."""
 import asyncio
+import os
 import pathlib
 
 import pytest
 import pytest_asyncio
+from stack_config import assert_safe_to_wipe, resolve_test_stack_config
 
 pytestmark = [pytest.mark.integration, pytest.mark.external]
 
@@ -69,6 +71,8 @@ async def _wipe_all(neo4j_driver, qdrant_client) -> None:
     this module; other test modules set up their own data in their own
     fixtures."""
     from landscape.storage import qdrant_store
+
+    assert_safe_to_wipe(resolve_test_stack_config(os.environ), os.environ)
 
     async with neo4j_driver.session() as session:
         await session.run("MATCH (n) DETACH DELETE n")

@@ -9,19 +9,21 @@ import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from neo4j import AsyncGraphDatabase  # noqa: E402
 from qdrant_client import AsyncQdrantClient  # noqa: E402
+from stack_config import assert_safe_to_wipe, resolve_test_stack_config  # noqa: E402
 
-# Fixtures assume docker-compose stack is running locally on default ports.
+# Fixtures assume the isolated test stack is running locally on test ports.
 # Env vars must be set before landscape.config is imported anywhere.
 
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_AUTH = ("neo4j", "landscape-dev")
-QDRANT_URL = "http://localhost:6333"
+TEST_STACK = resolve_test_stack_config(os.environ)
+NEO4J_URI = TEST_STACK.neo4j_uri
+NEO4J_AUTH = TEST_STACK.neo4j_auth
+QDRANT_URL = TEST_STACK.qdrant_url
 
-os.environ.setdefault("NEO4J_URI", NEO4J_URI)
-os.environ.setdefault("NEO4J_USER", "neo4j")
-os.environ.setdefault("NEO4J_PASSWORD", "landscape-dev")
-os.environ.setdefault("QDRANT_URL", QDRANT_URL)
-os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
+os.environ["NEO4J_URI"] = NEO4J_URI
+os.environ["NEO4J_USER"] = NEO4J_AUTH[0]
+os.environ["NEO4J_PASSWORD"] = NEO4J_AUTH[1]
+os.environ["QDRANT_URL"] = QDRANT_URL
+os.environ["OLLAMA_URL"] = TEST_STACK.ollama_url
 
 
 async def _wait_for_qdrant_collection_absent(
@@ -73,6 +75,7 @@ async def _isolated_test(request):
     from landscape.storage import neo4j_store, qdrant_store
 
     if not request.node.get_closest_marker("retrieval"):
+        assert_safe_to_wipe(TEST_STACK, os.environ)
         # Fresh ad-hoc clients so the wipe doesn't entangle with the
         # module-level singletons that teardown will close.
         driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH)

@@ -162,10 +162,23 @@ async def search(
                     "name": r.name,
                     "type": r.type,
                     "score": round(r.score, 6),
-                    "path_memory_fact_ids": r.path_memory_fact_ids,
-                    "path_edge_types": r.path_edge_types,
-                    "path_edge_subtypes": r.path_edge_subtypes,
-                    "path_edge_quantities": r.path_edge_quantities,
+                    "retrieval_mode": r.retrieval_mode,
+                    "path_str": _render_path(r.path),
+                    "path": {
+                        "nodes": [
+                            {"name": n.name, "type": n.type} for n in r.path.nodes
+                        ],
+                        "edges": [
+                            {
+                                "type": e.type,
+                                "negated": e.negated,
+                                "subtype": e.subtype,
+                                "memory_fact_id": e.memory_fact_id,
+                                "quantities": e.quantities,
+                            }
+                            for e in r.path.edges
+                        ],
+                    },
                     "memory_facts": r.memory_facts,
                     "supporting_assertions": r.supporting_assertions,
                 }

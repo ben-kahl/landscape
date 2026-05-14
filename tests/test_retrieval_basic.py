@@ -254,12 +254,22 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
         return [
             {
                 "seed_id": "eric-id",
+                "seed_name": "Eric",
+                "seed_type": "PERSON",
                 "target_id": "netflix-id",
                 "target_name": "Netflix",
                 "target_type": "TECHNOLOGY",
                 "distance": 1,
                 "path_memory_fact_ids": ["fact-1"],
                 "path_edge_types": ["DISCUSSION"],
+                "path_edge_negated": [False],
+                "edge_subtypes": [None],
+                "edge_ids": ["rel-1"],
+                "path_node_names": ["Eric", "Netflix"],
+                "path_node_types": ["PERSON", "TECHNOLOGY"],
+                "edge_confidences": [0.9],
+                "edge_access_counts": [0],
+                "edge_last_accessed": [None],
             }
         ]
 
@@ -291,6 +301,15 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
                     "object_type": "TECHNOLOGY",
                     "memory_rel_valid_until": None,
                     "memory_rel_current": True,
+                    "value_text": None,
+                    "value_number": None,
+                    "value_unit": None,
+                    "value_kind": None,
+                    "value_time": None,
+                    "quantity_value": 10,
+                    "quantity_unit": "hour",
+                    "quantity_kind": "duration",
+                    "time_scope": "last_month",
                 }
             ],
             [
@@ -340,8 +359,22 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
     result = await query.retrieve("How many hours on Netflix?", reinforce=False)
 
     netflix = next(r for r in result.results if r.name == "Netflix")
-    assert netflix.path_memory_fact_ids == ["fact-1"]
-    assert netflix.path_edge_types == ["DISCUSSION"]
+    assert netflix.path.edges[0].memory_fact_id == "fact-1"
+    assert netflix.path.edges[0].type == "DISCUSSION"
+    assert netflix.path.nodes[0].name == "Eric"
+    assert netflix.path.nodes[1].name == "Netflix"
+    assert netflix.retrieval_mode == "graph"
+    assert netflix.path.edges[0].quantities == {
+        "value_text": None,
+        "value_number": None,
+        "value_unit": None,
+        "value_kind": None,
+        "value_time": None,
+        "quantity_value": 10,
+        "quantity_unit": "hour",
+        "quantity_kind": "duration",
+        "time_scope": "last_month",
+    }
     assert netflix.memory_facts == [
         {
             "memory_fact_id": "fact-1",
@@ -361,6 +394,15 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
             "object_type": "TECHNOLOGY",
             "memory_rel_valid_until": None,
             "memory_rel_current": True,
+            "value_text": None,
+            "value_number": None,
+            "value_unit": None,
+            "value_kind": None,
+            "value_time": None,
+            "quantity_value": 10,
+            "quantity_unit": "hour",
+            "quantity_kind": "duration",
+            "time_scope": "last_month",
         }
     ]
     assert netflix.supporting_assertions == [
@@ -709,12 +751,22 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
         return [
             {
                 "seed_id": "atlas-id",
+                "seed_name": "Project Atlas",
+                "seed_type": "PROJECT",
                 "target_id": "postgres-id",
                 "target_name": "PostgreSQL",
                 "target_type": "DATABASE",
                 "distance": 1,
                 "path_memory_fact_ids": ["fact-1"],
                 "path_edge_types": ["USES"],
+                "path_edge_negated": [False],
+                "edge_subtypes": [None],
+                "edge_ids": ["rel-1"],
+                "path_node_names": ["Project Atlas", "PostgreSQL"],
+                "path_node_types": ["PROJECT", "DATABASE"],
+                "edge_confidences": [0.9],
+                "edge_access_counts": [0],
+                "edge_last_accessed": [None],
             }
         ]
 
@@ -754,7 +806,8 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
 
     assert [item.name for item in result.results] == ["Project Atlas", "PostgreSQL"]
     postgres = next(item for item in result.results if item.name == "PostgreSQL")
-    assert postgres.path_memory_fact_ids == ["fact-1"]
+    assert postgres.path.edges[0].memory_fact_id == "fact-1"
+    assert postgres.retrieval_mode == "graph"
 
 
 @pytest.mark.asyncio
