@@ -4,7 +4,7 @@ import argparse
 
 from landscape.cli.runtime import close_runtime
 from landscape.observability import ensure_query_cli_logging
-from landscape.retrieval.render import render_path
+from landscape.retrieval.render import render_fact, render_path
 
 
 def _get_runtime():
@@ -48,13 +48,25 @@ async def handle_query(args: argparse.Namespace) -> int:
         if not result.results:
             print("No results.")
             return 0
+        seen_fact_ids: set[str] = set()
         for index, item in enumerate(result.results, start=1):
-            path_str = render_path(item.path)
+            neg_flag = (
+                " [NEGATED]"
+                if any(edge.negated for edge in item.path.edges)
+                else ""
+            )
             print(
-                f"{index}. {item.name} [{item.type}] "
+                f"{index}. {item.name} [{item.type}]{neg_flag} "
                 f"score={item.score:.4f} distance={item.distance} via={item.retrieval_mode}"
             )
-            print(f"   path: {path_str}")
+            print(f"   path: {render_path(item.path)}")
+            for fact in item.memory_facts:
+                fid = str(fact.get("memory_fact_id") or "")
+                if fid in seen_fact_ids:
+                    continue
+                seen_fact_ids.add(fid)
+                conf = float(fact.get("confidence_agg") or 0.0)
+                print(f"     fact: {render_fact(fact)}  (c={conf:.2f})")
         if result.chunks:
             print()
             print("Relevant chunks:")
