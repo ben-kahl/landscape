@@ -416,6 +416,9 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     async def fake_upsert_entity(**kwargs):
         return None
 
+    async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -447,6 +450,9 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions
+    )
     monkeypatch.setattr(
         pipeline,
         "persist_assertion_and_maybe_promote",
@@ -518,6 +524,9 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
     async def fake_upsert_entity(**kwargs):
         return None
 
+    async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -539,6 +548,9 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions
+    )
     monkeypatch.setattr(
         pipeline,
         "persist_assertion_and_maybe_promote",
@@ -614,6 +626,9 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
     async def fake_upsert_entity(**kwargs):
         return None
 
+    async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -635,6 +650,9 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions
+    )
     monkeypatch.setattr(
         pipeline,
         "persist_assertion_and_maybe_promote",
@@ -900,6 +918,7 @@ async def test_ingest_passes_negated_to_assertion_payload():
          patch.object(pipeline.encoder, "embed_documents",
                       side_effect=lambda texts: [[0.0] * 4 for _ in texts]), \
          patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()), \
+         patch.object(pipeline.neo4j_store, "set_chunk_mentions", AsyncMock()), \
          patch.object(pipeline.llm, "extract", return_value=extraction), \
          patch("landscape.pipeline.coerce_rel_type",
                side_effect=lambda rel_type: (rel_type, 1.0)), \

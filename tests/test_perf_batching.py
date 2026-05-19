@@ -293,6 +293,7 @@ async def test_ingest_batch_encodes_chunks_once():
                       return_value=[[0.0] * 4 for _ in range(10)]) as batch_encode, \
          patch.object(pipeline.encoder, "encode", return_value=[0.0] * 4) as per_call, \
          patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()) as upsert, \
+         patch.object(pipeline.neo4j_store, "set_chunk_mentions", AsyncMock()), \
          patch.object(pipeline.llm, "extract",
                       return_value=MagicMock(entities=[], relations=[])):
         await pipeline.ingest(text="x" * 500, title="doc")
@@ -328,6 +329,7 @@ async def test_ingest_upserts_chunks_in_parallel():
          patch.object(pipeline.encoder, "embed_documents",
                       return_value=[[0.0] * 4 for _ in range(5)]), \
          patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock(side_effect=slow_upsert)), \
+         patch.object(pipeline.neo4j_store, "set_chunk_mentions", AsyncMock()), \
          patch.object(pipeline.llm, "extract",
                       return_value=MagicMock(entities=[], relations=[])):
         await pipeline.ingest(text="x" * 500, title="doc")
@@ -364,6 +366,7 @@ async def test_ingest_batch_encodes_entities_once():
                       AsyncMock(side_effect=[f"ent{i}" for i in range(5)])), \
          patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()), \
          patch.object(pipeline.qdrant_store, "upsert_entity", AsyncMock()), \
+         patch.object(pipeline.neo4j_store, "set_chunk_mentions", AsyncMock()), \
          patch.object(pipeline.llm, "extract", return_value=extraction):
         await pipeline.ingest(text="some doc", title="t")
 
@@ -409,6 +412,7 @@ async def test_ingest_dedupes_identical_entity_mentions_before_resolving():
          patch.object(pipeline.neo4j_store, "link_entity_to_doc", AsyncMock()), \
          patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()), \
          patch.object(pipeline.qdrant_store, "upsert_entity", AsyncMock()), \
+         patch.object(pipeline.neo4j_store, "set_chunk_mentions", AsyncMock()), \
          patch.object(pipeline.llm, "extract", return_value=extraction):
         await pipeline.ingest(text="some doc", title="t")
 
@@ -450,6 +454,7 @@ async def test_ingest_dedupes_whitespace_variants_of_same_entity():
          patch.object(pipeline.neo4j_store, "link_entity_to_doc", AsyncMock()), \
          patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()), \
          patch.object(pipeline.qdrant_store, "upsert_entity", AsyncMock()), \
+         patch.object(pipeline.neo4j_store, "set_chunk_mentions", AsyncMock()), \
          patch.object(pipeline.llm, "extract", return_value=extraction):
         await pipeline.ingest(text="some doc", title="t")
 
