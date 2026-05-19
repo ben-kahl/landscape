@@ -253,9 +253,11 @@ async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[st
     async with driver.session() as session:
         result = await session.run(
             """
-            MATCH (c:Chunk)-[:PART_OF]->(d:Document)<-[:EXTRACTED_FROM]-(e:Entity)
+            MATCH (c:Chunk)
             WHERE c.chunk_id IN $chunk_ids
-              AND e.canonical = true
+            UNWIND coalesce(c.mentioned_entity_ids, []) AS entity_id
+            MATCH (e:Entity {id: entity_id})
+            WHERE e.canonical = true
             WITH e,
                  collect(
                      DISTINCT c.chunk_id

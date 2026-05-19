@@ -50,7 +50,7 @@
   | Edge | From -> To | Role | Source of truth | Notes |
   |---|---|---|---|---|
   | ASSERTS | Document/Turn -> Assertion | Source provenance | Yes | One source can assert many claims |
-  | MENTIONS_CHUNK | Assertion -> Chunk | Fine-grained textual provenance | Optional | Use if chunk-level support is needed |
+  | MENTIONS_CHUNK | Assertion -> Chunk | Legacy fine-grained textual provenance | No | Deprecated; ingestion stores chunk mentions on Chunk properties instead |
   | SUBJECT | Assertion -> Entity | Raw claim subject | Yes | Required |
   | OBJECT | Assertion -> Entity | Raw claim object | Yes | Required |
   | SUPPORTS | Assertion -> MemoryFact | Evidence link | Yes | Many assertions may support one fact |
@@ -77,10 +77,19 @@
   | asserted_at | Yes | When the assertion was created |
   | observed_time_text | No | Original textual time phrase |
   | source_kind | Yes | document or turn |
+  | chunk_refs | No | Bounded source chunk ids for assertion identity/provenance |
+  | chunk_ref_count | No | Number of bounded source chunk refs |
   | extraction_model | Yes | Extractor provenance |
   | status | Yes | active, ambiguous, low_confidence, retracted |
   | session_id | No | Conversation scope when source is a turn |
   | turn_id | No | Conversation scope when source is a turn |
+
+  ### Chunk properties
+
+  | Property | Required | Purpose |
+  |---|---|---|
+  | mentioned_entity_ids | Yes | Canonical entity ids mentioned in this chunk |
+  | mentioned_entity_names | Yes | Display names for mentioned entities |
 
   ### MemoryFact properties
 

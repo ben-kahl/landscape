@@ -68,6 +68,7 @@ class FakePipeline:
         session_id=None,
         turn_id=None,
         debug=False,
+        log_context=None,
     ):
         self.calls.append(
             {
@@ -77,6 +78,7 @@ class FakePipeline:
                 "session_id": session_id,
                 "turn_id": turn_id,
                 "debug": debug,
+                "log_context": log_context,
             }
         )
         if self.ingest_error is not None:
@@ -418,6 +420,7 @@ def test_ingest_command_threads_debug_flag(tmp_path, fake_runtime, capsys):
             "session_id": None,
             "turn_id": None,
             "debug": True,
+            "log_context": None,
         }
     ]
     assert "doc_id: doc-123" in capsys.readouterr().out
@@ -468,6 +471,7 @@ def test_ingest_uses_file_stem_as_default_title(tmp_path, capsys, fake_runtime):
             "session_id": None,
             "turn_id": None,
             "debug": False,
+            "log_context": None,
         }
     ]
     assert fake_runtime["encoder"].loaded is True
@@ -510,8 +514,31 @@ def test_ingest_accepts_explicit_metadata(tmp_path, fake_runtime):
             "session_id": "session-1",
             "turn_id": "turn-1",
             "debug": False,
+            "log_context": None,
         }
     ]
+
+
+def test_ingest_progress_flag_threads_progress_context(tmp_path, fake_runtime):
+    path = tmp_path / "progress.md"
+    path.write_text("Alice leads Project Atlas.", encoding="utf-8")
+
+    exit_code = cli.main(["ingest", str(path), "--progress"])
+
+    assert exit_code == 0
+    call = fake_runtime["pipeline"].calls[0]
+    assert call["log_context"] is not None
+    assert call["log_context"].title == "progress"
+
+
+def test_ingest_no_progress_flag_suppresses_progress_context(tmp_path, fake_runtime):
+    path = tmp_path / "no-progress.md"
+    path.write_text("Alice leads Project Atlas.", encoding="utf-8")
+
+    exit_code = cli.main(["ingest", str(path), "--no-progress"])
+
+    assert exit_code == 0
+    assert fake_runtime["pipeline"].calls[0]["log_context"] is None
 
 
 def test_missing_file_exits_before_initialization(tmp_path, fake_runtime):

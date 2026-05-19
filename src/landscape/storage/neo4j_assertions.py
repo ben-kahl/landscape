@@ -31,6 +31,7 @@ async def merge_assertion(payload: AssertionPayload) -> str:
         },
         chunk_refs=payload.chunk_refs,
     )
+    chunk_ref_ids = [chunk_id for chunk_id, _start, _end in payload.chunk_refs]
     driver = get_driver()
     async with driver.session() as session:
         await session.run(
@@ -54,6 +55,8 @@ async def merge_assertion(payload: AssertionPayload) -> str:
                           a.quantity_unit = $quantity_unit,
                           a.quantity_kind = $quantity_kind,
                           a.time_scope = $time_scope,
+                          a.chunk_refs = $chunk_refs,
+                          a.chunk_ref_count = size($chunk_refs),
                           a.status = 'active',
                           a.created_at = $now
             """,
@@ -76,6 +79,7 @@ async def merge_assertion(payload: AssertionPayload) -> str:
             quantity_unit=payload.quantity_unit,
             quantity_kind=payload.quantity_kind,
             time_scope=payload.time_scope,
+            chunk_refs=chunk_ref_ids,
             now=datetime.now(UTC).isoformat(),
         )
     return aid

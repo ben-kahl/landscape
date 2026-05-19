@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from landscape.cli.runtime import close_runtime
-from landscape.observability import ensure_cli_logging
+from landscape.observability import IngestLogContext, ensure_cli_logging
 
 
 def _get_runtime():
@@ -31,6 +33,19 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     ingest_parser.add_argument("--session-id", default=None)
     ingest_parser.add_argument("--turn-id", default=None)
     ingest_parser.add_argument("--debug", action="store_true")
+    progress_group = ingest_parser.add_mutually_exclusive_group()
+    progress_group.add_argument(
+        "--progress",
+        action="store_true",
+        default=None,
+        help="Force a Rich progress bar even when stderr is not a TTY.",
+    )
+    progress_group.add_argument(
+        "--no-progress",
+        action="store_false",
+        dest="progress",
+        help="Disable the ingest progress bar.",
+    )
     ingest_parser.set_defaults(func=handle_ingest)
 
     dir_parser = subparsers.add_parser(
@@ -86,6 +101,88 @@ def _format_summary(result) -> str:
     )
 
 
+@dataclass
+class CliIngestProgress(IngestLogContext):
+    def __post_init__(self) -> None:
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TaskProgressColumn,
+            TextColumn,
+            TimeElapsedColumn,
+        )
+
+        self._progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            transient=False,
+        )
+        self._stage_task = self._progress.add_task("Preparing ingest", total=None)
+        self._chunk_task: int | None = None
+
+    def __enter__(self) -> "CliIngestProgress":
+        self._progress.start()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self._progress.stop()
+
+    def emit(
+        self,
+        event: str,
+        *,
+        level: int = 20,
+        always: bool = False,
+        **fields: object,
+    ) -> None:
+        self._update_progress(event, fields)
+        super().emit(event, level=level, always=always, **fields)
+
+    def _update_progress(self, event: str, fields: dict[str, object]) -> None:
+        if event == "ingest_started":
+            self._progress.update(self._stage_task, description="Starting ingest")
+            return
+        if event == "chunking_completed":
+            chunk_count = int(fields.get("chunk_count") or 0)
+            self._progress.update(self._stage_task, description="Chunking complete")
+            if chunk_count:
+                self._chunk_task = self._progress.add_task(
+                    "Extracting chunks",
+                    total=chunk_count,
+                )
+            return
+        if event == "chunk_extraction_completed" and self._chunk_task is not None:
+            chunk_number = int(fields.get("chunk_number") or 0)
+            chunk_count = int(fields.get("chunk_count") or 0)
+            self._progress.update(
+                self._chunk_task,
+                completed=chunk_number,
+                description=f"Extracting chunks {chunk_number}/{chunk_count}",
+            )
+            return
+        if event == "entity_writes_completed":
+            self._progress.update(self._stage_task, description="Entities written")
+            return
+        if event == "relation_upserts_completed":
+            self._progress.update(self._stage_task, description="Relations written")
+            return
+        if event == "ingest_completed":
+            self._progress.update(self._stage_task, description="Ingest complete")
+            return
+        if event == "ingest_failed":
+            self._progress.update(self._stage_task, description="Ingest failed")
+
+
+def _progress_enabled(progress_flag: bool | None) -> bool:
+    if progress_flag is not None:
+        return progress_flag
+    return sys.stderr.isatty()
+
+
 async def _ingest_text(
     text: str,
     title: str,
@@ -93,6 +190,7 @@ async def _ingest_text(
     session_id: str | None = None,
     turn_id: str | None = None,
     debug: bool = False,
+    log_context: IngestLogContext | None = None,
 ):
     pipeline, encoder, neo4j_store, qdrant_store = _get_runtime()
     try:
@@ -107,6 +205,7 @@ async def _ingest_text(
             session_id=session_id,
             turn_id=turn_id,
             debug=debug,
+            log_context=log_context,
         )
     finally:
         await close_runtime(neo4j_store, qdrant_store)
@@ -117,14 +216,33 @@ async def handle_ingest(args: argparse.Namespace) -> int:
     _validate_provenance(parser, args.session_id, args.turn_id)
     path = Path(args.path)
     text = _read_file(parser, path)
-    result = await _ingest_text(
-        text=text,
-        title=args.title or path.stem,
-        source_type=args.source_type,
-        session_id=args.session_id,
-        turn_id=args.turn_id,
-        debug=args.debug,
-    )
+    title = args.title or path.stem
+    if _progress_enabled(args.progress):
+        with CliIngestProgress(
+            title=title,
+            source_type=args.source_type,
+            session_id=args.session_id,
+            turn_id=args.turn_id,
+            debug=args.debug,
+        ) as progress:
+            result = await _ingest_text(
+                text=text,
+                title=title,
+                source_type=args.source_type,
+                session_id=args.session_id,
+                turn_id=args.turn_id,
+                debug=args.debug,
+                log_context=progress,
+            )
+    else:
+        result = await _ingest_text(
+            text=text,
+            title=title,
+            source_type=args.source_type,
+            session_id=args.session_id,
+            turn_id=args.turn_id,
+            debug=args.debug,
+        )
     print(_format_summary(result))
     return 0
 
