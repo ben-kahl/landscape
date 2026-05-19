@@ -60,6 +60,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 from landscape import pipeline  # noqa: E402
 from landscape.embeddings import encoder  # noqa: E402
 from landscape.retrieval.query import retrieve  # noqa: E402
+from landscape.retrieval.render import render_path  # noqa: E402
 from landscape.storage import neo4j_store, qdrant_store  # noqa: E402
 
 QUESTION_TYPE = "single-session-user"
@@ -108,10 +109,21 @@ def _format_search_result(result) -> str:
                 "name": r.name,
                 "type": r.type,
                 "score": round(r.score, 6),
-                "path_memory_fact_ids": r.path_memory_fact_ids,
-                "path_edge_types": r.path_edge_types,
-                "path_edge_subtypes": r.path_edge_subtypes,
-                "path_edge_quantities": r.path_edge_quantities,
+                "retrieval_mode": r.retrieval_mode,
+                "path_str": render_path(r.path),
+                "path": {
+                    "nodes": [{"name": n.name, "type": n.type} for n in r.path.nodes],
+                    "edges": [
+                        {
+                            "type": e.type,
+                            "negated": e.negated,
+                            "subtype": e.subtype,
+                            "memory_fact_id": e.memory_fact_id,
+                            "quantities": e.quantities,
+                        }
+                        for e in r.path.edges
+                    ],
+                },
                 "memory_facts": r.memory_facts,
                 "supporting_assertions": r.supporting_assertions,
             }
@@ -175,7 +187,7 @@ def _generate_answer(client, model_id: str, result, question: str) -> str:
     prompt = (
         "You are answering a question about a person's memories and experiences.\n"
         "The context below is JSON returned by a knowledge graph search tool. "
-        "Each result has a name, type, graph path (path_edge_types), structured facts "
+        "Each result has a name, type, graph path (path_str), structured facts "
         "(memory_facts), and supporting assertions. Use only the context below. "
         'If the context does not contain enough information to answer, respond with exactly: '
         '"I don\'t have that information."\n\n'

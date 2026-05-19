@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import perf_counter
+from typing import Literal
 
 from landscape.embeddings import encoder
 from landscape.observability import RetrievalLogContext, create_retrieval_log_context
@@ -19,6 +20,39 @@ from landscape.storage import neo4j_store, qdrant_store
 # ARE in the entity search results keep their full score regardless.
 _CHUNK_ENTITY_SIM_DISCOUNT = 0.7
 
+_VALUE_KEYS = (
+    "value_text", "value_number", "value_unit", "value_kind", "value_time",
+    "quantity_value", "quantity_unit", "quantity_kind", "time_scope",
+)
+
+
+@dataclass
+class PathNode:
+    name: str
+    type: str
+
+
+@dataclass
+class PathEdge:
+    type: str
+    negated: bool = False
+    subtype: str | None = None
+    memory_fact_id: str | None = None
+    quantities: dict[str, object | None] = field(default_factory=dict)
+
+
+@dataclass
+class EntityPath:
+    nodes: list[PathNode] = field(default_factory=list)
+    edges: list[PathEdge] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if len(self.nodes) > 0 and len(self.nodes) != len(self.edges) + 1:
+            raise ValueError(
+                f"EntityPath invariant violated: {len(self.nodes)} nodes, "
+                f"{len(self.edges)} edges (expected nodes == edges + 1)"
+            )
+
 
 @dataclass
 class RetrievedEntity:
@@ -31,11 +65,8 @@ class RetrievedEntity:
     edge_confidence: float
     score: float
     path_edge_ids: list[str] = field(default_factory=list)
-    path_edge_types: list[str] = field(default_factory=list)
-    path_edge_subtypes: list[str | None] = field(default_factory=list)
-    path_edge_negated: list[bool] = field(default_factory=list)
-    path_edge_quantities: list[dict[str, object | None]] = field(default_factory=list)
-    path_memory_fact_ids: list[str] = field(default_factory=list)
+    path: EntityPath = field(default_factory=EntityPath)
+    retrieval_mode: Literal["vector", "graph"] = "vector"
     memory_facts: list[dict[str, object]] = field(default_factory=list)
     supporting_assertions: list[dict[str, object]] = field(default_factory=list)
 
@@ -255,6 +286,8 @@ async def retrieve(
                 reinforcement=r,
                 edge_confidence=0.0,
                 score=s,
+                path=EntityPath(nodes=[PathNode(name=row["name"], type=row["type"])], edges=[]),
+                retrieval_mode="vector",
             )
 
         # 4. Graph expansion from the seeds that survived hydration (so we don't
@@ -310,11 +343,31 @@ async def retrieve(
                 weights=w,
             )
 
-            path_memory_fact_ids = list(row.get("path_memory_fact_ids") or [])
-            path_edge_types = list(row.get("path_edge_types") or [])
-
             existing = candidates.get(target_id)
             if existing is None or s > existing.score:
+                node_names = list(row.get("path_node_names") or [])
+                node_types = list(row.get("path_node_types") or [])
+                edge_types = list(row.get("path_edge_types") or [])
+                edge_negated = list(row.get("path_edge_negated") or [])
+                edge_subtypes = list(row.get("edge_subtypes") or [])
+                fact_ids = list(row.get("path_memory_fact_ids") or [])
+
+                edges = [
+                    PathEdge(
+                        type=et,
+                        negated=neg,
+                        subtype=sub,
+                        memory_fact_id=fid,
+                    )
+                    for et, neg, sub, fid in zip(
+                        edge_types, edge_negated, edge_subtypes, fact_ids,
+                        strict=False,
+                    )
+                ]
+                nodes = [
+                    PathNode(name=n, type=t)
+                    for n, t in zip(node_names, node_types, strict=False)
+                ]
                 candidates[target_id] = RetrievedEntity(
                     entity_id=target_id,
                     name=row["target_name"],
@@ -325,11 +378,8 @@ async def retrieve(
                     edge_confidence=avg_conf,
                     score=s,
                     path_edge_ids=list(row.get("edge_ids") or []),
-                    path_edge_types=path_edge_types,
-                    path_edge_subtypes=list(row.get("edge_subtypes") or []),
-                    path_edge_negated=list(row.get("path_edge_negated") or []),
-                    path_edge_quantities=list(row.get("edge_quantities") or []),
-                    path_memory_fact_ids=path_memory_fact_ids,
+                    path=EntityPath(nodes=nodes, edges=edges),
+                    retrieval_mode="graph",
                 )
 
         # 5. Session/time allowlist filtering (post-search intersection per spec).
@@ -405,9 +455,10 @@ async def retrieve(
         )
 
         path_fact_ids = [
-            fact_id
+            edge.memory_fact_id
             for item in ranked
-            for fact_id in item.path_memory_fact_ids
+            for edge in item.path.edges
+            if edge.memory_fact_id is not None
         ]
         if path_fact_ids:
             stage_started_at = log.set_stage("path_hydration_completed")
@@ -425,26 +476,22 @@ async def retrieve(
                 if fact_id is None:
                     continue
                 assertions_by_fact_id.setdefault(str(fact_id), []).append(assertion)
-            _VALUE_KEYS = (
-                "value_text", "value_number", "value_unit", "value_kind", "value_time",
-                "quantity_value", "quantity_unit", "quantity_kind", "time_scope",
-            )
             for item in ranked:
+                edge_fact_ids = [
+                    e.memory_fact_id for e in item.path.edges if e.memory_fact_id is not None
+                ]
                 item.memory_facts = [
-                    facts_by_id[fact_id]
-                    for fact_id in item.path_memory_fact_ids
-                    if fact_id in facts_by_id
+                    facts_by_id[fid] for fid in edge_fact_ids if fid in facts_by_id
                 ]
                 item.supporting_assertions = [
                     assertion
-                    for fact_id in item.path_memory_fact_ids
-                    for assertion in assertions_by_fact_id.get(fact_id, [])
+                    for fid in edge_fact_ids
+                    for assertion in assertions_by_fact_id.get(fid, [])
                 ]
-                item.path_edge_quantities = [
-                    {k: facts_by_id[fid].get(k) for k in _VALUE_KEYS}
-                    if fid in facts_by_id else {}
-                    for fid in item.path_memory_fact_ids
-                ]
+                for edge in item.path.edges:
+                    if edge.memory_fact_id is not None and edge.memory_fact_id in facts_by_id:
+                        fact = facts_by_id[edge.memory_fact_id]
+                        edge.quantities = {k: fact.get(k) for k in _VALUE_KEYS}
             log.emit(
                 "path_hydration_completed",
                 hydrated_fact_count=len(memory_facts),

@@ -10,6 +10,7 @@ from landscape.observability.retrieval_logging import (
     ensure_query_cli_logging,
     ensure_retrieval_log_sink,
 )
+from landscape.observability.weave_tracing import traced
 
 __all__ = [
     "IngestLogContext",
@@ -20,4 +21,5 @@ __all__ = [
     "ensure_ingest_log_sink",
     "ensure_query_cli_logging",
     "ensure_retrieval_log_sink",
+    "traced",
 ]

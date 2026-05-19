@@ -17,8 +17,29 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import AnyHttpUrl
 
 from landscape.config import settings
+from landscape.retrieval.render import (
+    build_compact_payload as _build_compact_output,
+)
+from landscape.retrieval.render import (
+    render_fact as _render_fact,
+)
+from landscape.retrieval.render import (
+    render_path as _render_path,
+)
+from landscape.retrieval.render import (
+    value_suffix as _value_suffix,
+)
 from landscape.security import require_current_scope
 from landscape.storage.oauth_provider import LandscapeOAuthProvider
+
+# Re-export for tests and downstream callers that imported these names from
+# mcp_app before the helpers moved into landscape.retrieval.render.
+__all__ = [
+    "_render_path",
+    "_render_fact",
+    "_value_suffix",
+    "_build_compact_output",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +117,8 @@ def _schedule_auto_ingestion(
     return task
 
 
+
+
 @mcp.tool()
 async def search(
     query: str,
@@ -106,8 +129,14 @@ async def search(
     since_hours: int | None = None,
     include_historical: bool = False,
     debug: bool = False,
+    verbose: bool = False,
 ) -> str:
-    """Hybrid retrieval over the Landscape knowledge graph."""
+    """Hybrid retrieval over the Landscape knowledge graph.
+
+    Returns a compact payload by default: ranked entities with rendered path
+    strings reference a deduplicated `facts` table. Set verbose=True for the
+    legacy payload with raw memory_facts and supporting_assertions.
+    """
     require_current_scope("agent")
     from landscape.retrieval.query import retrieve
 
@@ -126,33 +155,49 @@ async def search(
         debug=debug,
         include_historical=include_historical,
     )
-    output = {
-        "results": [
-            {
-                "name": r.name,
-                "type": r.type,
-                "score": round(r.score, 6),
-                "path_memory_fact_ids": r.path_memory_fact_ids,
-                "path_edge_types": r.path_edge_types,
-                "path_edge_subtypes": r.path_edge_subtypes,
-                "path_edge_quantities": r.path_edge_quantities,
-                "memory_facts": r.memory_facts,
-                "supporting_assertions": r.supporting_assertions,
-            }
-            for r in result.results
-        ],
-        "touched_entity_count": len(result.touched_entity_ids),
-        "chunks": [
-            {
-                "text": c.text,
-                "source_doc": c.source_doc,
-                "doc_id": c.doc_id,
-                "position": c.position,
-                "score": round(c.score, 6),
-            }
-            for c in result.chunks
-        ],
-    }
+    if verbose:
+        output = {
+            "results": [
+                {
+                    "name": r.name,
+                    "type": r.type,
+                    "score": round(r.score, 6),
+                    "retrieval_mode": r.retrieval_mode,
+                    "path_str": _render_path(r.path),
+                    "path": {
+                        "nodes": [
+                            {"name": n.name, "type": n.type} for n in r.path.nodes
+                        ],
+                        "edges": [
+                            {
+                                "type": e.type,
+                                "negated": e.negated,
+                                "subtype": e.subtype,
+                                "memory_fact_id": e.memory_fact_id,
+                                "quantities": e.quantities,
+                            }
+                            for e in r.path.edges
+                        ],
+                    },
+                    "memory_facts": r.memory_facts,
+                    "supporting_assertions": r.supporting_assertions,
+                }
+                for r in result.results
+            ],
+            "touched_entity_count": len(result.touched_entity_ids),
+            "chunks": [
+                {
+                    "text": c.text,
+                    "source_doc": c.source_doc,
+                    "doc_id": c.doc_id,
+                    "position": c.position,
+                    "score": round(c.score, 6),
+                }
+                for c in result.chunks
+            ],
+        }
+    else:
+        output = _build_compact_output(result)
     return json.dumps(output)
 
 

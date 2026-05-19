@@ -568,12 +568,14 @@ async def test_search_returns_results_shape(http_client):
     assert "results" in data
     assert "touched_entity_count" in data
     assert isinstance(data["results"], list)
+    assert "facts" in data
     if data["results"]:
         first = data["results"][0]
         assert "name" in first
         assert "type" in first
         assert "score" in first
-        assert "path_edge_types" in first
+        assert "path" in first
+        assert "fact_ids" in first
 
 
 @pytest.mark.unit
@@ -1085,5 +1087,234 @@ async def test_search_returns_chunks(http_client):
     assert len(data["chunks"]) <= 3
 
     for chunk in data["chunks"]:
-        for key in ("text", "source_doc", "doc_id", "position", "score"):
+        for key in ("preview", "source", "score"):
             assert key in chunk, f"Chunk missing key '{key}': {chunk}"
+
+
+# ---------------------------------------------------------------------------
+# Compact-formatter rendering (pure unit tests — no DB)
+# ---------------------------------------------------------------------------
+
+
+def _fact(**overrides):
+    base = {
+        "memory_fact_id": "fact:1",
+        "family": "USES",
+        "subtype": None,
+        "negated": False,
+        "confidence_agg": 0.9,
+        "support_count": 1,
+        "subject_name": "Project Aurora",
+        "subject_type": "Project",
+        "object_name": "PostgreSQL",
+        "object_type": "Technology",
+        "value_text": None,
+        "value_number": None,
+        "value_unit": None,
+        "value_kind": None,
+        "value_time": None,
+        "quantity_value": None,
+        "quantity_unit": None,
+        "quantity_kind": None,
+        "time_scope": None,
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.unit
+def test_render_fact_no_value():
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(_fact())
+    assert text == "Project Aurora [Project] -[USES]-> PostgreSQL [Technology]"
+
+
+@pytest.mark.unit
+def test_render_fact_includes_subtype_and_negation():
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(_fact(family="LOCATED_IN", subtype="satellite_office", negated=True))
+    assert text == (
+        "Project Aurora [Project] -[NOT LOCATED_IN/satellite_office]-> "
+        "PostgreSQL [Technology]"
+    )
+
+
+@pytest.mark.unit
+def test_render_fact_value_text():
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(
+        _fact(family="HAS_TITLE", value_text="VP of Engineering")
+    )
+    assert text.endswith('= "VP of Engineering"')
+
+
+@pytest.mark.unit
+def test_render_fact_value_number_with_unit():
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(
+        _fact(family="HAS_LATENCY", value_number=12.0, value_unit="ms")
+    )
+    assert text.endswith("= 12.0 ms")
+
+
+@pytest.mark.unit
+def test_render_fact_value_number_no_unit():
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(_fact(family="HAS_COUNT", value_number=47))
+    assert text.endswith("= 47")
+
+
+@pytest.mark.unit
+def test_render_fact_quantity_fallback():
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(
+        _fact(family="HAS_FLEET_SIZE", quantity_value=120, quantity_unit="robot")
+    )
+    assert text.endswith("= 120 robot")
+
+
+@pytest.mark.unit
+def test_render_fact_value_time():
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(_fact(family="LAUNCHED_AT", value_time="2026-01-15"))
+    assert text.endswith("= 2026-01-15")
+
+
+@pytest.mark.unit
+def test_render_fact_value_text_takes_precedence_over_number():
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(
+        _fact(family="HAS_STATUS", value_text="green", value_number=99)
+    )
+    assert text.endswith('= "green"')
+
+
+@pytest.mark.unit
+def test_render_fact_zero_value_number_renders():
+    """value_number=0 must still render — checks `is not None` guard."""
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(_fact(family="HAS_DEFECTS", value_number=0, value_unit="count"))
+    assert text.endswith("= 0 count")
+
+
+@pytest.mark.unit
+def test_render_fact_unary_attribute_with_value():
+    """Unary HAS_ATTRIBUTE facts have no object entity — render value bare."""
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(
+        _fact(
+            family="HAS_ATTRIBUTE",
+            subject_name="Project Sentinel",
+            subject_type="Project",
+            object_entity_id=None,
+            object_name=None,
+            object_type=None,
+            value_number=8,
+            value_kind="count",
+        )
+    )
+    assert text == "Project Sentinel [Project] -[HAS_ATTRIBUTE]-> 8"
+
+
+@pytest.mark.unit
+def test_render_fact_unary_attribute_no_value():
+    """Unary fact with no object AND no value renders an honest placeholder."""
+    from landscape.mcp_app import _render_fact
+
+    text = _render_fact(
+        _fact(
+            family="HAS_ATTRIBUTE",
+            object_entity_id=None,
+            object_name=None,
+            object_type=None,
+        )
+    )
+    assert text.endswith("(no object)")
+
+
+@pytest.mark.unit
+def test_build_compact_output_dedupes_identical_fact_text():
+    from landscape.mcp_app import _build_compact_output
+    from landscape.retrieval.query import RetrievalResult, RetrievedEntity
+
+    duplicate_a = _fact(memory_fact_id="fact:a", confidence_agg=0.8)
+    duplicate_b = _fact(memory_fact_id="fact:b", confidence_agg=0.95)
+    distinct = _fact(
+        memory_fact_id="fact:c", object_name="MongoDB", confidence_agg=0.7
+    )
+
+    ent = RetrievedEntity(
+        entity_id="e1",
+        name="Project Aurora",
+        type="Project",
+        distance=0,
+        vector_sim=1.0,
+        reinforcement=0.0,
+        edge_confidence=0.9,
+        score=2.0,
+        memory_facts=[duplicate_a, duplicate_b, distinct],
+    )
+    result = RetrievalResult(
+        query="aurora db",
+        results=[ent],
+        touched_entity_ids=["e1"],
+        touched_edge_ids=[],
+        chunks=[],
+    )
+
+    out = _build_compact_output(result)
+
+    assert len(out["facts"]) == 2, "duplicates by rendered text must collapse"
+    canonical = out["facts"][0]
+    assert canonical["id"] == "fact:a"
+    assert canonical["support"] == 2, "support_count should accumulate on dedup"
+    assert canonical["confidence"] == 0.95, "max confidence should win"
+    assert out["results"][0]["fact_ids"] == ["fact:a", "fact:c"]
+
+
+@pytest.mark.unit
+def test_build_compact_output_numeric_value_round_trip():
+    from landscape.mcp_app import _build_compact_output
+    from landscape.retrieval.query import RetrievalResult, RetrievedEntity
+
+    fact = _fact(
+        memory_fact_id="fact:fleet",
+        family="HAS_FLEET_SIZE",
+        subject_name="Helios Robotics",
+        subject_type="Organization",
+        object_name="warehouse robot",
+        object_type="Concept",
+        value_number=47,
+        value_unit="unit",
+    )
+    ent = RetrievedEntity(
+        entity_id="e1",
+        name="Helios Robotics",
+        type="Organization",
+        distance=0,
+        vector_sim=1.0,
+        reinforcement=0.0,
+        edge_confidence=0.95,
+        score=2.0,
+        memory_facts=[fact],
+    )
+    out = _build_compact_output(
+        RetrievalResult(
+            query="fleet size",
+            results=[ent],
+            touched_entity_ids=["e1"],
+            touched_edge_ids=[],
+            chunks=[],
+        )
+    )
+    assert out["facts"][0]["text"].endswith("= 47 unit")

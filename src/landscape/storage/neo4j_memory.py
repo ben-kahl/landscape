@@ -32,7 +32,7 @@ async def get_memory_fact_explanation(memory_fact_id: str) -> dict[str, Any] | N
                    object.name AS object_name,
                    object.type AS object_type,
                    rel.valid_until AS memory_rel_valid_until,
-                   (rel.valid_until IS NULL) AS memory_rel_current
+                   (rel IS NOT NULL AND rel.valid_until IS NULL) AS memory_rel_current
             """,
             fact_id=memory_fact_id,
         )
@@ -84,7 +84,7 @@ async def get_memory_fact_details_batch(
                    object.name AS object_name,
                    object.type AS object_type,
                    rel.valid_until AS memory_rel_valid_until,
-                   (rel.valid_until IS NULL) AS memory_rel_current,
+                   (rel IS NOT NULL AND rel.valid_until IS NULL) AS memory_rel_current,
                    [a IN assertions WHERE a IS NOT NULL | {
                      assertion_id: a.id,
                      source_kind: a.source_kind,
@@ -143,8 +143,9 @@ async def get_current_fact_details_for_entities(
             WHERE subject.id IN $entity_ids
               AND fact.valid_until IS NULL
             OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
+            OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: fact.id}]->(object)
             OPTIONAL MATCH (a:Assertion)-[:SUPPORTS]->(fact)
-            WITH subject, fact, object, collect(DISTINCT a) AS assertions
+            WITH subject, fact, object, rel, collect(DISTINCT a) AS assertions
             RETURN fact.id AS memory_fact_id,
                    fact.family AS family,
                    fact.valid_until AS valid_until,
@@ -170,8 +171,8 @@ async def get_current_fact_details_for_entities(
                    object.id AS object_entity_id,
                    object.name AS object_name,
                    object.type AS object_type,
-                   null AS memory_rel_valid_until,
-                   false AS memory_rel_current,
+                   rel.valid_until AS memory_rel_valid_until,
+                   (rel IS NOT NULL AND rel.valid_until IS NULL) AS memory_rel_current,
                    [a IN assertions WHERE a IS NOT NULL | {
                      assertion_id: a.id,
                      source_kind: a.source_kind,
@@ -231,12 +232,16 @@ async def bfs_expand_memory_rel(
       AND ALL(r IN rels WHERE r.valid_until IS NULL)
     RETURN
       seed.id AS seed_id,
+      seed.name AS seed_name,
+      seed.type AS seed_type,
       target.id AS target_id,
       target.name AS target_name,
       target.type AS target_type,
       coalesce(target.access_count, 0) AS target_access_count,
       target.last_accessed AS target_last_accessed,
       length(path) AS distance,
+      [n IN nodes(path) | n.name] AS path_node_names,
+      [n IN nodes(path) | n.type] AS path_node_types,
       [r IN rels | r.memory_fact_id] AS path_memory_fact_ids,
       [r IN rels | elementId(r)] AS edge_ids,
       [r IN rels | r.family] AS path_edge_types,
