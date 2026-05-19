@@ -3,6 +3,7 @@ import ollama
 from landscape.config import LLM_PROFILES, settings
 from landscape.extraction.schema import Extraction
 from landscape.middleware.token_counter import increment_ollama_tokens
+from landscape.observability.weave_tracing import traced
 
 _SYSTEM_PROMPT = (
     "You are a precise knowledge-graph extractor. Given a passage of text, extract:\n"
@@ -230,6 +231,7 @@ def _num_ctx() -> int:
     return profile.num_ctx if profile is not None else 8192
 
 
+@traced(name="extraction.extract")
 def extract(text: str) -> Extraction:
     client = ollama.Client(host=settings.ollama_url)
     prompt = f"{_SYSTEM_PROMPT}\n\n{text}"

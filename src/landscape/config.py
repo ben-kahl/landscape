@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     decay_lambda: float = math.log(2) / (7 * 86400)
     reinforcement_cap: float = 2.0
 
+    # Weave (W&B) tracing for the LLM extraction pipeline. Unset = disabled.
+    # Set to e.g. "landscape-extraction" or "<entity>/landscape-extraction".
+    weave_project: str | None = None
+
     mcp_issuer_url: str = "http://127.0.0.1:8000"
     auth_update_last_used_interval_seconds: int = 300
     # Local SQLite file backing the api-client / bearer-secret tables. Default
