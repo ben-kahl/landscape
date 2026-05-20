@@ -119,14 +119,13 @@ async def summarize() -> dict[str, int]:
               WHERE r.valid_until IS NULL
               RETURN count(r) AS live_memory_rels
             }
-            CALL () { MATCH ()-[r:MENTIONS_CHUNK]->() RETURN count(r) AS mentions_chunk }
             CALL () {
               MATCH (c:Chunk)
               WHERE size(coalesce(c.mentioned_entity_ids, [])) > 0
               RETURN count(c) AS chunks_with_mentions
             }
             RETURN documents, entities, chunks, live_memory_rels,
-                   mentions_chunk, chunks_with_mentions
+                   chunks_with_mentions
             """
         )
         record = await result.single()

@@ -317,20 +317,6 @@ async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict
     return {"conversation": conversation, "turns": turns}
 
 
-async def link_assertion_to_chunk(assertion_id: str, chunk_id: str) -> None:
-    driver = get_driver()
-    async with driver.session() as session:
-        await session.run(
-            """
-            MATCH (a:Assertion {id: $assertion_id})
-            MATCH (c:Chunk {chunk_id: $chunk_id})
-            MERGE (a)-[:MENTIONS_CHUNK]->(c)
-            """,
-            assertion_id=assertion_id,
-            chunk_id=chunk_id,
-        )
-
-
 async def set_chunk_mentions(
     chunk_id: str,
     *,

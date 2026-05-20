@@ -51,7 +51,6 @@ Primary relationships:
 | `INGESTED_IN` | Document-to-turn write provenance |
 | `HAS_TURN` | Conversation-to-turn containment |
 | `ASSERTS` | Document/turn source to raw assertion |
-| `MENTIONS_CHUNK` | Legacy assertion-to-chunk provenance; no longer written by ingestion |
 | `SUBJECT_ENTITY` | Assertion subject binding |
 | `OBJECT_ENTITY` | Assertion object binding |
 | `SUPPORTS` | Assertion to normalized memory fact |

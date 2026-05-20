@@ -264,7 +264,7 @@ async def test_ingest_promotes_additive_family_into_memory_rel(http_client, neo4
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_ingest_does_not_create_dense_mentions_chunk_edges(
+async def test_ingest_writes_sparse_chunk_provenance(
     http_client, neo4j_driver, monkeypatch
 ):
     from landscape import pipeline
@@ -331,9 +331,7 @@ async def test_ingest_does_not_create_dense_mentions_chunk_edges(
         result = await session.run(
             """
             MATCH (d:Document {title: $title})-[:ASSERTS]->(a:Assertion)
-            OPTIONAL MATCH (a)-[r:MENTIONS_CHUNK]->(:Chunk)
-            RETURN count(r) AS mentions_chunk_edges,
-                   collect(a.chunk_refs) AS assertion_chunk_refs
+            RETURN collect(a.chunk_refs) AS assertion_chunk_refs
             """,
             title=title,
         )
@@ -358,7 +356,6 @@ async def test_ingest_does_not_create_dense_mentions_chunk_edges(
         [row["chunk_id"] for row in chunk_rows]
     )
 
-    assert record["mentions_chunk_edges"] == 0
     assert all(len(refs or []) <= 1 for refs in record["assertion_chunk_refs"])
     assert len(chunk_rows) == 2
     assert len(chunk_rows[0]["mentioned_entity_ids"]) == 2

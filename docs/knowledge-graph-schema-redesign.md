@@ -50,7 +50,6 @@
   | Edge | From -> To | Role | Source of truth | Notes |
   |---|---|---|---|---|
   | ASSERTS | Document/Turn -> Assertion | Source provenance | Yes | One source can assert many claims |
-  | MENTIONS_CHUNK | Assertion -> Chunk | Legacy fine-grained textual provenance | No | Deprecated; ingestion stores chunk mentions on Chunk properties instead |
   | SUBJECT | Assertion -> Entity | Raw claim subject | Yes | Required |
   | OBJECT | Assertion -> Entity | Raw claim object | Yes | Required |
   | SUPPORTS | Assertion -> MemoryFact | Evidence link | Yes | Many assertions may support one fact |
