@@ -50,6 +50,8 @@ async def persist_assertion_and_maybe_promote(
         quantity_unit=normalized.quantity_unit,
         quantity_kind=normalized.quantity_kind,
         time_scope=normalized.time_scope,
+        effective_from=payload.effective_from,
+        effective_until=payload.effective_until,
         confidence=payload.confidence,
         assertion_id=assertion_id,
         negated=normalized.negated,

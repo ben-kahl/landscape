@@ -20,6 +20,8 @@ class AssertionPayload:
     quantity_unit: str | None = None
     quantity_kind: str | None = None
     time_scope: str | None = None
+    effective_from: str | None = None
+    effective_until: str | None = None
     negated: bool = False
     chunk_refs: list[tuple[str, int | None, int | None]] = field(default_factory=list)
 

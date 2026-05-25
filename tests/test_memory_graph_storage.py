@@ -949,3 +949,32 @@ async def test_memory_fact_stores_explicit_effective_range(neo4j_driver):
     assert record["effective_until"] == "2023-09-30T23:59:59+00:00"
     assert edge["effective_from"] == record["effective_from"]
     assert edge["effective_until"] == record["effective_until"]
+
+
+@pytest.mark.unit
+def test_assertion_payload_accepts_effective_fields():
+    from landscape.memory_graph import AssertionPayload
+
+    payload = AssertionPayload(
+        source_kind="document",
+        source_id="x",
+        raw_subject_text="Alice",
+        raw_relation_text="worked for",
+        raw_object_text="Acme",
+        confidence=0.9,
+        effective_from="2020-01-01",
+        effective_until="2023-12-31",
+    )
+    assert payload.effective_from == "2020-01-01"
+    assert payload.effective_until == "2023-12-31"
+
+    default = AssertionPayload(
+        source_kind="document",
+        source_id="x",
+        raw_subject_text="Alice",
+        raw_relation_text="works for",
+        raw_object_text="Zylos",
+        confidence=0.9,
+    )
+    assert default.effective_from is None
+    assert default.effective_until is None
