@@ -111,10 +111,10 @@ async def test_add_relation_default_provenance(http_client, neo4j_driver):
                           (o:Entity {name: 'RelObj1'})
             RETURN a.source_kind AS source_kind,
                    a.source_id AS source_id,
-                   f.valid_until AS fact_valid_until,
-                   (f.valid_until IS NULL) AS fact_current,
-                   r.valid_until AS rel_valid_until,
-                   (r.valid_until IS NULL) AS rel_current,
+                   f.system_until AS fact_system_until,
+                   (f.system_until IS NULL) AS fact_current,
+                   r.system_until AS rel_system_until,
+                   (r.system_until IS NULL) AS rel_current,
                    count(r) AS rel_count,
                    count(f) AS fact_count
             """,
@@ -126,8 +126,8 @@ async def test_add_relation_default_provenance(http_client, neo4j_driver):
     assert record is not None
     assert record["source_kind"] == "turn"
     assert record["source_id"] == "s1:t1"
-    assert record["fact_valid_until"] is None
-    assert record["rel_valid_until"] is None
+    assert record["fact_system_until"] is None
+    assert record["rel_system_until"] is None
     assert record["fact_current"] is True
     assert record["rel_current"] is True
     assert record["fact_count"] == 1
@@ -174,8 +174,8 @@ async def test_add_relation_turn_assertion_links_are_stable(http_client, neo4j_d
             RETURN count(a) AS assertion_count,
                    count(f) AS fact_count,
                    count(r) AS rel_count,
-                   max(f.valid_until) AS fact_valid_until,
-                   max(r.valid_until) AS rel_valid_until
+                   max(f.system_until) AS fact_system_until,
+                   max(r.system_until) AS rel_system_until
             """,
             aid=first.assertion_id,
             fid=first.memory_fact_id,
@@ -186,8 +186,8 @@ async def test_add_relation_turn_assertion_links_are_stable(http_client, neo4j_d
     assert record["assertion_count"] == 1
     assert record["fact_count"] == 1
     assert record["rel_count"] == 1
-    assert record["fact_valid_until"] is None
-    assert record["rel_valid_until"] is None
+    assert record["fact_system_until"] is None
+    assert record["rel_system_until"] is None
 
 
 @pytest.mark.asyncio
@@ -310,11 +310,11 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
                 OPTIONAL MATCH (s:Entity)
                       -[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]
                       ->(o:Entity)
-                RETURN f.valid_until AS fact_valid_until,
-                       (f.valid_until IS NULL) AS fact_current,
+                RETURN f.system_until AS fact_system_until,
+                       (f.system_until IS NULL) AS fact_current,
                        o.name AS target,
-                       r.valid_until AS rel_valid_until,
-                       (r.valid_until IS NULL) AS rel_current
+                       r.system_until AS rel_system_until,
+                       (r.system_until IS NULL) AS rel_current
                 """,
                 fid=first.memory_fact_id,
             )
@@ -326,11 +326,11 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
                 OPTIONAL MATCH (s:Entity)
                       -[r:MEMORY_REL {memory_fact_id: $fid, family: 'WORKS_FOR'}]
                       ->(o:Entity)
-                RETURN f.valid_until AS fact_valid_until,
-                       (f.valid_until IS NULL) AS fact_current,
+                RETURN f.system_until AS fact_system_until,
+                       (f.system_until IS NULL) AS fact_current,
                        o.name AS target,
-                       r.valid_until AS rel_valid_until,
-                       (r.valid_until IS NULL) AS rel_current
+                       r.system_until AS rel_system_until,
+                       (r.system_until IS NULL) AS rel_current
                 """,
                 fid=second.memory_fact_id,
             )
@@ -338,8 +338,8 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
         result = await session.run(
             """
             MATCH (f:MemoryFact {id: $fid})
-            RETURN f.valid_until AS valid_until,
-                   (f.valid_until IS NULL) AS current
+            RETURN f.system_until AS system_until,
+                   (f.system_until IS NULL) AS current
             """,
             fid=first.memory_fact_id,
         )
@@ -355,11 +355,11 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
     assert new_fact_rec is not None
     assert old_fact_rec["target"] == old_org_name
     assert new_fact_rec["target"] == new_org_name
-    assert old_fact_rec["fact_valid_until"] is not None
+    assert old_fact_rec["fact_system_until"] is not None
     assert new_fact_rec["fact_current"] is True
-    assert old_fact_rec["rel_valid_until"] is not None
+    assert old_fact_rec["rel_system_until"] is not None
     assert new_fact_rec["rel_current"] is True
-    assert old_fact is not None and old_fact["valid_until"] is not None
+    assert old_fact is not None and old_fact["system_until"] is not None
 
 
 @pytest.mark.asyncio

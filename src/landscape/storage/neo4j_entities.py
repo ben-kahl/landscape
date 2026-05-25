@@ -292,7 +292,7 @@ async def get_rankable_entities(
             OPTIONAL MATCH (e)-[r:MEMORY_REL]-()
             WITH e,
                  count(r) AS total_edges,
-                 sum(CASE WHEN r.valid_until IS NULL THEN 1 ELSE 0 END) AS valid_edges
+                 sum(CASE WHEN r.system_until IS NULL THEN 1 ELSE 0 END) AS valid_edges
             {liveness_filter}
             RETURN e.id AS entity_id,
                    e.name AS name,

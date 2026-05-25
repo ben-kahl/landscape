@@ -17,8 +17,8 @@ async def get_memory_fact_explanation(memory_fact_id: str) -> dict[str, Any] | N
             OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: $fact_id}]->(object)
             RETURN fact.id AS fact_id,
                    fact.family AS family,
-                   fact.valid_until AS valid_until,
-                   (fact.valid_until IS NULL) AS current,
+                   fact.system_until AS system_until,
+                   (fact.system_until IS NULL) AS current,
                    fact.fact_key AS fact_key,
                    fact.slot_key AS slot_key,
                    fact.subtype AS subtype,
@@ -31,8 +31,8 @@ async def get_memory_fact_explanation(memory_fact_id: str) -> dict[str, Any] | N
                    object.id AS object_entity_id,
                    object.name AS object_name,
                    object.type AS object_type,
-                   rel.valid_until AS memory_rel_valid_until,
-                   (rel IS NOT NULL AND rel.valid_until IS NULL) AS memory_rel_current
+                   rel.system_until AS memory_rel_system_until,
+                   (rel IS NOT NULL AND rel.system_until IS NULL) AS memory_rel_current
             """,
             fact_id=memory_fact_id,
         )
@@ -60,8 +60,8 @@ async def get_memory_fact_details_batch(
             WITH fact, subject, object, rel, collect(DISTINCT a) AS assertions
             RETURN fact.id AS memory_fact_id,
                    fact.family AS family,
-                   fact.valid_until AS valid_until,
-                   (fact.valid_until IS NULL) AS current,
+                   fact.system_until AS system_until,
+                   (fact.system_until IS NULL) AS current,
                    fact.fact_key AS fact_key,
                    fact.slot_key AS slot_key,
                    fact.subtype AS subtype,
@@ -83,8 +83,8 @@ async def get_memory_fact_details_batch(
                    object.id AS object_entity_id,
                    object.name AS object_name,
                    object.type AS object_type,
-                   rel.valid_until AS memory_rel_valid_until,
-                   (rel IS NOT NULL AND rel.valid_until IS NULL) AS memory_rel_current,
+                   rel.system_until AS memory_rel_system_until,
+                   (rel IS NOT NULL AND rel.system_until IS NULL) AS memory_rel_current,
                    [a IN assertions WHERE a IS NOT NULL | {
                      assertion_id: a.id,
                      source_kind: a.source_kind,
@@ -141,15 +141,15 @@ async def get_current_fact_details_for_entities(
             """
             MATCH (subject:Entity)-[:AS_SUBJECT]->(fact:MemoryFact)
             WHERE subject.id IN $entity_ids
-              AND fact.valid_until IS NULL
+              AND fact.system_until IS NULL
             OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
             OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: fact.id}]->(object)
             OPTIONAL MATCH (a:Assertion)-[:SUPPORTS]->(fact)
             WITH subject, fact, object, rel, collect(DISTINCT a) AS assertions
             RETURN fact.id AS memory_fact_id,
                    fact.family AS family,
-                   fact.valid_until AS valid_until,
-                   (fact.valid_until IS NULL) AS current,
+                   fact.system_until AS system_until,
+                   (fact.system_until IS NULL) AS current,
                    fact.fact_key AS fact_key,
                    fact.slot_key AS slot_key,
                    fact.subtype AS subtype,
@@ -171,8 +171,8 @@ async def get_current_fact_details_for_entities(
                    object.id AS object_entity_id,
                    object.name AS object_name,
                    object.type AS object_type,
-                   rel.valid_until AS memory_rel_valid_until,
-                   (rel IS NOT NULL AND rel.valid_until IS NULL) AS memory_rel_current,
+                   rel.system_until AS memory_rel_system_until,
+                   (rel IS NOT NULL AND rel.system_until IS NULL) AS memory_rel_current,
                    [a IN assertions WHERE a IS NOT NULL | {
                      assertion_id: a.id,
                      source_kind: a.source_kind,
@@ -226,7 +226,7 @@ async def bfs_expand_memory_rel(
     if not seed_ids:
         return []
     temporal_filter = (
-        "" if include_historical else "AND ALL(r IN rels WHERE r.valid_until IS NULL)"
+        "" if include_historical else "AND ALL(r IN rels WHERE r.system_until IS NULL)"
     )
     query = f"""
     MATCH (seed:Entity) WHERE seed.id IN $seed_ids
