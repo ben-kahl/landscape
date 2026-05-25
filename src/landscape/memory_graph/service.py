@@ -20,8 +20,9 @@ async def persist_assertion_and_maybe_promote(
     subject_entity_id: str | None,
     object_entity_id: str | None,
     chunk_ids: list[str],
+    now: str | None = None,
 ) -> PersistenceResult:
-    assertion_id = await neo4j_store.merge_assertion(payload)
+    assertion_id = await neo4j_store.merge_assertion(payload, now=now)
     await neo4j_store.link_source_to_assertion(source_kind, source_node_id, assertion_id)
     if subject_entity_id is not None:
         await neo4j_store.link_assertion_subject(assertion_id, subject_entity_id)
@@ -55,5 +56,6 @@ async def persist_assertion_and_maybe_promote(
         confidence=payload.confidence,
         assertion_id=assertion_id,
         negated=normalized.negated,
+        now=now,
     )
     return PersistenceResult(assertion_id=assertion_id, fact_id=fact_id, outcome=outcome)

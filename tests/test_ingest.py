@@ -424,6 +424,7 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
         subject_entity_id,
         object_entity_id,
         chunk_ids,
+        now=None,
     ):
         captured_relation_kwargs.update(
             {
@@ -532,6 +533,7 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
         subject_entity_id,
         object_entity_id,
         chunk_ids,
+        now=None,
     ):
         return PersistenceResult(
             assertion_id="assertion-1",
@@ -634,6 +636,7 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
         subject_entity_id,
         object_entity_id,
         chunk_ids,
+        now=None,
     ):
         return PersistenceResult(
             assertion_id="assertion-2",
@@ -732,6 +735,7 @@ async def test_ingest_logs_failure_with_failed_stage(monkeypatch, caplog):
         subject_entity_id,
         object_entity_id,
         chunk_ids,
+        now=None,
     ):
         return PersistenceResult(
             assertion_id="assertion-3",

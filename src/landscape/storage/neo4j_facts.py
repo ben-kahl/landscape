@@ -209,6 +209,7 @@ async def create_memory_fact_version(
     confidence: float,
     assertion_id: str,
     negated: bool = False,
+    now: str | None = None,
 ) -> str:
     subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
     object_entity_id = (
@@ -240,7 +241,7 @@ async def create_memory_fact_version(
                 confidence=confidence,
                 assertion_id=assertion_id,
                 negated=negated,
-                now=datetime.now(UTC).isoformat(),
+                now=now or datetime.now(UTC).isoformat(),
             )
             await tx.commit()
             return fact_id
@@ -269,6 +270,7 @@ async def upsert_memory_fact_from_assertion(
     confidence: float,
     assertion_id: str,
     negated: bool = False,
+    now: str | None = None,
 ) -> tuple[str, str]:
     family_cfg = FAMILY_REGISTRY[family]
     subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
@@ -314,6 +316,7 @@ async def upsert_memory_fact_from_assertion(
             confidence=confidence,
             assertion_id=assertion_id,
             negated=negated,
+            now=now,
         )
         if fact_id in current_fact_ids:
             return fact_id, "reinforced"
@@ -324,7 +327,7 @@ async def upsert_memory_fact_from_assertion(
     # Additive path with cross-polarity supersession
     opposite_negated = not negated
     driver = get_driver()
-    now = datetime.now(UTC).isoformat()
+    now = now or datetime.now(UTC).isoformat()
 
     # Check for a live opposite-polarity fact on the same (subject, family, object/value)
     # and retire it if found.
@@ -438,8 +441,9 @@ async def upsert_memory_fact_from_assertion(
         confidence=confidence,
         assertion_id=assertion_id,
         negated=negated,
+        now=now,
     )
-    await materialize_memory_rel(fact_id)
+    await materialize_memory_rel(fact_id, now=now)
     if existing_record is not None:
         return fact_id, "reinforced"
     if opposite_fact_id is not None:
@@ -447,8 +451,8 @@ async def upsert_memory_fact_from_assertion(
     return fact_id, "created"
 
 
-async def materialize_memory_rel(memory_fact_id: str) -> None:
-    now = datetime.now(UTC).isoformat()
+async def materialize_memory_rel(memory_fact_id: str, *, now: str | None = None) -> None:
+    now = now or datetime.now(UTC).isoformat()
     driver = get_driver()
     async with driver.session() as session:
         tx = await session.begin_transaction()
@@ -480,6 +484,7 @@ async def supersede_single_current_fact(
     confidence: float,
     assertion_id: str,
     negated: bool = False,
+    now: str | None = None,
 ) -> str:
     subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
     object_entity_id = (
@@ -503,7 +508,7 @@ async def supersede_single_current_fact(
         value_time=value_time,
     )
     driver = get_driver()
-    now = datetime.now(UTC).isoformat()
+    now = now or datetime.now(UTC).isoformat()
     async with driver.session() as session:
         tx = await session.begin_transaction()
         try:
