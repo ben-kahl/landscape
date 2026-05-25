@@ -51,7 +51,6 @@ Primary relationships:
 | `INGESTED_IN` | Document-to-turn write provenance |
 | `HAS_TURN` | Conversation-to-turn containment |
 | `ASSERTS` | Document/turn source to raw assertion |
-| `MENTIONS_CHUNK` | Assertion-to-chunk provenance |
 | `SUBJECT_ENTITY` | Assertion subject binding |
 | `OBJECT_ENTITY` | Assertion object binding |
 | `SUPPORTS` | Assertion to normalized memory fact |
@@ -67,6 +66,9 @@ The redesigned graph separates raw extraction from queryable memory:
   supersession, and traversal.
 - `MEMORY_REL` is the live graph edge the retriever expands across. It carries
   the current fact state plus the normalized family metadata.
+- `Chunk.mentioned_entity_ids` and `Chunk.mentioned_entity_names` store
+  high-cardinality chunk mention metadata as properties instead of dense
+  assertion-to-chunk graph edges.
 
 This split preserves provenance while avoiding the old one-edge-does-everything
 model. A single source can yield multiple assertions, and a single assertion

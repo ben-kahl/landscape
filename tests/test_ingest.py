@@ -264,6 +264,110 @@ async def test_ingest_promotes_additive_family_into_memory_rel(http_client, neo4
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+async def test_ingest_writes_sparse_chunk_provenance(
+    http_client, neo4j_driver, monkeypatch
+):
+    from landscape import pipeline
+    from landscape.extraction.chunker import Chunk
+    from landscape.extraction.schema import ExtractedEntity, ExtractedRelation, Extraction
+
+    title = "sparse-chunk-provenance-integration"
+    subject_name = "Sparse Alice"
+    object_name = "Sparse Atlas"
+
+    async with neo4j_driver.session() as session:
+        await session.run("MATCH (d:Document {title: $title}) DETACH DELETE d", title=title)
+        await session.run("MATCH (e:Entity {name: $name}) DETACH DELETE e", name=subject_name)
+        await session.run("MATCH (e:Entity {name: $name}) DETACH DELETE e", name=object_name)
+
+    async def fake_resolve_entity(name, entity_type, vector, source_doc):
+        return None, True, None
+
+    async def noop_upsert(**kwargs):
+        return None
+
+    chunks = [
+        Chunk(index=0, text=f"{subject_name} owns {object_name}."),
+        Chunk(index=1, text="This second chunk contains unrelated context."),
+    ]
+
+    def fake_extract(text):
+        if subject_name in text:
+            return Extraction(
+                entities=[
+                    ExtractedEntity(name=subject_name, type="PERSON", confidence=0.95),
+                    ExtractedEntity(name=object_name, type="PROJECT", confidence=0.95),
+                ],
+                relations=[
+                    ExtractedRelation(
+                        subject=subject_name,
+                        object=object_name,
+                        relation_type="owns",
+                        confidence=0.9,
+                    )
+                ],
+            )
+        return Extraction(entities=[], relations=[])
+
+    monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
+    monkeypatch.setattr(
+        pipeline.encoder,
+        "embed_documents",
+        lambda texts: [[0.1, 0.2] for _ in texts],
+    )
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_chunk", noop_upsert)
+    monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", noop_upsert)
+    monkeypatch.setattr(pipeline, "chunk_text", lambda text: chunks)
+    monkeypatch.setattr(pipeline.llm, "extract", fake_extract)
+
+    response = await http_client.post(
+        "/ingest",
+        json={"text": " ".join(chunk.text for chunk in chunks), "title": title},
+    )
+
+    assert response.status_code == 200
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (d:Document {title: $title})-[:ASSERTS]->(a:Assertion)
+            RETURN collect(a.chunk_refs) AS assertion_chunk_refs
+            """,
+            title=title,
+        )
+        record = await result.single()
+
+        chunk_result = await session.run(
+            """
+            MATCH (c:Chunk)-[:PART_OF]->(:Document {title: $title})
+            RETURN c.chunk_id AS chunk_id,
+                   c.chunk_index AS chunk_index,
+                   c.mentioned_entity_ids AS mentioned_entity_ids,
+                   c.mentioned_entity_names AS mentioned_entity_names
+            ORDER BY chunk_index
+            """,
+            title=title,
+        )
+        chunk_rows = [dict(row) async for row in chunk_result]
+
+    from landscape.storage import neo4j_store
+
+    chunk_entity_rows = await neo4j_store.get_entities_from_chunks(
+        [row["chunk_id"] for row in chunk_rows]
+    )
+
+    assert all(len(refs or []) <= 1 for refs in record["assertion_chunk_refs"])
+    assert len(chunk_rows) == 2
+    assert len(chunk_rows[0]["mentioned_entity_ids"]) == 2
+    assert set(chunk_rows[0]["mentioned_entity_names"]) == {subject_name, object_name}
+    assert chunk_rows[1]["mentioned_entity_ids"] == []
+    assert chunk_rows[1]["mentioned_entity_names"] == []
+    assert {row["name"] for row in chunk_entity_rows} == {subject_name, object_name}
+    assert all(row["chunk_eids"] == [chunk_rows[0]["chunk_id"]] for row in chunk_entity_rows)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
 async def test_ingest_idempotent(http_client):
     # First ingest
     r1 = await http_client.post("/ingest", json={"text": TEST_DOC, "title": TEST_TITLE})
@@ -309,6 +413,9 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     async def fake_upsert_entity(**kwargs):
         return None
 
+    async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -340,6 +447,9 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions
+    )
     monkeypatch.setattr(
         pipeline,
         "persist_assertion_and_maybe_promote",
@@ -411,6 +521,9 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
     async def fake_upsert_entity(**kwargs):
         return None
 
+    async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -432,6 +545,9 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions
+    )
     monkeypatch.setattr(
         pipeline,
         "persist_assertion_and_maybe_promote",
@@ -507,6 +623,9 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
     async def fake_upsert_entity(**kwargs):
         return None
 
+    async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
     async def fake_persist_assertion_and_maybe_promote(
         payload,
         *,
@@ -528,6 +647,9 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
     monkeypatch.setattr(pipeline.resolver, "resolve_entity", fake_resolve_entity)
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions
+    )
     monkeypatch.setattr(
         pipeline,
         "persist_assertion_and_maybe_promote",
@@ -793,6 +915,7 @@ async def test_ingest_passes_negated_to_assertion_payload():
          patch.object(pipeline.encoder, "embed_documents",
                       side_effect=lambda texts: [[0.0] * 4 for _ in texts]), \
          patch.object(pipeline.qdrant_store, "upsert_chunk", AsyncMock()), \
+         patch.object(pipeline.neo4j_store, "set_chunk_mentions", AsyncMock()), \
          patch.object(pipeline.llm, "extract", return_value=extraction), \
          patch("landscape.pipeline.coerce_rel_type",
                side_effect=lambda rel_type: (rel_type, 1.0)), \

@@ -23,8 +23,6 @@ async def persist_assertion_and_maybe_promote(
 ) -> PersistenceResult:
     assertion_id = await neo4j_store.merge_assertion(payload)
     await neo4j_store.link_source_to_assertion(source_kind, source_node_id, assertion_id)
-    for chunk_id in chunk_ids:
-        await neo4j_store.link_assertion_to_chunk(assertion_id, chunk_id)
     if subject_entity_id is not None:
         await neo4j_store.link_assertion_subject(assertion_id, subject_entity_id)
     if object_entity_id is not None:

@@ -317,17 +317,25 @@ async def get_conversation_detail(session_id: str, turn_limit: int = 10) -> dict
     return {"conversation": conversation, "turns": turns}
 
 
-async def link_assertion_to_chunk(assertion_id: str, chunk_id: str) -> None:
+async def set_chunk_mentions(
+    chunk_id: str,
+    *,
+    entity_ids: list[str],
+    entity_names: list[str],
+) -> None:
     driver = get_driver()
+    unique_ids = sorted(set(entity_ids))
+    unique_names = sorted(set(entity_names), key=str.casefold)
     async with driver.session() as session:
         await session.run(
             """
-            MATCH (a:Assertion {id: $assertion_id})
             MATCH (c:Chunk {chunk_id: $chunk_id})
-            MERGE (a)-[:MENTIONS_CHUNK]->(c)
+            SET c.mentioned_entity_ids = $entity_ids,
+                c.mentioned_entity_names = $entity_names
             """,
-            assertion_id=assertion_id,
             chunk_id=chunk_id,
+            entity_ids=unique_ids,
+            entity_names=unique_names,
         )
 
 
@@ -349,7 +357,11 @@ async def create_chunk(
                           c.doc_id = $doc_id,
                           c.chunk_index = $chunk_index,
                           c.position = $chunk_index,
-                          c.content_hash = $content_hash
+                          c.content_hash = $content_hash,
+                          c.mentioned_entity_ids = [],
+                          c.mentioned_entity_names = []
+            SET c.mentioned_entity_ids = coalesce(c.mentioned_entity_ids, []),
+                c.mentioned_entity_names = coalesce(c.mentioned_entity_names, [])
             MERGE (c)-[:PART_OF]->(d)
             RETURN c.chunk_id AS cid
             """,

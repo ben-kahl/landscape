@@ -52,6 +52,47 @@ def _get_weave() -> Any | None:
         return weave
 
 
+def _attach_usage_to_call(
+    call: Any, model: str, *, prompt_tokens: int, completion_tokens: int
+) -> None:
+    """Write a per-model usage block into a Weave call's summary.
+
+    Weave's trace server reads token counts from ``summary['usage'][model]``
+    (see ``weave/trace_server/usage_utils.py``). A bare ``weave.op`` never
+    populates this, so token columns stay at 0 unless we fill it ourselves.
+    """
+    usage = call.summary.setdefault("usage", {})
+    usage[model] = {
+        "requests": 1,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+def record_token_usage(
+    model: str, *, prompt_tokens: int, completion_tokens: int
+) -> None:
+    """Attach token usage to the active Weave call, else no-op.
+
+    No-op when Weave is disabled or when called outside a traced op. Lets the
+    extraction pipeline surface Ollama's `prompt_eval_count` / `eval_count` in
+    the Weave dashboard, which has no Ollama integration to capture them.
+    """
+    weave = _get_weave()
+    if weave is None:
+        return
+    call = weave.get_current_call()
+    if call is None:
+        return
+    _attach_usage_to_call(
+        call,
+        model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+
+
 def traced(name: str | None = None) -> Callable[[_F], _F]:
     """Record this call in Weave if configured, else no-op. Lazy on first call."""
 

@@ -143,15 +143,34 @@ async def ingest(
         # Step 3: extract entities + relations from each chunk
         stage_started_at = log.set_stage("extraction_completed")
         all_entities = []
-        all_relations = []
-        for chunk in chunks:
+        relation_mentions = []
+        chunk_entity_mentions: dict[str, set[str]] = {cid: set() for cid in chunk_ids}
+        for chunk_number, (chunk, chunk_id) in enumerate(
+            zip(chunks, chunk_ids, strict=True),
+            start=1,
+        ):
             chunk_extraction = llm.extract(chunk.text)
             all_entities.extend(chunk_extraction.entities)
-            all_relations.extend(chunk_extraction.relations)
+            chunk_entity_mentions[chunk_id].update(
+                entity.name.strip().lower()
+                for entity in chunk_extraction.entities
+                if entity.name.strip()
+            )
+            relation_mentions.extend(
+                (relation, chunk_id) for relation in chunk_extraction.relations
+            )
+            log.emit(
+                "chunk_extraction_completed",
+                chunk_number=chunk_number,
+                chunk_count=len(chunks),
+                chunk_index=chunk.index,
+                entities_extracted=len(chunk_extraction.entities),
+                relations_extracted=len(chunk_extraction.relations),
+            )
         log.emit(
             "extraction_completed",
             entities_extracted=len(all_entities),
-            relations_extracted=len(all_relations),
+            relations_extracted=len(relation_mentions),
             duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
         )
 
@@ -214,6 +233,7 @@ async def ingest(
 
         stage_started_at = log.set_stage("entity_writes_completed")
         resolved_entity_ids: dict[str, str] = {}
+        resolved_entity_names: dict[str, str] = {}
         ambiguous_entity_names: set[str] = set()
         for key, vector, (canonical_id, is_new, _sim) in zip(
             group_keys, vectors, resolutions, strict=True
@@ -265,8 +285,10 @@ async def ingest(
             ):
                 ambiguous_entity_names.add(surface_name)
                 resolved_entity_ids.pop(surface_name, None)
+                resolved_entity_names.pop(surface_name, None)
             else:
                 resolved_entity_ids[surface_name] = canonical_id
+                resolved_entity_names[surface_name] = g["name"]
         log.emit(
             "entity_writes_completed",
             entities_created=entities_created,
@@ -274,12 +296,29 @@ async def ingest(
             duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
         )
 
+        for chunk_id, surface_names in chunk_entity_mentions.items():
+            mention_ids = []
+            mention_names = []
+            for surface_name in surface_names:
+                if surface_name in ambiguous_entity_names:
+                    continue
+                entity_id = resolved_entity_ids.get(surface_name)
+                if entity_id is None:
+                    continue
+                mention_ids.append(entity_id)
+                mention_names.append(resolved_entity_names[surface_name])
+            await neo4j_store.set_chunk_mentions(
+                chunk_id,
+                entity_ids=mention_ids,
+                entity_names=mention_names,
+            )
+
         # Step 5: assertion persistence + fact promotion
         stage_started_at = log.set_stage("relation_upserts_completed")
         relations_created = 0
         relations_reinforced = 0
         relations_superseded = 0
-        for relation in all_relations:
+        for relation, source_chunk_id in relation_mentions:
             canonical_rel_type, _coerce_score = coerce_rel_type(relation.relation_type)
             subject_entity_id = resolved_entity_ids.get(relation.subject.strip().lower())
             object_entity_id = resolved_entity_ids.get(relation.object.strip().lower())
@@ -301,7 +340,7 @@ async def ingest(
                 quantity_kind=relation.quantity_kind,
                 time_scope=relation.time_scope,
                 negated=relation.negated,
-                chunk_refs=[(cid, None, None) for cid in chunk_ids],
+                chunk_refs=[(source_chunk_id, None, None)] if source_chunk_id else [],
             )
             promotion = await persist_assertion_and_maybe_promote(
                 payload,
@@ -309,7 +348,7 @@ async def ingest(
                 source_kind="document",
                 subject_entity_id=subject_entity_id,
                 object_entity_id=object_entity_id,
-                chunk_ids=chunk_ids,
+                chunk_ids=[],
             )
             if promotion.outcome == "created":
                 relations_created += 1
