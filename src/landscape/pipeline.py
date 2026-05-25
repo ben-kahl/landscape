@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -10,12 +11,15 @@ from landscape.entities import resolver
 from landscape.extraction import llm
 from landscape.extraction.chunker import chunk_text
 from landscape.extraction.entity_type_coercion import coerce_entity_type
+from landscape.extraction.llm import _parse_iso_temporal
 from landscape.extraction.rel_type_coercion import coerce_rel_type
 from landscape.extraction.schema import normalize_subtype
 from landscape.memory_graph.models import AssertionPayload
 from landscape.memory_graph.service import persist_assertion_and_maybe_promote
 from landscape.observability import IngestLogContext, create_ingest_log_context
 from landscape.storage import neo4j_store, qdrant_store
+
+_pipeline_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -326,6 +330,15 @@ async def ingest(
             subtype_source = relation.subtype or (
                 raw_upper if raw_upper and raw_upper != canonical_rel_type else None
             )
+            eff_from = _parse_iso_temporal(relation.effective_from, is_endpoint="from")
+            eff_until = _parse_iso_temporal(relation.effective_until, is_endpoint="until")
+            if eff_from and eff_until and eff_until < eff_from:
+                _pipeline_log.warning(
+                    "extractor produced backwards effective range — dropping both. raw=%r",
+                    {"effective_from": relation.effective_from, "effective_until": relation.effective_until},
+                )
+                eff_from = None
+                eff_until = None
             payload = AssertionPayload(
                 source_kind="document",
                 source_id=doc_id,
@@ -340,6 +353,8 @@ async def ingest(
                 quantity_kind=relation.quantity_kind,
                 time_scope=relation.time_scope,
                 negated=relation.negated,
+                effective_from=eff_from,
+                effective_until=eff_until,
                 chunk_refs=[(source_chunk_id, None, None)] if source_chunk_id else [],
             )
             promotion = await persist_assertion_and_maybe_promote(

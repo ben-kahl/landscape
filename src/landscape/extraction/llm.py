@@ -284,6 +284,17 @@ _SYSTEM_PROMPT = (
     "  ]\n"
     "}\n"
     "\n"
+    "--- TEMPORAL VALIDITY ---\n"
+    "When the text explicitly states when a fact became true or stopped being true,\n"
+    "emit `effective_from` and/or `effective_until` as ISO-8601 dates. Examples:\n"
+    "- \"Alice has worked at Acme since March 2024\" → effective_from: \"2024-03\"\n"
+    "- \"Bob led Sentinel from Q1 2023 to Q3 2024\" → effective_from: \"2023-01\","
+    " effective_until: \"2024-09\"\n"
+    "- \"Acme acquired Zylos on 2025-06-15\" → effective_from: \"2025-06-15\"\n"
+    "- \"The team moved to NYC last year\" → omit both (vague phrase, no explicit date)\n"
+    "\n"
+    "Do NOT guess. Omit the fields if the text gives no explicit calendar reference.\n"
+    "\n"
     "Now extract from the following text:"
 )
 

@@ -900,6 +900,8 @@ async def test_ingest_passes_negated_to_assertion_payload():
     negated_relation.quantity_unit = None
     negated_relation.quantity_kind = None
     negated_relation.time_scope = None
+    negated_relation.effective_from = None
+    negated_relation.effective_until = None
     negated_relation.negated = True
 
     extraction = MagicMock(entities=[], relations=[negated_relation])
