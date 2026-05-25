@@ -275,19 +275,25 @@ async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[st
         return [dict(record) async for record in result]
 
 
-async def get_rankable_entities(entity_ids: list[str]) -> list[dict[str, Any]]:
+async def get_rankable_entities(
+    entity_ids: list[str],
+    include_historical: bool = False,
+) -> list[dict[str, Any]]:
     if not entity_ids:
         return []
+    liveness_filter = (
+        "" if include_historical else "WHERE total_edges = 0 OR valid_edges > 0"
+    )
     driver = get_driver()
     async with driver.session() as session:
         result = await session.run(
-            """
+            f"""
             MATCH (e:Entity) WHERE e.id IN $ids AND e.canonical = true
             OPTIONAL MATCH (e)-[r:MEMORY_REL]-()
             WITH e,
                  count(r) AS total_edges,
                  sum(CASE WHEN r.valid_until IS NULL THEN 1 ELSE 0 END) AS valid_edges
-            WHERE total_edges = 0 OR valid_edges > 0
+            {liveness_filter}
             RETURN e.id AS entity_id,
                    e.name AS name,
                    e.type AS type,

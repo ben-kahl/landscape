@@ -216,6 +216,15 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
         new_obj: True,
     }
 
+    historical = await neo4j_store.bfs_expand_memory_rel(
+        [subject_id], max_hops=2, include_historical=True
+    )
+    historical_targets = {row["target_name"] for row in historical}
+    assert {old_obj, new_obj}.issubset(historical_targets), (
+        f"include_historical should surface both superseded and live targets, "
+        f"got: {historical_targets}"
+    )
+
 
 @pytest.mark.asyncio
 @pytest.mark.unit
@@ -239,7 +248,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         return [
             {
                 "entity_id": "eric-id",
@@ -250,7 +259,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         return [
             {
                 "seed_id": "eric-id",
@@ -449,7 +458,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         assert ids == ["travel-id", "cube-id"]
         return [
             {
@@ -468,7 +477,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
             },
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         return []
 
     async def fake_touch_entities(ids, now):
@@ -649,7 +658,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         return [
             {
                 "entity_id": "atlas-id",
@@ -660,7 +669,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -734,7 +743,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         return [
             {
                 "entity_id": "atlas-id",
@@ -745,7 +754,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         assert seed_ids == ["atlas-id"]
         assert max_hops == 2
         return [
@@ -843,7 +852,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
     async def fake_get_entities_from_chunks(chunk_ids):
         return [{"entity_id": "atlas-id", "chunk_eids": chunk_ids}]
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         return [
             {
                 "entity_id": "atlas-id",
@@ -854,7 +863,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -1182,7 +1191,7 @@ async def test_retrieve_seeds_canonical_entity_from_alias_resolution(monkeypatch
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(entity_ids):
+    async def fake_hydrate_entities(entity_ids, include_historical=False):
         assert entity_ids == ["robert-id"]
         return [
             {
@@ -1194,7 +1203,7 @@ async def test_retrieve_seeds_canonical_entity_from_alias_resolution(monkeypatch
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         assert seed_ids == ["robert-id"]
         return []
 

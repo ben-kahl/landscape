@@ -216,6 +216,7 @@ async def get_current_fact_details_for_entities(
 async def bfs_expand_memory_rel(
     seed_entity_ids: list[str],
     max_hops: int,
+    include_historical: bool = False,
 ) -> list[dict[str, Any]]:
     if not seed_entity_ids:
         return []
@@ -224,12 +225,15 @@ async def bfs_expand_memory_rel(
     seed_ids = await _resolve_entity_app_ids(seed_entity_ids)
     if not seed_ids:
         return []
+    temporal_filter = (
+        "" if include_historical else "AND ALL(r IN rels WHERE r.valid_until IS NULL)"
+    )
     query = f"""
     MATCH (seed:Entity) WHERE seed.id IN $seed_ids
     MATCH path = shortestPath((seed)-[rels:MEMORY_REL*1..{max_hops}]-(target:Entity))
     WHERE seed.id <> target.id
       AND target.canonical = true
-      AND ALL(r IN rels WHERE r.valid_until IS NULL)
+      {temporal_filter}
     RETURN
       seed.id AS seed_id,
       seed.name AS seed_name,
