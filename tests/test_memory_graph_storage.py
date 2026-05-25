@@ -804,3 +804,148 @@ async def test_negated_fact_surfaces_in_retrieval_output(neo4j_driver):
     facts, _ = await get_current_fact_details_for_entities([alice])
     assert len(facts) == 1
     assert facts[0]["negated"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_memory_fact_defaults_effective_from_to_ingested_at(neo4j_driver):
+    """When no extracted effective_from is supplied, storage floors
+    effective_from to ingested_at so as_of queries can always anchor."""
+    from landscape.memory_graph import AssertionPayload
+    from landscape.storage import neo4j_store
+
+    subj = "BiTempAlice"
+    obj = "BiTempAcme"
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj, obj],
+        )
+    subject_id = await neo4j_store.merge_entity(subj, "PERSON", "bitemp-test", 0.9)
+    object_id = await neo4j_store.merge_entity(obj, "ORGANIZATION", "bitemp-test", 0.9)
+
+    assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="bitemp-default-test",
+            raw_subject_text=subj,
+            raw_relation_text="works for",
+            raw_object_text=obj,
+            confidence=0.9,
+            family_candidate="WORKS_FOR",
+        )
+    )
+    fact_id = await neo4j_store.create_memory_fact_version(
+        family="WORKS_FOR",
+        subject_entity_id=subject_id,
+        object_entity_id=object_id,
+        subtype=None,
+        confidence=0.9,
+        assertion_id=assertion,
+    )
+    await neo4j_store.materialize_memory_rel(fact_id)
+
+    async with neo4j_driver.session() as session:
+        record = await (
+            await session.run(
+                "MATCH (f:MemoryFact {id: $fid}) "
+                "RETURN f.ingested_at AS ingested_at, "
+                "       f.effective_from AS effective_from, "
+                "       f.effective_until AS effective_until, "
+                "       f.system_until AS system_until",
+                fid=fact_id,
+            )
+        ).single()
+        edge = await (
+            await session.run(
+                "MATCH ()-[r:MEMORY_REL {memory_fact_id: $fid}]->() "
+                "RETURN r.ingested_at AS ingested_at, "
+                "       r.effective_from AS effective_from, "
+                "       r.effective_until AS effective_until, "
+                "       r.system_until AS system_until",
+                fid=fact_id,
+            )
+        ).single()
+
+    assert record is not None
+    assert record["ingested_at"] is not None
+    assert record["effective_from"] == record["ingested_at"], (
+        "effective_from must default to ingested_at when no extracted value"
+    )
+    assert record["effective_until"] is None
+    assert record["system_until"] is None
+
+    assert edge is not None
+    assert edge["ingested_at"] == record["ingested_at"]
+    assert edge["effective_from"] == record["effective_from"]
+    assert edge["effective_until"] is None
+    assert edge["system_until"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_memory_fact_stores_explicit_effective_range(neo4j_driver):
+    """When effective_from/effective_until are supplied, they are stored
+    verbatim on both MemoryFact node and MEMORY_REL edge."""
+    from landscape.memory_graph import AssertionPayload
+    from landscape.storage import neo4j_store
+
+    subj = "BiTempRangeBob"
+    obj = "BiTempRangeZylos"
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj, obj],
+        )
+    subject_id = await neo4j_store.merge_entity(subj, "PERSON", "bitemp-range", 0.9)
+    object_id = await neo4j_store.merge_entity(obj, "ORGANIZATION", "bitemp-range", 0.9)
+
+    assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document",
+            source_id="bitemp-range-test",
+            raw_subject_text=subj,
+            raw_relation_text="worked for",
+            raw_object_text=obj,
+            confidence=0.9,
+            family_candidate="WORKS_FOR",
+        )
+    )
+    fact_id = await neo4j_store.create_memory_fact_version(
+        family="WORKS_FOR",
+        subject_entity_id=subject_id,
+        object_entity_id=object_id,
+        subtype=None,
+        confidence=0.9,
+        assertion_id=assertion,
+        effective_from="2020-03-01T00:00:00+00:00",
+        effective_until="2023-09-30T23:59:59+00:00",
+    )
+    await neo4j_store.materialize_memory_rel(fact_id)
+
+    async with neo4j_driver.session() as session:
+        record = await (
+            await session.run(
+                "MATCH (f:MemoryFact {id: $fid}) "
+                "RETURN f.effective_from AS effective_from, "
+                "       f.effective_until AS effective_until",
+                fid=fact_id,
+            )
+        ).single()
+        edge = await (
+            await session.run(
+                "MATCH ()-[r:MEMORY_REL {memory_fact_id: $fid}]->() "
+                "RETURN r.effective_from AS effective_from, "
+                "       r.effective_until AS effective_until",
+                fid=fact_id,
+            )
+        ).single()
+
+    assert record["effective_from"] == "2020-03-01T00:00:00+00:00"
+    assert record["effective_until"] == "2023-09-30T23:59:59+00:00"
+    assert edge["effective_from"] == record["effective_from"]
+    assert edge["effective_until"] == record["effective_until"]
