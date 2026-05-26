@@ -217,6 +217,7 @@ async def bfs_expand_memory_rel(
     seed_entity_ids: list[str],
     max_hops: int,
     include_historical: bool = False,
+    as_of: str | None = None,
 ) -> list[dict[str, Any]]:
     if not seed_entity_ids:
         return []
@@ -228,12 +229,18 @@ async def bfs_expand_memory_rel(
     temporal_filter = (
         "" if include_historical else "AND ALL(r IN rels WHERE r.system_until IS NULL)"
     )
+    as_of_filter = (
+        "AND ALL(r IN rels WHERE (r.effective_from IS NULL OR r.effective_from <= $as_of) "
+        "AND (r.effective_until IS NULL OR r.effective_until > $as_of))"
+        if as_of else ""
+    )
     query = f"""
     MATCH (seed:Entity) WHERE seed.id IN $seed_ids
     MATCH path = shortestPath((seed)-[rels:MEMORY_REL*1..{max_hops}]-(target:Entity))
     WHERE seed.id <> target.id
       AND target.canonical = true
       {temporal_filter}
+      {as_of_filter}
     RETURN
       seed.id AS seed_id,
       seed.name AS seed_name,
@@ -257,7 +264,7 @@ async def bfs_expand_memory_rel(
     """
     driver = get_driver()
     async with driver.session() as session:
-        result = await session.run(query, seed_ids=seed_ids)
+        result = await session.run(query, seed_ids=seed_ids, as_of=as_of)
         return [dict(record) async for record in result]
 
 

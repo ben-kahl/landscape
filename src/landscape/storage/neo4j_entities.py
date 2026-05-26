@@ -278,12 +278,16 @@ async def get_entities_from_chunks(chunk_element_ids: list[str]) -> list[dict[st
 async def get_rankable_entities(
     entity_ids: list[str],
     include_historical: bool = False,
+    as_of: str | None = None,
 ) -> list[dict[str, Any]]:
     if not entity_ids:
         return []
-    liveness_filter = (
-        "" if include_historical else "WHERE total_edges = 0 OR valid_edges > 0"
-    )
+    if include_historical:
+        liveness_filter = ""
+    elif as_of:
+        liveness_filter = "WHERE total_edges = 0 OR effective_at_as_of > 0"
+    else:
+        liveness_filter = "WHERE total_edges = 0 OR valid_edges > 0"
     driver = get_driver()
     async with driver.session() as session:
         result = await session.run(
@@ -292,7 +296,11 @@ async def get_rankable_entities(
             OPTIONAL MATCH (e)-[r:MEMORY_REL]-()
             WITH e,
                  count(r) AS total_edges,
-                 sum(CASE WHEN r.system_until IS NULL THEN 1 ELSE 0 END) AS valid_edges
+                 sum(CASE WHEN r.system_until IS NULL THEN 1 ELSE 0 END) AS valid_edges,
+                 sum(CASE WHEN r.system_until IS NULL
+                         AND (r.effective_from IS NULL OR r.effective_from <= $as_of)
+                         AND (r.effective_until IS NULL OR r.effective_until > $as_of)
+                    THEN 1 ELSE 0 END) AS effective_at_as_of
             {liveness_filter}
             RETURN e.id AS entity_id,
                    e.name AS name,
@@ -301,6 +309,7 @@ async def get_rankable_entities(
                    e.last_accessed AS last_accessed
             """,
             ids=entity_ids,
+            as_of=as_of,
         )
         return [dict(record) async for record in result]
 

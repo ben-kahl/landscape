@@ -1280,3 +1280,102 @@ def test_retrieval_log_sink_writes_jsonl_to_process_scoped_file(tmp_path):
     assert first["event"] == "retrieval_started"
     assert second["event"] == "retrieval_completed"
     assert second["top_results"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_bfs_expand_memory_rel_filters_by_as_of(neo4j_driver):
+    """Build three edges with effective ranges 2020-2022, 2022-2024, 2024-NULL.
+    as_of=2023-01-01 returns the middle one only; as_of=None returns all live;
+    as_of=2025 returns the last."""
+    from landscape.storage import neo4j_store
+
+    subj = "AsOfAlice"
+    objs = ["AsOfAcmeA", "AsOfAcmeB", "AsOfAcmeC"]
+    ranges = [
+        ("2020-01-01T00:00:00+00:00", "2022-01-01T00:00:00+00:00"),
+        ("2022-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00"),
+        ("2024-01-01T00:00:00+00:00", None),
+    ]
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj] + objs,
+        )
+        subj_id = (
+            await (
+                await session.run(
+                    "CREATE (e:Entity {id: $id, name: $n, type: 'PERSON', canonical: true}) "
+                    "RETURN e.id AS id",
+                    id="entity:asof-subj", n=subj,
+                )
+            ).single()
+        )["id"]
+        for i, (name, (ef, eu)) in enumerate(zip(objs, ranges, strict=True)):
+            obj_id = (
+                await (
+                    await session.run(
+                        "CREATE (e:Entity {id: $id, name: $n, type: 'ORG', canonical: true}) "
+                        "RETURN e.id AS id",
+                        id=f"entity:asof-obj-{i}", n=name,
+                    )
+                ).single()
+            )["id"]
+            await session.run(
+                """
+                MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+                CREATE (s)-[:MEMORY_REL {
+                    memory_fact_id: $fid, family: 'WORKS_FOR',
+                    ingested_at: '2026-05-25T00:00:00+00:00',
+                    system_until: null,
+                    effective_from: $ef, effective_until: $eu,
+                    confidence_agg: 0.9, subject_entity_id: $sid, object_entity_id: $oid,
+                    access_count: 0, last_accessed: null, updated_at: '2026-05-25T00:00:00+00:00',
+                    negated: false
+                }]->(o)
+                """,
+                sid=subj_id, oid=obj_id, fid=f"fact:asof-{i}", ef=ef, eu=eu,
+            )
+
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        [subj_id], max_hops=1, as_of="2023-01-01T00:00:00+00:00"
+    )
+    assert {r["target_name"] for r in rows} == {"AsOfAcmeB"}
+
+    rows = await neo4j_store.bfs_expand_memory_rel([subj_id], max_hops=1)
+    assert {r["target_name"] for r in rows} == set(objs)
+
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        [subj_id], max_hops=1, as_of="2025-06-01T00:00:00+00:00"
+    )
+    assert {r["target_name"] for r in rows} == {"AsOfAcmeC"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_bfs_expand_memory_rel_as_of_includes_null_effective_from(neo4j_driver):
+    """Edges with NULL effective_from must surface for any as_of (permissive)."""
+    from landscape.storage import neo4j_store
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run("MATCH (e:Entity {id: 'entity:null-eff-s'}) DETACH DELETE e")
+        await session.run("MATCH (e:Entity {id: 'entity:null-eff-o'}) DETACH DELETE e")
+        await session.run(
+            "CREATE (s:Entity {id: 'entity:null-eff-s', name: 'NullEffSubj', "
+            "  type: 'PERSON', canonical: true}), "
+            "       (o:Entity {id: 'entity:null-eff-o', name: 'NullEffObj', "
+            "  type: 'ORG', canonical: true}) "
+            "CREATE (s)-[:MEMORY_REL {memory_fact_id: 'fact:null-eff', family: 'WORKS_FOR', "
+            "  ingested_at: '2026-01-01T00:00:00+00:00', system_until: null, "
+            "  effective_from: null, effective_until: null, confidence_agg: 0.9, "
+            "  subject_entity_id: 'entity:null-eff-s', object_entity_id: 'entity:null-eff-o', "
+            "  access_count: 0, last_accessed: null, updated_at: '2026-01-01T00:00:00+00:00', "
+            "  negated: false}]->(o)"
+        )
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        ["entity:null-eff-s"], max_hops=1, as_of="2010-01-01T00:00:00+00:00"
+    )
+    assert {r["target_name"] for r in rows} == {"NullEffObj"}
