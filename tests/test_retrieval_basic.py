@@ -1517,3 +1517,140 @@ async def test_bfs_expand_memory_rel_as_of_includes_null_effective_from(neo4j_dr
         ["entity:null-eff-s"], max_hops=1, as_of="2010-01-01T00:00:00+00:00"
     )
     assert {r["target_name"] for r in rows} == {"NullEffObj"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_get_rankable_entities_as_of_surfaces_superseded_entities(neo4j_driver):
+    """An entity whose only edges are system-superseded but event-time-valid at
+    as_of must still be rankable. Supersession here represents 'world moved on',
+    not 'we were wrong' — the historical belief is still current."""
+    from landscape.storage import neo4j_store
+
+    subj = "AsOfHydAlice"
+    obj = "AsOfHydAcme"
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj, obj],
+        )
+        subj_row = await (
+            await session.run(
+                "CREATE (e:Entity {id: $id, name: $n, type: 'PERSON', canonical: true}) "
+                "RETURN e.id AS id",
+                id="entity:asof-hyd-subj", n=subj,
+            )
+        ).single()
+        obj_row = await (
+            await session.run(
+                "CREATE (e:Entity {id: $id, name: $n, type: 'ORG', canonical: true}) "
+                "RETURN e.id AS id",
+                id="entity:asof-hyd-obj", n=obj,
+            )
+        ).single()
+        # Edge is system-superseded (system_until set) but event-time
+        # covers 2020-06.
+        await session.run(
+            """
+            MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+            CREATE (s)-[:MEMORY_REL {
+                memory_fact_id: 'fact:asof-hyd', family: 'WORKS_FOR',
+                ingested_at: '2026-01-01T00:00:00+00:00',
+                system_until: '2026-02-01T00:00:00+00:00',
+                effective_from: '2018-01-01T00:00:00+00:00',
+                effective_until: '2021-03-01T00:00:00+00:00',
+                confidence_agg: 0.9, subject_entity_id: $sid, object_entity_id: $oid,
+                access_count: 0, last_accessed: null,
+                updated_at: '2026-01-01T00:00:00+00:00', negated: false
+            }]->(o)
+            """,
+            sid=subj_row["id"], oid=obj_row["id"],
+        )
+
+    # as_of within the superseded edge's effective window — Acme should be
+    # rankable even with include_historical=False (the as_of itself should
+    # override system-time gating).
+    rows = await neo4j_store.get_rankable_entities(
+        [subj_row["id"], obj_row["id"]],
+        as_of="2020-06-01T00:00:00+00:00",
+    )
+    names = {r["name"] for r in rows}
+    assert names == {subj, obj}
+
+    # as_of outside the window — both endpoints drop. Their only edge is
+    # event-time-invalid at 2025, and total_edges counts that edge for both,
+    # so neither passes total_edges=0 OR effective_at_as_of>0.
+    rows = await neo4j_store.get_rankable_entities(
+        [subj_row["id"], obj_row["id"]],
+        as_of="2025-06-01T00:00:00+00:00",
+    )
+    names = {r["name"] for r in rows}
+    assert names == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_bfs_expand_memory_rel_as_of_surfaces_superseded_edges(neo4j_driver):
+    """A superseded MEMORY_REL whose effective range covers as_of must still
+    surface in BFS traversal. as_of overrides system-time gating."""
+    from landscape.storage import neo4j_store
+
+    subj_name = "BfsAsOfAlice"
+    obj_name = "BfsAsOfAcme"
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj_name, obj_name],
+        )
+        subj_id = (
+            await (
+                await session.run(
+                    "CREATE (e:Entity {id: $id, name: $n, type: 'PERSON', canonical: true}) "
+                    "RETURN e.id AS id",
+                    id="entity:bfs-asof-subj", n=subj_name,
+                )
+            ).single()
+        )["id"]
+        obj_id = (
+            await (
+                await session.run(
+                    "CREATE (e:Entity {id: $id, name: $n, type: 'ORG', canonical: true}) "
+                    "RETURN e.id AS id",
+                    id="entity:bfs-asof-obj", n=obj_name,
+                )
+            ).single()
+        )["id"]
+        await session.run(
+            """
+            MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+            CREATE (s)-[:MEMORY_REL {
+                memory_fact_id: 'fact:bfs-asof', family: 'WORKS_FOR',
+                ingested_at: '2026-01-01T00:00:00+00:00',
+                system_until: '2026-02-01T00:00:00+00:00',
+                effective_from: '2018-01-01T00:00:00+00:00',
+                effective_until: '2021-03-01T00:00:00+00:00',
+                confidence_agg: 0.9, subject_entity_id: $sid, object_entity_id: $oid,
+                access_count: 0, last_accessed: null,
+                updated_at: '2026-01-01T00:00:00+00:00', negated: false
+            }]->(o)
+            """,
+            sid=subj_id, oid=obj_id,
+        )
+
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        [subj_id], max_hops=1, as_of="2020-06-01T00:00:00+00:00"
+    )
+    assert {r["target_name"] for r in rows} == {obj_name}
+
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        [subj_id], max_hops=1, as_of="2025-06-01T00:00:00+00:00"
+    )
+    assert rows == []
+
+    # Without as_of, the superseded edge stays hidden by default.
+    rows = await neo4j_store.bfs_expand_memory_rel([subj_id], max_hops=1)
+    assert rows == []

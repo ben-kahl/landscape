@@ -226,9 +226,10 @@ async def bfs_expand_memory_rel(
     seed_ids = await _resolve_entity_app_ids(seed_entity_ids)
     if not seed_ids:
         return []
-    temporal_filter = (
-        "" if include_historical else "AND ALL(r IN rels WHERE r.system_until IS NULL)"
-    )
+    if as_of or include_historical:
+        temporal_filter = ""
+    else:
+        temporal_filter = "AND ALL(r IN rels WHERE r.system_until IS NULL)"
     as_of_filter = (
         "AND ALL(r IN rels WHERE (r.effective_from IS NULL OR r.effective_from <= $as_of) "
         "AND (r.effective_until IS NULL OR r.effective_until > $as_of))"

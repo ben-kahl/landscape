@@ -282,10 +282,10 @@ async def get_rankable_entities(
 ) -> list[dict[str, Any]]:
     if not entity_ids:
         return []
-    if include_historical:
-        liveness_filter = ""
-    elif as_of:
+    if as_of:
         liveness_filter = "WHERE total_edges = 0 OR effective_at_as_of > 0"
+    elif include_historical:
+        liveness_filter = ""
     else:
         liveness_filter = "WHERE total_edges = 0 OR valid_edges > 0"
     driver = get_driver()
@@ -297,8 +297,7 @@ async def get_rankable_entities(
             WITH e,
                  count(r) AS total_edges,
                  sum(CASE WHEN r.system_until IS NULL THEN 1 ELSE 0 END) AS valid_edges,
-                 sum(CASE WHEN r.system_until IS NULL
-                         AND (r.effective_from IS NULL OR r.effective_from <= $as_of)
+                 sum(CASE WHEN (r.effective_from IS NULL OR r.effective_from <= $as_of)
                          AND (r.effective_until IS NULL OR r.effective_until > $as_of)
                     THEN 1 ELSE 0 END) AS effective_at_as_of
             {liveness_filter}
