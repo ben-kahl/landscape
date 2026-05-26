@@ -1072,3 +1072,144 @@ async def test_supersession_shares_now_with_new_fact_creation(neo4j_driver):
 
     assert old_record["system_until"] == shared_now
     assert new_record["ingested_at"] == shared_now
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_supersession_closes_effective_until_with_new_fact_effective_from(
+    neo4j_driver,
+):
+    """When a new fact has an extracted effective_from, the superseded old
+    fact's effective_until must close to that timestamp, not to ingested_at."""
+    from landscape.memory_graph import AssertionPayload
+    from landscape.storage import neo4j_store
+
+    subj = "EffSupAlice"
+    old_obj = "EffSupAcme"
+    new_obj = "EffSupZylos"
+    new_effective_from = "2025-03-15T00:00:00+00:00"
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj, old_obj, new_obj],
+        )
+    subject_id = await neo4j_store.merge_entity(subj, "PERSON", "eff-sup", 0.9)
+    old_object_id = await neo4j_store.merge_entity(old_obj, "ORGANIZATION", "eff-sup", 0.9)
+    new_object_id = await neo4j_store.merge_entity(new_obj, "ORGANIZATION", "eff-sup", 0.9)
+
+    old_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document", source_id="eff-sup-old",
+            raw_subject_text=subj, raw_relation_text="works for", raw_object_text=old_obj,
+            confidence=0.9, family_candidate="WORKS_FOR",
+        )
+    )
+    old_fact = await neo4j_store.create_memory_fact_version(
+        family="WORKS_FOR", subject_entity_id=subject_id,
+        object_entity_id=old_object_id, subtype=None,
+        confidence=0.9, assertion_id=old_assertion,
+    )
+    await neo4j_store.materialize_memory_rel(old_fact)
+
+    new_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document", source_id="eff-sup-new",
+            raw_subject_text=subj, raw_relation_text="works for", raw_object_text=new_obj,
+            confidence=0.95, family_candidate="WORKS_FOR",
+            effective_from=new_effective_from,
+        )
+    )
+    await neo4j_store.supersede_single_current_fact(
+        family="WORKS_FOR", subject_entity_id=subject_id,
+        object_entity_id=new_object_id, subtype=None,
+        confidence=0.95, assertion_id=new_assertion,
+        effective_from=new_effective_from,
+    )
+
+    async with neo4j_driver.session() as session:
+        rec = await (
+            await session.run(
+                "MATCH (f:MemoryFact {id: $fid}) "
+                "RETURN f.effective_until AS effective_until, "
+                "       f.system_until AS system_until",
+                fid=old_fact,
+            )
+        ).single()
+    assert rec["effective_until"] == new_effective_from
+    assert rec["system_until"] is not None
+    assert rec["system_until"] != new_effective_from  # ingestion-time, not the event time
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_supersession_falls_back_to_now_when_no_effective_from(neo4j_driver):
+    from datetime import UTC, datetime
+
+    from landscape.memory_graph import AssertionPayload
+    from landscape.storage import neo4j_store
+
+    subj = "EffFbAlice"
+    old_obj = "EffFbAcme"
+    new_obj = "EffFbZylos"
+    shared_now = datetime.now(UTC).isoformat()
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj, old_obj, new_obj],
+        )
+    subject_id = await neo4j_store.merge_entity(subj, "PERSON", "eff-fb", 0.9)
+    old_object_id = await neo4j_store.merge_entity(old_obj, "ORGANIZATION", "eff-fb", 0.9)
+    new_object_id = await neo4j_store.merge_entity(new_obj, "ORGANIZATION", "eff-fb", 0.9)
+
+    old_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document", source_id="eff-fb-old",
+            raw_subject_text=subj, raw_relation_text="works for", raw_object_text=old_obj,
+            confidence=0.9, family_candidate="WORKS_FOR",
+        ),
+        now=shared_now,
+    )
+    old_fact = await neo4j_store.create_memory_fact_version(
+        family="WORKS_FOR", subject_entity_id=subject_id,
+        object_entity_id=old_object_id, subtype=None,
+        confidence=0.9, assertion_id=old_assertion, now=shared_now,
+    )
+    await neo4j_store.materialize_memory_rel(old_fact, now=shared_now)
+
+    new_assertion = await neo4j_store.merge_assertion(
+        AssertionPayload(
+            source_kind="document", source_id="eff-fb-new",
+            raw_subject_text=subj, raw_relation_text="works for", raw_object_text=new_obj,
+            confidence=0.95, family_candidate="WORKS_FOR",
+        ),
+        now=shared_now,
+    )
+    new_fact = await neo4j_store.supersede_single_current_fact(
+        family="WORKS_FOR", subject_entity_id=subject_id,
+        object_entity_id=new_object_id, subtype=None,
+        confidence=0.95, assertion_id=new_assertion,
+        now=shared_now,
+    )
+
+    async with neo4j_driver.session() as session:
+        old_rec = await (
+            await session.run(
+                "MATCH (f:MemoryFact {id: $fid}) "
+                "RETURN f.effective_until AS effective_until",
+                fid=old_fact,
+            )
+        ).single()
+        new_rec = await (
+            await session.run(
+                "MATCH (f:MemoryFact {id: $fid}) "
+                "RETURN f.ingested_at AS ingested_at",
+                fid=new_fact,
+            )
+        ).single()
+
+    assert old_rec["effective_until"] == shared_now
+    assert old_rec["effective_until"] == new_rec["ingested_at"]
