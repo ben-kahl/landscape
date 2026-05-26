@@ -1146,6 +1146,70 @@ async def test_query_cli_threads_as_of_flag(monkeypatch, capsys):
     capsys.readouterr()
 
 
+def test_cli_as_of_argparse_rejects_garbage(capsys):
+    import argparse
+
+    from landscape.cli import query as query_cli
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    query_cli.register(subparsers)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["query", "hello", "--as-of", "yesterday"])
+    err = capsys.readouterr().err
+    assert "--as-of" in err and ("ISO" in err or "iso" in err.lower())
+
+
+def test_cli_as_of_argparse_normalizes_naive_to_utc():
+    import argparse
+
+    from landscape.cli import query as query_cli
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    query_cli.register(subparsers)
+
+    args = parser.parse_args(["query", "hello", "--as-of", "2023-06-01T00:00:00"])
+    assert args.as_of == "2023-06-01T00:00:00+00:00"
+
+
+def test_api_normalize_as_of_naive_becomes_utc():
+    from datetime import datetime
+
+    from landscape.api.query import _normalize_as_of
+    naive = datetime(2023, 6, 1, 0, 0, 0)
+    assert _normalize_as_of(naive) == "2023-06-01T00:00:00+00:00"
+
+
+def test_api_normalize_as_of_aware_converted_to_utc():
+    from datetime import datetime, timedelta, timezone
+
+    from landscape.api.query import _normalize_as_of
+    aware_pst = datetime(2023, 6, 1, 0, 0, 0, tzinfo=timezone(timedelta(hours=-8)))
+    assert _normalize_as_of(aware_pst) == "2023-06-01T08:00:00+00:00"
+
+
+def test_api_normalize_as_of_none_passes_through():
+    from landscape.api.query import _normalize_as_of
+    assert _normalize_as_of(None) is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_rejects_garbage_as_of(monkeypatch):
+    import landscape.mcp_app as mcp_mod
+    from landscape.mcp_app import search
+
+    async def fake_retrieve(*a, **kw):
+        raise AssertionError("retrieve should not be called for garbage as_of")
+
+    monkeypatch.setattr(mcp_mod, "require_current_scope", lambda *a, **kw: None)
+    monkeypatch.setattr("landscape.retrieval.query.retrieve", fake_retrieve)
+
+    with pytest.raises(ValueError, match="ISO-8601"):
+        await search(query="hello", as_of="yesterday")
+
+
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_alias_resolved_relation_traversable_from_canonical(neo4j_driver):
