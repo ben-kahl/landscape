@@ -19,6 +19,7 @@ class QueryRequest(BaseModel):
     since_hours: int | None = Field(default=None, ge=1)
     debug: bool = False
     include_historical: bool = False
+    as_of: datetime | None = None
 
 
 class PathNodeModel(BaseModel):
@@ -89,6 +90,7 @@ async def query_endpoint(req: QueryRequest, auth: AgentPrincipal) -> QueryRespon
         since=since,
         debug=req.debug,
         include_historical=req.include_historical,
+        as_of=req.as_of.isoformat() if req.as_of else None,
     )
     return QueryResponse(
         query=result.query,

@@ -248,7 +248,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         return [
             {
                 "entity_id": "eric-id",
@@ -259,7 +259,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         return [
             {
                 "seed_id": "eric-id",
@@ -458,7 +458,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         assert ids == ["travel-id", "cube-id"]
         return [
             {
@@ -477,7 +477,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
             },
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         return []
 
     async def fake_touch_entities(ids, now):
@@ -658,7 +658,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         return [
             {
                 "entity_id": "atlas-id",
@@ -669,7 +669,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -743,7 +743,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         return [
             {
                 "entity_id": "atlas-id",
@@ -754,7 +754,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         assert seed_ids == ["atlas-id"]
         assert max_hops == 2
         return [
@@ -852,7 +852,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
     async def fake_get_entities_from_chunks(chunk_ids):
         return [{"entity_id": "atlas-id", "chunk_eids": chunk_ids}]
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         return [
             {
                 "entity_id": "atlas-id",
@@ -863,7 +863,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -936,6 +936,7 @@ async def test_query_api_threads_debug_flag(monkeypatch, http_client):
         since=None,
         debug=False,
         include_historical=False,
+        as_of=None,
         log_context=None,
     ):
         calls.append(
@@ -1012,6 +1013,7 @@ async def test_query_cli_threads_include_historical_flag(monkeypatch, capsys):
         since=None,
         debug=False,
         include_historical=False,
+        as_of=None,
         log_context=None,
     ):
         calls.append(
@@ -1058,6 +1060,7 @@ async def test_query_cli_threads_include_historical_flag(monkeypatch, capsys):
             no_reinforce=False,
             debug=False,
             include_historical=True,
+            as_of=None,
         )
     )
 
@@ -1070,6 +1073,77 @@ async def test_query_cli_threads_include_historical_flag(monkeypatch, capsys):
         }
     ]
     assert "1. Project Atlas [PROJECT]" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_query_cli_threads_as_of_flag(monkeypatch, capsys):
+    from argparse import Namespace
+
+    from landscape.cli import query as query_cli
+    from landscape.retrieval.query import RetrievalResult
+
+    calls = []
+
+    class FakeEncoder:
+        def load_model(self):
+            return None
+
+    class FakeStore:
+        async def init_collection(self):
+            return None
+
+        async def init_chunks_collection(self):
+            return None
+
+    async def fake_retrieve(
+        query_text,
+        hops=2,
+        limit=10,
+        chunk_limit=3,
+        weights=None,
+        reinforce=True,
+        session_id=None,
+        since=None,
+        debug=False,
+        include_historical=False,
+        as_of=None,
+        log_context=None,
+    ):
+        calls.append({"as_of": as_of})
+        return RetrievalResult(
+            query=query_text,
+            results=[],
+            touched_entity_ids=[],
+            touched_edge_ids=[],
+            chunks=[],
+        )
+
+    async def noop_close_runtime(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        query_cli,
+        "_get_runtime",
+        lambda: (FakeEncoder(), fake_retrieve, FakeStore(), FakeStore()),
+    )
+    monkeypatch.setattr(query_cli, "close_runtime", noop_close_runtime)
+
+    exit_code = await query_cli.handle_query(
+        Namespace(
+            text="q",
+            hops=2,
+            limit=10,
+            no_reinforce=False,
+            debug=False,
+            include_historical=False,
+            as_of="2023-06-01T00:00:00+00:00",
+        )
+    )
+
+    assert exit_code == 0
+    assert calls == [{"as_of": "2023-06-01T00:00:00+00:00"}]
+    capsys.readouterr()
 
 
 @pytest.mark.asyncio
@@ -1191,7 +1265,7 @@ async def test_retrieve_seeds_canonical_entity_from_alias_resolution(monkeypatch
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(entity_ids, include_historical=False):
+    async def fake_hydrate_entities(entity_ids, include_historical=False, as_of=None):
         assert entity_ids == ["robert-id"]
         return [
             {
@@ -1203,7 +1277,7 @@ async def test_retrieve_seeds_canonical_entity_from_alias_resolution(monkeypatch
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         assert seed_ids == ["robert-id"]
         return []
 

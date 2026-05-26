@@ -128,6 +128,7 @@ async def search(
     session_id: str | None = None,
     since_hours: int | None = None,
     include_historical: bool = False,
+    as_of: str | None = None,
     debug: bool = False,
     verbose: bool = False,
 ) -> str:
@@ -154,6 +155,7 @@ async def search(
         since=since,
         debug=debug,
         include_historical=include_historical,
+        as_of=as_of,
     )
     if verbose:
         output = {

@@ -295,6 +295,7 @@ def test_query_command_threads_debug_flag(monkeypatch, capsys):
             since=None,
             debug=False,
             include_historical=False,
+            as_of=None,
             log_context=None,
         ):
             self.calls.append(
