@@ -14,7 +14,6 @@ import pytest
 from landscape.extraction.schema import ExtractedEntity, ExtractedRelation, Extraction
 from landscape.memory_graph.service import PersistenceResult
 
-
 # ---------------------------------------------------------------------------
 # Shared pipeline stub helpers
 # ---------------------------------------------------------------------------

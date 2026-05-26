@@ -164,7 +164,8 @@ async def test_object_keyed_family_supersedes_on_same_slot(neo4j_driver):
         result = await session.run(
             """
             MATCH (f:MemoryFact {family: 'HAS_TITLE', slot_key: $slot_key})
-            RETURN count(*) AS total, sum(CASE WHEN f.system_until IS NULL THEN 1 ELSE 0 END) AS live
+            RETURN count(*) AS total, 
+            sum(CASE WHEN f.system_until IS NULL THEN 1 ELSE 0 END) AS live
             """,
             slot_key=expected_slot_key,
         )
@@ -231,7 +232,8 @@ async def test_subtype_keyed_family_supersedes_on_same_slot(neo4j_driver):
         result = await session.run(
             """
             MATCH (f:MemoryFact {family: 'HAS_PREFERENCE', slot_key: $slot_key})
-            RETURN count(*) AS total, sum(CASE WHEN f.system_until IS NULL THEN 1 ELSE 0 END) AS live
+            RETURN count(*) AS total,
+            sum(CASE WHEN f.system_until IS NULL THEN 1 ELSE 0 END) AS live
             """,
             slot_key=expected_slot_key,
         )
@@ -987,6 +989,7 @@ async def test_supersession_shares_now_with_new_fact_creation(neo4j_driver):
     the new fact's ingested_at must share the exact same timestamp value.
     Today both call datetime.now() independently and diverge by microseconds."""
     from datetime import UTC, datetime
+
     from landscape.memory_graph import AssertionPayload
     from landscape.storage import neo4j_store
 

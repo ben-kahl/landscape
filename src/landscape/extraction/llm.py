@@ -6,6 +6,9 @@ from typing import Literal
 import ollama
 
 from landscape.config import LLM_PROFILES, settings
+from landscape.extraction.schema import Extraction
+from landscape.middleware.token_counter import increment_ollama_tokens
+from landscape.observability.weave_tracing import record_token_usage, traced
 
 _iso_log = logging.getLogger(__name__)
 
@@ -73,9 +76,6 @@ def _parse_iso_temporal(
     else:
         dt = dt.astimezone(UTC)
     return dt.isoformat()
-from landscape.extraction.schema import Extraction
-from landscape.middleware.token_counter import increment_ollama_tokens
-from landscape.observability.weave_tracing import record_token_usage, traced
 
 _SYSTEM_PROMPT = (
     "You are a precise knowledge-graph extractor. Given a passage of text, extract:\n"

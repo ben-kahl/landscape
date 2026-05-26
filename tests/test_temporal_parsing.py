@@ -1,5 +1,4 @@
 """Unit tests for the ISO temporal parser used by LLM extraction."""
-import pytest
 
 
 def test_parse_iso_temporal_year_only_from():

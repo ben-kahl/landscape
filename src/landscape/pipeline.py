@@ -335,7 +335,8 @@ async def ingest(
             if eff_from and eff_until and eff_until < eff_from:
                 _pipeline_log.warning(
                     "extractor produced backwards effective range — dropping both. raw=%r",
-                    {"effective_from": relation.effective_from, "effective_until": relation.effective_until},
+                    {"effective_from": relation.effective_from, 
+                     "effective_until": relation.effective_until},
                 )
                 eff_from = None
                 eff_until = None
