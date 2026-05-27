@@ -1,9 +1,81 @@
+import calendar
+import logging
+from datetime import UTC, datetime
+from typing import Literal
+
 import ollama
 
 from landscape.config import LLM_PROFILES, settings
 from landscape.extraction.schema import Extraction
 from landscape.middleware.token_counter import increment_ollama_tokens
 from landscape.observability.weave_tracing import record_token_usage, traced
+
+_iso_log = logging.getLogger(__name__)
+
+
+def _parse_iso_temporal(
+    value: str | None,
+    *,
+    is_endpoint: Literal["from", "until"],
+) -> str | None:
+    """Parse a YYYY / YYYY-MM / YYYY-MM-DD / full ISO datetime string and
+    return an ISO-8601 UTC string with period-convention resolution.
+
+    For partial inputs:
+      * is_endpoint='from'  → start of period (Jan 1 00:00:00 / 1st 00:00:00 / 00:00:00)
+      * is_endpoint='until' → end of period   (Dec 31 23:59:59 / last day 23:59:59 / 23:59:59)
+
+    Returns None on unparseable input (logs a warning) or on empty/None.
+    Never raises.
+    """
+    if not value:
+        return None
+    s = value.strip()
+
+    # YYYY
+    if len(s) == 4 and s.isdigit():
+        year = int(s)
+        dt = (
+            datetime(year, 1, 1, 0, 0, 0, tzinfo=UTC)
+            if is_endpoint == "from"
+            else datetime(year, 12, 31, 23, 59, 59, tzinfo=UTC)
+        )
+        return dt.isoformat()
+
+    # YYYY-MM
+    if len(s) == 7 and s[4] == "-" and s[:4].isdigit() and s[5:].isdigit():
+        year, month = int(s[:4]), int(s[5:7])
+        if is_endpoint == "from":
+            dt = datetime(year, month, 1, 0, 0, 0, tzinfo=UTC)
+        else:
+            last_day = calendar.monthrange(year, month)[1]
+            dt = datetime(year, month, last_day, 23, 59, 59, tzinfo=UTC)
+        return dt.isoformat()
+
+    # YYYY-MM-DD
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        try:
+            d = datetime.strptime(s, "%Y-%m-%d")
+        except ValueError:
+            _iso_log.warning("could not parse temporal value as YYYY-MM-DD: %r", value)
+            return None
+        if is_endpoint == "from":
+            dt = d.replace(hour=0, minute=0, second=0, tzinfo=UTC)
+        else:
+            dt = d.replace(hour=23, minute=59, second=59, tzinfo=UTC)
+        return dt.isoformat()
+
+    # Full ISO datetime — datetime.fromisoformat handles most variants since 3.11
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        _iso_log.warning("could not parse temporal value as ISO datetime: %r", value)
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    else:
+        dt = dt.astimezone(UTC)
+    return dt.isoformat()
 
 _SYSTEM_PROMPT = (
     "You are a precise knowledge-graph extractor. Given a passage of text, extract:\n"
@@ -211,6 +283,17 @@ _SYSTEM_PROMPT = (
     '"quantity_value": 3, "quantity_unit": "bike", "quantity_kind": "count"}\n'
     "  ]\n"
     "}\n"
+    "\n"
+    "--- TEMPORAL VALIDITY ---\n"
+    "When the text explicitly states when a fact became true or stopped being true,\n"
+    "emit `effective_from` and/or `effective_until` as ISO-8601 dates. Examples:\n"
+    "- \"Alice has worked at Acme since March 2024\" → effective_from: \"2024-03\"\n"
+    "- \"Bob led Sentinel from Q1 2023 to Q3 2024\" → effective_from: \"2023-01\","
+    " effective_until: \"2024-09\"\n"
+    "- \"Acme acquired Zylos on 2025-06-15\" → effective_from: \"2025-06-15\"\n"
+    "- \"The team moved to NYC last year\" → omit both (vague phrase, no explicit date)\n"
+    "\n"
+    "Do NOT guess. Omit the fields if the text gives no explicit calendar reference.\n"
     "\n"
     "Now extract from the following text:"
 )

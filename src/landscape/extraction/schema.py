@@ -204,6 +204,20 @@ class ExtractedRelation(BaseModel):
     quantity_kind: str | None = None
     time_scope: str | None = None
     negated: bool = False
+    effective_from: str | None = Field(
+        default=None,
+        description=(
+            "ISO-8601 date (YYYY, YYYY-MM, or YYYY-MM-DD) when the fact became true in the"
+            " world. Omit if text gives no explicit calendar reference."
+        ),
+    )
+    effective_until: str | None = Field(
+        default=None,
+        description=(
+            "ISO-8601 date when the fact stopped being true."
+            " Omit unless text explicitly states an end."
+        ),
+    )
 
     @model_validator(mode="after")
     def _sync_value_fields(self) -> "ExtractedRelation":

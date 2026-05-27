@@ -386,14 +386,21 @@ async def upsert_memory_fact_from_assertion(
                     """
                     MATCH (old:MemoryFact {id: $old_fact_id})
                     SET old.system_until = $now,
+                        old.effective_until = coalesce(
+                            old.effective_until, $new_effective_from, $now
+                        ),
                         old.updated_at = $now
                     WITH old
                     OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: $old_fact_id}]-()
                     SET r.system_until = $now,
+                        r.effective_until = coalesce(
+                            r.effective_until, $new_effective_from, $now
+                        ),
                         r.updated_at = $now
                     """,
                     old_fact_id=opposite_fact_id,
                     now=now,
+                    new_effective_from=effective_from,
                 )
                 await tx.commit()
             except Exception:
@@ -567,14 +574,21 @@ async def supersede_single_current_fact(
                     """
                     MATCH (old:MemoryFact {id: $old_fact_id})
                     SET old.system_until = $now,
+                        old.effective_until = coalesce(
+                            old.effective_until, $new_effective_from, $now
+                        ),
                         old.updated_at = $now
                     WITH old
                     OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: $old_fact_id}]-()
                     SET r.system_until = $now,
+                        r.effective_until = coalesce(
+                            r.effective_until, $new_effective_from, $now
+                        ),
                         r.updated_at = $now
                     """,
                     old_fact_id=old_fact_id,
                     now=now,
+                    new_effective_from=effective_from,
                 )
 
             await _materialize_memory_rel_in_tx(tx, new_fact_id, now)
