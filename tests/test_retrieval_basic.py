@@ -486,7 +486,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
     async def fake_touch_relations(ids, now):
         return None
 
-    async def fake_hydrate_current_entity_memory(entity_ids):
+    async def fake_hydrate_current_entity_memory(entity_ids, as_of=None):
         assert entity_ids == ["travel-id", "cube-id"]
         return (
             [
@@ -1654,3 +1654,120 @@ async def test_bfs_expand_memory_rel_as_of_surfaces_superseded_edges(neo4j_drive
     # Without as_of, the superseded edge stays hidden by default.
     rows = await neo4j_store.bfs_expand_memory_rel([subj_id], max_hops=1)
     assert rows == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_get_current_fact_details_filters_by_as_of(neo4j_driver):
+    """Per-entity hydration must respect as_of so the response payload's
+    facts list reflects the queried moment, not the system-current state."""
+    from landscape.storage import neo4j_store
+
+    subj = "EntHydAlice"
+    old_obj = "EntHydAcme"
+    new_obj = "EntHydGamma"
+    old_eff_from = "2018-01-01T00:00:00+00:00"
+    old_eff_until = "2023-11-01T00:00:00+00:00"
+    new_eff_from = "2023-11-01T00:00:00+00:00"
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        # Clean slate
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj, old_obj, new_obj],
+        )
+        await session.run(
+            "MATCH (f:MemoryFact) WHERE f.id IN $ids DETACH DELETE f",
+            ids=["fact:ent-hyd-old", "fact:ent-hyd-new"],
+        )
+
+        # Entities
+        create_entity = (
+            "CREATE (e:Entity {id: $id, name: $n, type: $t, canonical: true}) "
+            "RETURN e.id AS id"
+        )
+        subj_id = (await (await session.run(
+            create_entity, id="entity:ent-hyd-subj", n=subj, t="PERSON",
+        )).single())["id"]
+        old_obj_id = (await (await session.run(
+            create_entity, id="entity:ent-hyd-old-obj", n=old_obj, t="ORG",
+        )).single())["id"]
+        new_obj_id = (await (await session.run(
+            create_entity, id="entity:ent-hyd-new-obj", n=new_obj, t="ORG",
+        )).single())["id"]
+
+        # Old MemoryFact (system-superseded, event-time 2018-2023)
+        await session.run(
+            """
+            MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+            CREATE (f:MemoryFact {
+                id: 'fact:ent-hyd-old', family: 'WORKS_FOR',
+                ingested_at: '2026-01-01T00:00:00+00:00',
+                system_until: '2026-02-01T00:00:00+00:00',
+                effective_from: $ef, effective_until: $eu,
+                confidence_agg: 0.9, support_count: 1, negated: false,
+                fact_key: 'fk:old', slot_key: 'sk:old',
+                subtype: null, value_text: null, value_number: null, value_unit: null,
+                value_kind: null, value_time: null, quantity_value: null,
+                quantity_unit: null, quantity_kind: null, time_scope: null
+            })
+            CREATE (s)-[:AS_SUBJECT]->(f)
+            CREATE (f)-[:AS_OBJECT]->(o)
+            CREATE (s)-[:MEMORY_REL {memory_fact_id: 'fact:ent-hyd-old', family: 'WORKS_FOR',
+                ingested_at: '2026-01-01T00:00:00+00:00',
+                system_until: '2026-02-01T00:00:00+00:00',
+                effective_from: $ef, effective_until: $eu,
+                confidence_agg: 0.9, subject_entity_id: $sid, object_entity_id: $oid,
+                access_count: 0, last_accessed: null,
+                updated_at: '2026-01-01T00:00:00+00:00', negated: false}]->(o)
+            """,
+            sid=subj_id, oid=old_obj_id, ef=old_eff_from, eu=old_eff_until,
+        )
+        # New MemoryFact (current)
+        await session.run(
+            """
+            MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+            CREATE (f:MemoryFact {
+                id: 'fact:ent-hyd-new', family: 'WORKS_FOR',
+                ingested_at: '2026-02-01T00:00:00+00:00',
+                system_until: null,
+                effective_from: $ef, effective_until: null,
+                confidence_agg: 0.95, support_count: 1, negated: false,
+                fact_key: 'fk:new', slot_key: 'sk:new',
+                subtype: null, value_text: null, value_number: null, value_unit: null,
+                value_kind: null, value_time: null, quantity_value: null,
+                quantity_unit: null, quantity_kind: null, time_scope: null
+            })
+            CREATE (s)-[:AS_SUBJECT]->(f)
+            CREATE (f)-[:AS_OBJECT]->(o)
+            CREATE (s)-[:MEMORY_REL {memory_fact_id: 'fact:ent-hyd-new', family: 'WORKS_FOR',
+                ingested_at: '2026-02-01T00:00:00+00:00',
+                system_until: null,
+                effective_from: $ef, effective_until: null,
+                confidence_agg: 0.95, subject_entity_id: $sid, object_entity_id: $oid,
+                access_count: 0, last_accessed: null,
+                updated_at: '2026-02-01T00:00:00+00:00', negated: false}]->(o)
+            """,
+            sid=subj_id, oid=new_obj_id, ef=new_eff_from,
+        )
+
+    # Without as_of: only the system-current new fact.
+    facts, _ = await neo4j_store.get_current_fact_details_for_entities([subj_id])
+    fact_ids = {f["memory_fact_id"] for f in facts}
+    assert fact_ids == {"fact:ent-hyd-new"}
+
+    # as_of inside old window: only the old fact (event-time-valid), even though
+    # it is system-superseded.
+    facts, _ = await neo4j_store.get_current_fact_details_for_entities(
+        [subj_id], as_of="2020-06-01T00:00:00+00:00"
+    )
+    fact_ids = {f["memory_fact_id"] for f in facts}
+    assert fact_ids == {"fact:ent-hyd-old"}
+
+    # as_of after both effective_from boundaries: only the new fact.
+    facts, _ = await neo4j_store.get_current_fact_details_for_entities(
+        [subj_id], as_of="2025-01-01T00:00:00+00:00"
+    )
+    fact_ids = {f["memory_fact_id"] for f in facts}
+    assert fact_ids == {"fact:ent-hyd-new"}

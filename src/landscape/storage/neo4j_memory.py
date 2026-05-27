@@ -130,18 +130,23 @@ async def get_memory_fact_details_batch(
 
 async def get_current_fact_details_for_entities(
     entity_ids: list[str],
+    as_of: str | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     if not entity_ids:
         return [], []
 
     unique_entity_ids = list(dict.fromkeys(entity_ids))
-    driver = get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            """
+    if as_of:
+        temporal_clause = (
+            "AND (fact.effective_from IS NULL OR fact.effective_from <= $as_of)\n"
+            "              AND (fact.effective_until IS NULL OR fact.effective_until > $as_of)"
+        )
+    else:
+        temporal_clause = "AND fact.system_until IS NULL"
+    cypher = """
             MATCH (subject:Entity)-[:AS_SUBJECT]->(fact:MemoryFact)
             WHERE subject.id IN $entity_ids
-              AND fact.system_until IS NULL
+              __TEMPORAL_CLAUSE__
             OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
             OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: fact.id}]->(object)
             OPTIONAL MATCH (a:Assertion)-[:SUPPORTS]->(fact)
@@ -196,8 +201,13 @@ async def get_current_fact_details_for_entities(
                      created_at: a.created_at
                    }] AS supporting_assertions
             ORDER BY subject.id, fact.family, fact.id
-            """,
+            """
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            cypher.replace("__TEMPORAL_CLAUSE__", temporal_clause),
             entity_ids=unique_entity_ids,
+            as_of=as_of,
         )
         rows = [dict(record) async for record in result]
 

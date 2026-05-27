@@ -110,17 +110,23 @@ async def _hydrate_memory_path_details(
 
 async def _hydrate_current_non_traversable_entity_memory(
     entity_ids: list[str],
+    as_of: str | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     # Historical helper name retained for test monkeypatches and call-site
     # compatibility. The retrieval payload now wants all current adjacent facts,
     # not only scalar/non-traversable ones.
-    return await neo4j_store.get_current_fact_details_for_entities(entity_ids)
+    return await neo4j_store.get_current_fact_details_for_entities(
+        entity_ids, as_of=as_of
+    )
 
 
 async def _hydrate_current_entity_memory(
     entity_ids: list[str],
+    as_of: str | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    return await _hydrate_current_non_traversable_entity_memory(entity_ids)
+    return await _hydrate_current_non_traversable_entity_memory(
+        entity_ids, as_of=as_of
+    )
 
 
 async def retrieve(
@@ -506,7 +512,7 @@ async def retrieve(
 
         entity_ids_ranked = [item.entity_id for item in ranked]
         current_entity_facts, current_entity_assertions = (
-            await _hydrate_current_entity_memory(entity_ids_ranked)
+            await _hydrate_current_entity_memory(entity_ids_ranked, as_of=as_of)
         )
         if current_entity_facts:
             facts_by_entity_id: dict[str, list[dict[str, object]]] = {}
