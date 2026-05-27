@@ -201,8 +201,8 @@ async def test_add_relation_supersedes_when_functional(http_client, neo4j_driver
             await session.run(
                 "MATCH (:Assertion)-[:SUPPORTS]->(f:MemoryFact {family: 'WORKS_FOR'}) "
                 "OPTIONAL MATCH (f)-[:AS_OBJECT]->(o:Entity) "
-                "RETURN o.name AS target, f.system_until AS system_until, "
-                "(f.system_until IS NULL) AS current, "
+                "RETURN o.name AS target, f.valid_until AS valid_until, "
+                "(f.valid_until IS NULL) AS current, "
                 "f.created_at AS created_at, f.updated_at AS updated_at "
                 "ORDER BY f.created_at"
             )
@@ -212,10 +212,10 @@ async def test_add_relation_supersedes_when_functional(http_client, neo4j_driver
     new_edge = next((e for e in facts if e["target"] == "Beacon"), None)
 
     assert old_edge is not None, "Old Acme fact must still exist"
-    assert old_edge["system_until"] is not None, "Old fact must be superseded"
+    assert old_edge["valid_until"] is not None, "Old fact must be superseded"
 
     assert new_edge is not None, "New Beacon fact must be created"
-    assert new_edge["system_until"] is None, "New fact must be live"
+    assert new_edge["valid_until"] is None, "New fact must be live"
 
 
 @pytest.mark.asyncio
@@ -281,7 +281,7 @@ async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_drive
             await session.run(
                 "MATCH (s:Entity {name: 'Alice'})-[r:MEMORY_REL {family: 'WORKS_FOR'}]->"
                 "(o:Entity {name: 'Beacon'}) "
-                "WHERE r.system_until IS NULL "
+                "WHERE r.valid_until IS NULL "
                 "RETURN count(r) AS cnt"
             )
         ).single()
@@ -958,7 +958,7 @@ async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver
         edge_on_canonical = await (
             await session.run(
                 "MATCH (s:Entity)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity) "
-                "WHERE s.id = $sid AND r.system_until IS NULL "
+                "WHERE s.id = $sid AND r.valid_until IS NULL "
                 "RETURN count(r) AS cnt",
                 sid=robert_id,
             )
@@ -967,7 +967,7 @@ async def test_add_relation_uses_resolved_alias_target(http_client, neo4j_driver
             await session.run(
                 "MATCH (stub:Entity {name: 'Bob', canonical: false})"
                 "-[r:MEMORY_REL {family: 'WORKS_FOR'}]->() "
-                "WHERE r.system_until IS NULL "
+                "WHERE r.valid_until IS NULL "
                 "RETURN count(r) AS cnt"
             )
         ).single()
@@ -1028,7 +1028,7 @@ async def test_add_relation_does_not_cross_link_same_surface_name(http_client, n
         all_edges = await (
             await session.run(
                 "MATCH (s:Entity {name: 'Alex'})-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity) "
-                "WHERE r.system_until IS NULL "
+                "WHERE r.valid_until IS NULL "
                 "RETURN s.id AS sid, s.type AS stype, count(r) AS cnt"
             )
         ).data()

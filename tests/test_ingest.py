@@ -115,7 +115,7 @@ async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdran
             """
             MATCH (d:Document {title: $title})-[:ASSERTS]->(a:Assertion)
                   -[:SUPPORTS]->(f:MemoryFact)
-            WHERE f.system_until IS NULL
+            WHERE f.valid_until IS NULL
             RETURN count(*) AS cnt
             """,
             title=TEST_TITLE,
@@ -236,8 +236,8 @@ async def test_ingest_promotes_additive_family_into_memory_rel(http_client, neo4
                   (a)-[:OBJECT_ENTITY]->(o:Entity {name: $object}),
                   (a)-[:SUPPORTS]->(f:MemoryFact),
                   (s)-[r:MEMORY_REL]->(o)
-            WHERE f.system_until IS NULL
-              AND r.system_until IS NULL
+            WHERE f.valid_until IS NULL
+              AND r.valid_until IS NULL
             RETURN a.subtype AS subtype,
                    a.quantity_value AS quantity_value,
                    a.quantity_unit AS quantity_unit,
@@ -424,7 +424,6 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
         subject_entity_id,
         object_entity_id,
         chunk_ids,
-        now=None,
     ):
         captured_relation_kwargs.update(
             {
@@ -533,7 +532,6 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
         subject_entity_id,
         object_entity_id,
         chunk_ids,
-        now=None,
     ):
         return PersistenceResult(
             assertion_id="assertion-1",
@@ -636,7 +634,6 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
         subject_entity_id,
         object_entity_id,
         chunk_ids,
-        now=None,
     ):
         return PersistenceResult(
             assertion_id="assertion-2",
@@ -735,7 +732,6 @@ async def test_ingest_logs_failure_with_failed_stage(monkeypatch, caplog):
         subject_entity_id,
         object_entity_id,
         chunk_ids,
-        now=None,
     ):
         return PersistenceResult(
             assertion_id="assertion-3",

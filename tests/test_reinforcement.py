@@ -288,7 +288,7 @@ async def test_write_bumps_relation_access_count(neo4j_driver):
     async with neo4j_driver.session() as session:
         result = await session.run(
             "MATCH (:Entity {name: $s})-[r:MEMORY_REL {family: $t}]->(:Entity {name: $o}) "
-            "WHERE r.system_until IS NULL "
+            "WHERE r.valid_until IS NULL "
             "RETURN coalesce(r.access_count, 0) AS c, r.last_accessed AS la",
             s="Reinforce Relation Subj",
             t="USES",
@@ -416,7 +416,7 @@ async def test_reasserted_fact_outranks_cold_fact(
             """
             MATCH (:Entity {name: 'Reinforce Subject'})
                   -[r:MEMORY_REL {family: 'USES'}]->(:Entity)
-            WHERE r.system_until IS NULL
+            WHERE r.valid_until IS NULL
               AND endNode(r).name IN ['Warm Stack', 'Cold Stack']
             MATCH (f:MemoryFact {id: r.memory_fact_id})
             SET r.last_accessed = datetime($ts),

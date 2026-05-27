@@ -47,8 +47,6 @@ async def _create_memory_fact_version_in_tx(
     quantity_unit: str | None,
     quantity_kind: str | None,
     time_scope: str | None,
-    effective_from: str | None,
-    effective_until: str | None,
     confidence: float,
     assertion_id: str,
     negated: bool,
@@ -100,10 +98,8 @@ async def _create_memory_fact_version_in_tx(
                       fact.quantity_unit = $quantity_unit,
                       fact.quantity_kind = $quantity_kind,
                       fact.time_scope = $time_scope,
-                      fact.ingested_at = $now,
-                      fact.effective_from = coalesce($effective_from, $now),
-                      fact.effective_until = $effective_until,
-                      fact.system_until = null,
+                      fact.valid_from = $now,
+                      fact.valid_until = null,
                       fact.support_count = 1,
                       fact.confidence_agg = $confidence,
                       fact.normalization_policy = 'v1_family_rules',
@@ -121,7 +117,7 @@ async def _create_memory_fact_version_in_tx(
                          ELSE $confidence
                      END,
                      fact.updated_at = $now,
-                     fact.system_until = null,
+                     fact.valid_until = null,
                      fact.access_count = coalesce(fact.access_count, 0) + 1,
                      fact.last_accessed = $now
         MERGE (subject)-[:AS_SUBJECT]->(fact)
@@ -146,8 +142,6 @@ async def _create_memory_fact_version_in_tx(
         quantity_unit=quantity_unit,
         quantity_kind=quantity_kind,
         time_scope=time_scope,
-        effective_from=effective_from,
-        effective_until=effective_until,
         confidence=confidence,
         now=now,
         subject_entity_id=subject_entity_id,
@@ -168,10 +162,8 @@ async def _materialize_memory_rel_in_tx(tx, memory_fact_id: str, now: str) -> No
         FOREACH (_ IN CASE WHEN object IS NULL THEN [] ELSE [1] END |
             MERGE (subject)-[r:MEMORY_REL {memory_fact_id: $fact_id}]->(object)
             SET r.family = fact.family,
-                r.ingested_at = coalesce(r.ingested_at, fact.ingested_at),
-                r.effective_from = fact.effective_from,
-                r.effective_until = fact.effective_until,
-                r.system_until = null,
+                r.valid_from = coalesce(r.valid_from, $now),
+                r.valid_until = null,
                 r.confidence_agg = fact.confidence_agg,
                 r.subtype = fact.subtype,
                 r.negated = coalesce(fact.negated, false),
@@ -181,7 +173,7 @@ async def _materialize_memory_rel_in_tx(tx, memory_fact_id: str, now: str) -> No
                 r.last_accessed = fact.last_accessed,
                 r.updated_at = $now
         )
-        SET fact.system_until = null,
+        SET fact.valid_until = null,
             fact.updated_at = $now
         """,
         fact_id=memory_fact_id,
@@ -204,12 +196,9 @@ async def create_memory_fact_version(
     quantity_unit: str | None = None,
     quantity_kind: str | None = None,
     time_scope: str | None = None,
-    effective_from: str | None = None,
-    effective_until: str | None = None,
     confidence: float,
     assertion_id: str,
     negated: bool = False,
-    now: str | None = None,
 ) -> str:
     subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
     object_entity_id = (
@@ -236,12 +225,10 @@ async def create_memory_fact_version(
                 quantity_unit=quantity_unit,
                 quantity_kind=quantity_kind,
                 time_scope=time_scope,
-                effective_from=effective_from,
-                effective_until=effective_until,
                 confidence=confidence,
                 assertion_id=assertion_id,
                 negated=negated,
-                now=now or datetime.now(UTC).isoformat(),
+                now=datetime.now(UTC).isoformat(),
             )
             await tx.commit()
             return fact_id
@@ -265,12 +252,9 @@ async def upsert_memory_fact_from_assertion(
     quantity_unit: str | None = None,
     quantity_kind: str | None = None,
     time_scope: str | None = None,
-    effective_from: str | None = None,
-    effective_until: str | None = None,
     confidence: float,
     assertion_id: str,
     negated: bool = False,
-    now: str | None = None,
 ) -> tuple[str, str]:
     family_cfg = FAMILY_REGISTRY[family]
     subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
@@ -288,7 +272,7 @@ async def upsert_memory_fact_from_assertion(
             current_result = await session.run(
                 """
                 MATCH (f:MemoryFact {family: $family, slot_key: $slot_key})
-                WHERE f.system_until IS NULL
+                WHERE f.valid_until IS NULL
                 RETURN collect(f.id) AS fact_ids
                 """,
                 family=family,
@@ -311,12 +295,9 @@ async def upsert_memory_fact_from_assertion(
             quantity_unit=quantity_unit,
             quantity_kind=quantity_kind,
             time_scope=time_scope,
-            effective_from=effective_from,
-            effective_until=effective_until,
             confidence=confidence,
             assertion_id=assertion_id,
             negated=negated,
-            now=now,
         )
         if fact_id in current_fact_ids:
             return fact_id, "reinforced"
@@ -327,7 +308,7 @@ async def upsert_memory_fact_from_assertion(
     # Additive path with cross-polarity supersession
     opposite_negated = not negated
     driver = get_driver()
-    now = now or datetime.now(UTC).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     # Check for a live opposite-polarity fact on the same (subject, family, object/value)
     # and retire it if found.
@@ -339,7 +320,7 @@ async def upsert_memory_fact_from_assertion(
                 MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(old:MemoryFact)
                 MATCH (old)-[:AS_OBJECT]->(object:Entity {id: $object_entity_id})
                 WHERE old.family = $family
-                  AND old.system_until IS NULL
+                  AND old.valid_until IS NULL
                   AND coalesce(old.negated, false) = $opposite_negated
                 RETURN old.id AS old_fact_id
                 LIMIT 1
@@ -356,7 +337,7 @@ async def upsert_memory_fact_from_assertion(
                 """
                 MATCH (subject:Entity {id: $subject_entity_id})-[:AS_SUBJECT]->(old:MemoryFact)
                 WHERE old.family = $family
-                  AND old.system_until IS NULL
+                  AND old.valid_until IS NULL
                   AND coalesce(old.negated, false) = $opposite_negated
                   AND (
                     ($value_text IS NOT NULL AND old.value_text = $value_text) OR
@@ -385,11 +366,11 @@ async def upsert_memory_fact_from_assertion(
                 await tx.run(
                     """
                     MATCH (old:MemoryFact {id: $old_fact_id})
-                    SET old.system_until = $now,
+                    SET old.valid_until = $now,
                         old.updated_at = $now
                     WITH old
                     OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: $old_fact_id}]-()
-                    SET r.system_until = $now,
+                    SET r.valid_until = $now,
                         r.updated_at = $now
                     """,
                     old_fact_id=opposite_fact_id,
@@ -436,14 +417,11 @@ async def upsert_memory_fact_from_assertion(
         quantity_unit=quantity_unit,
         quantity_kind=quantity_kind,
         time_scope=time_scope,
-        effective_from=effective_from,
-        effective_until=effective_until,
         confidence=confidence,
         assertion_id=assertion_id,
         negated=negated,
-        now=now,
     )
-    await materialize_memory_rel(fact_id, now=now)
+    await materialize_memory_rel(fact_id)
     if existing_record is not None:
         return fact_id, "reinforced"
     if opposite_fact_id is not None:
@@ -451,8 +429,8 @@ async def upsert_memory_fact_from_assertion(
     return fact_id, "created"
 
 
-async def materialize_memory_rel(memory_fact_id: str, *, now: str | None = None) -> None:
-    now = now or datetime.now(UTC).isoformat()
+async def materialize_memory_rel(memory_fact_id: str) -> None:
+    now = datetime.now(UTC).isoformat()
     driver = get_driver()
     async with driver.session() as session:
         tx = await session.begin_transaction()
@@ -479,12 +457,9 @@ async def supersede_single_current_fact(
     quantity_unit: str | None = None,
     quantity_kind: str | None = None,
     time_scope: str | None = None,
-    effective_from: str | None = None,
-    effective_until: str | None = None,
     confidence: float,
     assertion_id: str,
     negated: bool = False,
-    now: str | None = None,
 ) -> str:
     subject_entity_id = await _resolve_entity_app_id(subject_entity_id)
     object_entity_id = (
@@ -508,7 +483,7 @@ async def supersede_single_current_fact(
         value_time=value_time,
     )
     driver = get_driver()
-    now = now or datetime.now(UTC).isoformat()
+    now = datetime.now(UTC).isoformat()
     async with driver.session() as session:
         tx = await session.begin_transaction()
         try:
@@ -524,7 +499,7 @@ async def supersede_single_current_fact(
             result = await tx.run(
                 """
                 MATCH (old:MemoryFact {family: $family, slot_key: $slot_key})
-                WHERE old.system_until IS NULL
+                WHERE old.valid_until IS NULL
                 RETURN old.id AS old_fact_id
                 LIMIT 1
                 """,
@@ -549,8 +524,6 @@ async def supersede_single_current_fact(
                 quantity_unit=quantity_unit,
                 quantity_kind=quantity_kind,
                 time_scope=time_scope,
-                effective_from=effective_from,
-                effective_until=effective_until,
                 confidence=confidence,
                 assertion_id=assertion_id,
                 negated=negated,
@@ -566,11 +539,11 @@ async def supersede_single_current_fact(
                 await tx.run(
                     """
                     MATCH (old:MemoryFact {id: $old_fact_id})
-                    SET old.system_until = $now,
+                    SET old.valid_until = $now,
                         old.updated_at = $now
                     WITH old
                     OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: $old_fact_id}]-()
-                    SET r.system_until = $now,
+                    SET r.valid_until = $now,
                         r.updated_at = $now
                     """,
                     old_fact_id=old_fact_id,

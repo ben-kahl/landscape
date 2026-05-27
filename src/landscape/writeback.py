@@ -319,7 +319,7 @@ async def status_summary() -> StatusSummary:
             OPTIONAL MATCH (d:Document)
             WITH entity_count, count(d) AS doc_count
             OPTIONAL MATCH ()-[r:MEMORY_REL]->()
-            WHERE r.system_until IS NULL
+            WHERE r.valid_until IS NULL
             RETURN entity_count, doc_count, count(r) AS rel_count
             """
         )
@@ -332,7 +332,7 @@ async def status_summary() -> StatusSummary:
         top_result = await session.run(
             """
             MATCH (e:Entity)-[r:MEMORY_REL]-()
-            WHERE r.system_until IS NULL
+            WHERE r.valid_until IS NULL
             WITH e.name AS name, e.type AS type,
                  sum(coalesce(r.confidence_agg, 0)) AS reinforcement
             ORDER BY reinforcement DESC

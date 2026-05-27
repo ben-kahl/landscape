@@ -164,7 +164,7 @@ async def test_object_keyed_family_supersedes_on_same_slot(neo4j_driver):
         result = await session.run(
             """
             MATCH (f:MemoryFact {family: 'HAS_TITLE', slot_key: $slot_key})
-            RETURN count(*) AS total, sum(CASE WHEN f.system_until IS NULL THEN 1 ELSE 0 END) AS live
+            RETURN count(*) AS total, sum(CASE WHEN f.valid_until IS NULL THEN 1 ELSE 0 END) AS live
             """,
             slot_key=expected_slot_key,
         )
@@ -231,7 +231,7 @@ async def test_subtype_keyed_family_supersedes_on_same_slot(neo4j_driver):
         result = await session.run(
             """
             MATCH (f:MemoryFact {family: 'HAS_PREFERENCE', slot_key: $slot_key})
-            RETURN count(*) AS total, sum(CASE WHEN f.system_until IS NULL THEN 1 ELSE 0 END) AS live
+            RETURN count(*) AS total, sum(CASE WHEN f.valid_until IS NULL THEN 1 ELSE 0 END) AS live
             """,
             slot_key=expected_slot_key,
         )
@@ -363,38 +363,38 @@ async def test_superseding_single_current_fact_replaces_memory_rel(neo4j_driver)
     )
     explanation = await neo4j_store.get_memory_fact_explanation(second)
     assert explanation["family"] == "WORKS_FOR"
-    assert explanation["system_until"] is None
+    assert explanation["valid_until"] is None
     assert explanation["object_name"] == "Beacon"
     async with neo4j_driver.session() as session:
         old_fact_result = await session.run(
             """
             MATCH (f:MemoryFact {id: $fact_id})
-            RETURN f.system_until AS system_until,
-                   (f.system_until IS NULL) AS current
+            RETURN f.valid_until AS valid_until,
+                   (f.valid_until IS NULL) AS current
             """,
             fact_id=first,
         )
         old_fact = await old_fact_result.single()
         assert old_fact is not None
-        assert old_fact["system_until"] is not None
+        assert old_fact["valid_until"] is not None
 
         old_rel_result = await session.run(
             """
             MATCH (:Entity {id: $subject_id})-[r:MEMORY_REL {memory_fact_id: $fact_id}]->()
-            RETURN r.system_until AS system_until,
-                   (r.system_until IS NULL) AS current
+            RETURN r.valid_until AS valid_until,
+                   (r.valid_until IS NULL) AS current
             """,
             subject_id=alice_id,
             fact_id=first,
         )
         old_rel = await old_rel_result.single()
         assert old_rel is not None
-        assert old_rel["system_until"] is not None
+        assert old_rel["valid_until"] is not None
 
         current_count_result = await session.run(
             """
             MATCH (f:MemoryFact {slot_key: $slot_key})
-            WHERE f.system_until IS NULL
+            WHERE f.valid_until IS NULL
             RETURN count(f) AS count
             """,
             slot_key=slot,
@@ -462,12 +462,12 @@ async def test_superseding_single_current_fact_is_idempotent_on_retry(neo4j_driv
     assert retry == second
     explanation = await neo4j_store.get_memory_fact_explanation(retry)
     assert explanation is not None
-    assert explanation["system_until"] is None
+    assert explanation["valid_until"] is None
     async with neo4j_driver.session() as session:
         result = await session.run(
             """
             MATCH (f:MemoryFact {slot_key: $slot_key})
-            WHERE f.system_until IS NULL
+            WHERE f.valid_until IS NULL
             RETURN count(f) AS count
             """,
             slot_key=slot_key(FAMILY_REGISTRY["WORKS_FOR"], alice_id, beacon_id, None),
@@ -610,7 +610,7 @@ async def test_subject_keyed_cross_polarity_supersession(neo4j_driver):
         result = await session.run(
             """
             MATCH (e:Entity {id: $alice_id})-[:AS_SUBJECT]->(f:MemoryFact {family: 'WORKS_FOR'})
-            WHERE f.system_until IS NULL
+            WHERE f.valid_until IS NULL
             RETURN f.negated AS negated, f.id AS fact_id
             """,
             alice_id=alice,
@@ -671,7 +671,7 @@ async def test_additive_entity_cross_polarity_supersession(neo4j_driver):
         result = await session.run(
             """
             MATCH (e:Entity {id: $project_id})-[:AS_SUBJECT]->(f:MemoryFact {family: 'USES'})
-            WHERE f.system_until IS NULL
+            WHERE f.valid_until IS NULL
             RETURN f.negated AS negated, f.object_entity_id AS obj
             ORDER BY f.object_entity_id
             """,
@@ -722,7 +722,7 @@ async def test_additive_value_cross_polarity_supersession(neo4j_driver):
         result = await session.run(
             """
             MATCH (e:Entity {id: $team_id})-[:AS_SUBJECT]->(f:MemoryFact {family: 'RECOMMENDED'})
-            WHERE f.system_until IS NULL
+            WHERE f.valid_until IS NULL
             RETURN f.negated AS negated
             """,
             team_id=team,
@@ -763,7 +763,7 @@ async def test_additive_coexistence_unaffected_by_negation(neo4j_driver):
         result = await session.run(
             """
             MATCH (e:Entity {id: $project_id})-[:AS_SUBJECT]->(f:MemoryFact {family: 'USES'})
-            WHERE f.system_until IS NULL
+            WHERE f.valid_until IS NULL
             RETURN f.negated AS negated, f.object_entity_id AS obj
             """,
             project_id=project,
@@ -804,268 +804,3 @@ async def test_negated_fact_surfaces_in_retrieval_output(neo4j_driver):
     facts, _ = await get_current_fact_details_for_entities([alice])
     assert len(facts) == 1
     assert facts[0]["negated"] is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_memory_fact_defaults_effective_from_to_ingested_at(neo4j_driver):
-    """When no extracted effective_from is supplied, storage floors
-    effective_from to ingested_at so as_of queries can always anchor."""
-    from landscape.memory_graph import AssertionPayload
-    from landscape.storage import neo4j_store
-
-    subj = "BiTempAlice"
-    obj = "BiTempAcme"
-
-    await neo4j_store.ensure_memory_graph_schema()
-    async with neo4j_driver.session() as session:
-        await session.run(
-            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
-            names=[subj, obj],
-        )
-    subject_id = await neo4j_store.merge_entity(subj, "PERSON", "bitemp-test", 0.9)
-    object_id = await neo4j_store.merge_entity(obj, "ORGANIZATION", "bitemp-test", 0.9)
-
-    assertion = await neo4j_store.merge_assertion(
-        AssertionPayload(
-            source_kind="document",
-            source_id="bitemp-default-test",
-            raw_subject_text=subj,
-            raw_relation_text="works for",
-            raw_object_text=obj,
-            confidence=0.9,
-            family_candidate="WORKS_FOR",
-        )
-    )
-    fact_id = await neo4j_store.create_memory_fact_version(
-        family="WORKS_FOR",
-        subject_entity_id=subject_id,
-        object_entity_id=object_id,
-        subtype=None,
-        confidence=0.9,
-        assertion_id=assertion,
-    )
-    await neo4j_store.materialize_memory_rel(fact_id)
-
-    async with neo4j_driver.session() as session:
-        record = await (
-            await session.run(
-                "MATCH (f:MemoryFact {id: $fid}) "
-                "RETURN f.ingested_at AS ingested_at, "
-                "       f.effective_from AS effective_from, "
-                "       f.effective_until AS effective_until, "
-                "       f.system_until AS system_until",
-                fid=fact_id,
-            )
-        ).single()
-        edge = await (
-            await session.run(
-                "MATCH ()-[r:MEMORY_REL {memory_fact_id: $fid}]->() "
-                "RETURN r.ingested_at AS ingested_at, "
-                "       r.effective_from AS effective_from, "
-                "       r.effective_until AS effective_until, "
-                "       r.system_until AS system_until",
-                fid=fact_id,
-            )
-        ).single()
-
-    assert record is not None
-    assert record["ingested_at"] is not None
-    assert record["effective_from"] == record["ingested_at"], (
-        "effective_from must default to ingested_at when no extracted value"
-    )
-    assert record["effective_until"] is None
-    assert record["system_until"] is None
-
-    assert edge is not None
-    assert edge["ingested_at"] == record["ingested_at"]
-    assert edge["effective_from"] == record["effective_from"]
-    assert edge["effective_until"] is None
-    assert edge["system_until"] is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_memory_fact_stores_explicit_effective_range(neo4j_driver):
-    """When effective_from/effective_until are supplied, they are stored
-    verbatim on both MemoryFact node and MEMORY_REL edge."""
-    from landscape.memory_graph import AssertionPayload
-    from landscape.storage import neo4j_store
-
-    subj = "BiTempRangeBob"
-    obj = "BiTempRangeZylos"
-
-    await neo4j_store.ensure_memory_graph_schema()
-    async with neo4j_driver.session() as session:
-        await session.run(
-            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
-            names=[subj, obj],
-        )
-    subject_id = await neo4j_store.merge_entity(subj, "PERSON", "bitemp-range", 0.9)
-    object_id = await neo4j_store.merge_entity(obj, "ORGANIZATION", "bitemp-range", 0.9)
-
-    assertion = await neo4j_store.merge_assertion(
-        AssertionPayload(
-            source_kind="document",
-            source_id="bitemp-range-test",
-            raw_subject_text=subj,
-            raw_relation_text="worked for",
-            raw_object_text=obj,
-            confidence=0.9,
-            family_candidate="WORKS_FOR",
-        )
-    )
-    fact_id = await neo4j_store.create_memory_fact_version(
-        family="WORKS_FOR",
-        subject_entity_id=subject_id,
-        object_entity_id=object_id,
-        subtype=None,
-        confidence=0.9,
-        assertion_id=assertion,
-        effective_from="2020-03-01T00:00:00+00:00",
-        effective_until="2023-09-30T23:59:59+00:00",
-    )
-    await neo4j_store.materialize_memory_rel(fact_id)
-
-    async with neo4j_driver.session() as session:
-        record = await (
-            await session.run(
-                "MATCH (f:MemoryFact {id: $fid}) "
-                "RETURN f.effective_from AS effective_from, "
-                "       f.effective_until AS effective_until",
-                fid=fact_id,
-            )
-        ).single()
-        edge = await (
-            await session.run(
-                "MATCH ()-[r:MEMORY_REL {memory_fact_id: $fid}]->() "
-                "RETURN r.effective_from AS effective_from, "
-                "       r.effective_until AS effective_until",
-                fid=fact_id,
-            )
-        ).single()
-
-    assert record["effective_from"] == "2020-03-01T00:00:00+00:00"
-    assert record["effective_until"] == "2023-09-30T23:59:59+00:00"
-    assert edge["effective_from"] == record["effective_from"]
-    assert edge["effective_until"] == record["effective_until"]
-
-
-@pytest.mark.unit
-def test_assertion_payload_accepts_effective_fields():
-    from landscape.memory_graph import AssertionPayload
-
-    payload = AssertionPayload(
-        source_kind="document",
-        source_id="x",
-        raw_subject_text="Alice",
-        raw_relation_text="worked for",
-        raw_object_text="Acme",
-        confidence=0.9,
-        effective_from="2020-01-01",
-        effective_until="2023-12-31",
-    )
-    assert payload.effective_from == "2020-01-01"
-    assert payload.effective_until == "2023-12-31"
-
-    default = AssertionPayload(
-        source_kind="document",
-        source_id="x",
-        raw_subject_text="Alice",
-        raw_relation_text="works for",
-        raw_object_text="Zylos",
-        confidence=0.9,
-    )
-    assert default.effective_from is None
-    assert default.effective_until is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_supersession_shares_now_with_new_fact_creation(neo4j_driver):
-    """Within one ingestion pass, the closed old fact's system_until and
-    the new fact's ingested_at must share the exact same timestamp value.
-    Today both call datetime.now() independently and diverge by microseconds."""
-    from datetime import UTC, datetime
-    from landscape.memory_graph import AssertionPayload
-    from landscape.storage import neo4j_store
-
-    subj = "NowAlice"
-    old_obj = "NowAcme"
-    new_obj = "NowZylos"
-
-    await neo4j_store.ensure_memory_graph_schema()
-    async with neo4j_driver.session() as session:
-        await session.run(
-            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
-            names=[subj, old_obj, new_obj],
-        )
-    subject_id = await neo4j_store.merge_entity(subj, "PERSON", "now-test", 0.9)
-    old_object_id = await neo4j_store.merge_entity(old_obj, "ORGANIZATION", "now-test", 0.9)
-    new_object_id = await neo4j_store.merge_entity(new_obj, "ORGANIZATION", "now-test", 0.9)
-
-    shared_now = datetime.now(UTC).isoformat()
-
-    old_assertion = await neo4j_store.merge_assertion(
-        AssertionPayload(
-            source_kind="document",
-            source_id="now-old",
-            raw_subject_text=subj,
-            raw_relation_text="works for",
-            raw_object_text=old_obj,
-            confidence=0.9,
-            family_candidate="WORKS_FOR",
-        ),
-        now=shared_now,
-    )
-    old_fact = await neo4j_store.create_memory_fact_version(
-        family="WORKS_FOR",
-        subject_entity_id=subject_id,
-        object_entity_id=old_object_id,
-        subtype=None,
-        confidence=0.9,
-        assertion_id=old_assertion,
-        now=shared_now,
-    )
-    await neo4j_store.materialize_memory_rel(old_fact, now=shared_now)
-
-    new_assertion = await neo4j_store.merge_assertion(
-        AssertionPayload(
-            source_kind="document",
-            source_id="now-new",
-            raw_subject_text=subj,
-            raw_relation_text="works for",
-            raw_object_text=new_obj,
-            confidence=0.95,
-            family_candidate="WORKS_FOR",
-        ),
-        now=shared_now,
-    )
-    new_fact = await neo4j_store.supersede_single_current_fact(
-        family="WORKS_FOR",
-        subject_entity_id=subject_id,
-        object_entity_id=new_object_id,
-        subtype=None,
-        confidence=0.95,
-        assertion_id=new_assertion,
-        now=shared_now,
-    )
-
-    async with neo4j_driver.session() as session:
-        old_record = await (
-            await session.run(
-                "MATCH (f:MemoryFact {id: $fid}) "
-                "RETURN f.system_until AS system_until",
-                fid=old_fact,
-            )
-        ).single()
-        new_record = await (
-            await session.run(
-                "MATCH (f:MemoryFact {id: $fid}) "
-                "RETURN f.ingested_at AS ingested_at",
-                fid=new_fact,
-            )
-        ).single()
-
-    assert old_record["system_until"] == shared_now
-    assert new_record["ingested_at"] == shared_now

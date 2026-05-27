@@ -36,12 +36,12 @@ async def _neo4j_counts() -> dict:
             CALL () { MATCH (c:Chunk) RETURN count(c) AS chunks }
             CALL () {
               MATCH ()-[live:MEMORY_REL]->()
-              WHERE live.system_until IS NULL
+              WHERE live.valid_until IS NULL
               RETURN count(live) AS live_relations
             }
             CALL () {
               MATCH ()-[stale:MEMORY_REL]->()
-              WHERE stale.system_until IS NOT NULL
+              WHERE stale.valid_until IS NOT NULL
               RETURN count(stale) AS superseded_relations
             }
             RETURN documents, entities, chunks, live_relations, superseded_relations

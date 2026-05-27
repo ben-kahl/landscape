@@ -32,13 +32,13 @@ async def _assert_current_memory_relation(
             """
             MATCH (d:Document {title: $title})-[:ASSERTS]->(a:Assertion)
                   -[:SUPPORTS]->(f:MemoryFact)
-            WHERE f.system_until IS NULL
+            WHERE f.valid_until IS NULL
               AND a.raw_subject_text = $subject_text
               AND a.raw_object_text = $object_text
             OPTIONAL MATCH (a)-[:SUBJECT_ENTITY]->(s:Entity)
             OPTIONAL MATCH (a)-[:OBJECT_ENTITY]->(o:Entity)
             OPTIONAL MATCH (s)-[r:MEMORY_REL {memory_fact_id: f.id}]->(o)
-            WHERE r.system_until IS NULL
+            WHERE r.valid_until IS NULL
             RETURN DISTINCT f.family AS family,
                             f.subtype AS fact_subtype,
                             a.raw_relation_text AS raw_relation_text,
@@ -152,13 +152,13 @@ async def test_alice_at_acme_org_relation(http_client, neo4j_driver):
             """
             MATCH (d:Document {title: $title})-[:ASSERTS]->(a:Assertion)
                   -[:SUPPORTS]->(f:MemoryFact)
-            WHERE f.system_until IS NULL
+            WHERE f.valid_until IS NULL
               AND a.raw_object_text = $acme
               AND a.raw_subject_text IN [$alice, $atlas]
             OPTIONAL MATCH (a)-[:SUBJECT_ENTITY]->(s:Entity)
             OPTIONAL MATCH (a)-[:OBJECT_ENTITY]->(o:Entity)
             OPTIONAL MATCH (s)-[r:MEMORY_REL {memory_fact_id: f.id}]->(o)
-            WHERE r.system_until IS NULL
+            WHERE r.valid_until IS NULL
             RETURN DISTINCT a.raw_subject_text AS subj,
                             f.family AS family,
                             s.name AS subject_name,

@@ -414,7 +414,7 @@
       {"subject": "Iris Morales", "object": "foundations team", "type": "MEMBER_OF", "subtype": null,
        "acceptable_synonyms": ["PART_OF", "ON_TEAM"]},
       {"subject": "Iris Morales", "object": "Lumen Robotics", "type": "WORKS_FOR", "subtype": null,
-       "notes": "Historical — should be extracted but supersession will mark it system_until when Beacon is current."},
+       "notes": "Historical — should be extracted but supersession will mark it valid_until when Beacon is current."},
       {"subject": "Alice Chen", "object": "Lumen Robotics", "type": "RELATED_TO", "subtype": "advisor",
        "acceptable_synonyms": ["ADVISED", "ADVISOR_TO"],
        "notes": "ADVISOR_TO not in v1 canonical; RELATED_TO with subtype=advisor is the fallback."},
