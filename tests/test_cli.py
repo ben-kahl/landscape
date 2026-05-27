@@ -417,7 +417,7 @@ def test_ingest_command_threads_debug_flag(tmp_path, fake_runtime, capsys):
         {
             "text": "Alice leads Project Atlas.",
             "title": "debug",
-            "source_type": "text",
+            "source_type": "markdown",
             "session_id": None,
             "turn_id": None,
             "debug": True,
@@ -468,7 +468,7 @@ def test_ingest_uses_file_stem_as_default_title(tmp_path, capsys, fake_runtime):
         {
             "text": "Alice leads Project Atlas.",
             "title": "architecture-notes",
-            "source_type": "text",
+            "source_type": "markdown",
             "session_id": None,
             "turn_id": None,
             "debug": False,

@@ -20,15 +20,24 @@ def _get_runtime():
 def register(subparsers: argparse._SubParsersAction) -> None:
     ingest_parser = subparsers.add_parser(
         "ingest",
-        help="Ingest one UTF-8 text or Markdown file",
-        description="Ingest one UTF-8 text or Markdown file through the local pipeline.",
+        help="Ingest one file (markdown, text, PDF, DOCX, PPTX, XLSX, HTML, CSV, ...)",
+        description=(
+            "Ingest one file through the local pipeline. The file format is "
+            "inferred from its extension and converted to markdown via "
+            "markitdown when needed (PDF, DOCX, PPTX, XLSX, HTML, CSV, JSON, "
+            "XML, EPUB, RTF). Markdown and plain text are passed through "
+            "unchanged. Unknown extensions are read as utf-8 text."
+        ),
     )
     ingest_parser.add_argument("path", help="Path to the input file")
     ingest_parser.add_argument("--title", help="Document title", default=None)
     ingest_parser.add_argument(
         "--source-type",
-        help="Source type recorded with the document",
-        default="text",
+        help=(
+            "Override the source type recorded with the document. "
+            "Default: inferred from the file extension."
+        ),
+        default=None,
     )
     ingest_parser.add_argument("--session-id", default=None)
     ingest_parser.add_argument("--turn-id", default=None)
@@ -51,11 +60,31 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     dir_parser = subparsers.add_parser(
         "ingest-dir",
         help="Ingest files from a directory",
-        description="Ingest matching UTF-8 files from a directory in sorted order.",
+        description=(
+            "Ingest files from a directory in sorted order. By default, every "
+            "file whose extension has a known converter (markdown, text, PDF, "
+            "DOCX, PPTX, XLSX, HTML, CSV, JSON, XML, EPUB, RTF) is picked up; "
+            "unknown extensions are skipped with a log line. Pass --glob to "
+            "restrict to a single glob pattern instead."
+        ),
     )
     dir_parser.add_argument("path", help="Directory to ingest")
-    dir_parser.add_argument("--glob", default="*.md", help="Glob pattern, default: *.md")
-    dir_parser.add_argument("--source-type", default="text")
+    dir_parser.add_argument(
+        "--glob",
+        default=None,
+        help=(
+            "Restrict ingestion to files matching this glob (e.g. '*.md'). "
+            "Default: walk all files and dispatch by extension."
+        ),
+    )
+    dir_parser.add_argument(
+        "--source-type",
+        default=None,
+        help=(
+            "Override the source type for every ingested file. "
+            "Default: inferred per-file from the extension."
+        ),
+    )
     dir_parser.add_argument("--session-id", default=None)
     dir_parser.add_argument("--debug", action="store_true")
     dir_parser.add_argument("--stop-on-error", action="store_true")
@@ -71,17 +100,6 @@ def _validate_provenance(
         parser.error("session-id and turn-id must be provided together")
     if session_id is not None and (not session_id.strip() or not turn_id.strip()):
         parser.error("session-id and turn-id must be non-empty")
-
-
-def _read_file(parser: argparse.ArgumentParser, path: Path) -> str:
-    if not path.exists():
-        parser.error(f"path does not exist: {path}")
-    if not path.is_file():
-        parser.error(f"path is not a file: {path}")
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        parser.error(str(exc))
 
 
 def _format_summary(result) -> str:
@@ -212,23 +230,38 @@ async def _ingest_text(
 
 
 async def handle_ingest(args: argparse.Namespace) -> int:
+    from landscape.ingestion.converters import (
+        ConverterError,
+        convert_to_markdown,
+    )
+
     parser = argparse.ArgumentParser(prog="landscape ingest")
     _validate_provenance(parser, args.session_id, args.turn_id)
     path = Path(args.path)
-    text = _read_file(parser, path)
-    title = args.title or path.stem
+
+    # Convert once, up front, so we can surface a clean error before spinning
+    # up the encoder / Neo4j / Qdrant connections — and so we know the final
+    # source_type before constructing the progress bar.
+    try:
+        converted = convert_to_markdown(path)
+    except ConverterError as exc:
+        parser.error(str(exc))
+
+    title = args.title or converted.title_hint or path.stem
+    source_type = args.source_type or converted.source_type
+
     if _progress_enabled(args.progress):
         with CliIngestProgress(
             title=title,
-            source_type=args.source_type,
+            source_type=source_type,
             session_id=args.session_id,
             turn_id=args.turn_id,
             debug=args.debug,
         ) as progress:
             result = await _ingest_text(
-                text=text,
+                text=converted.text,
                 title=title,
-                source_type=args.source_type,
+                source_type=source_type,
                 session_id=args.session_id,
                 turn_id=args.turn_id,
                 debug=args.debug,
@@ -236,9 +269,9 @@ async def handle_ingest(args: argparse.Namespace) -> int:
             )
     else:
         result = await _ingest_text(
-            text=text,
+            text=converted.text,
             title=title,
-            source_type=args.source_type,
+            source_type=source_type,
             session_id=args.session_id,
             turn_id=args.turn_id,
             debug=args.debug,
@@ -248,6 +281,12 @@ async def handle_ingest(args: argparse.Namespace) -> int:
 
 
 async def handle_ingest_dir(args: argparse.Namespace) -> int:
+    from landscape.ingestion.converters import (
+        ConverterError,
+        convert_to_markdown,
+        is_supported_extension,
+    )
+
     parser = argparse.ArgumentParser(prog="landscape ingest-dir")
     root = Path(args.path)
     if not root.exists():
@@ -257,26 +296,52 @@ async def handle_ingest_dir(args: argparse.Namespace) -> int:
     if args.session_id is not None and not args.session_id.strip():
         parser.error("session-id must be non-empty")
 
-    paths = sorted(p for p in root.glob(args.glob) if p.is_file())
-    if not paths:
-        print(f"No files matched {args.glob!r} under {root}")
-        return 0
+    if args.glob is not None:
+        # Strict-pattern mode: caller knows exactly which files they want.
+        candidates = sorted(p for p in root.glob(args.glob) if p.is_file())
+        if not candidates:
+            print(f"No files matched {args.glob!r} under {root}")
+            return 0
+        paths = candidates
+        skipped: list[Path] = []
+    else:
+        # Default: walk everything, dispatch by extension. Files with no
+        # known converter are skipped with a log line so the user can see
+        # what was passed over.
+        all_files = sorted(p for p in root.iterdir() if p.is_file())
+        paths = [p for p in all_files if is_supported_extension(p)]
+        skipped = [p for p in all_files if not is_supported_extension(p)]
+        if not paths and not skipped:
+            print(f"No files found under {root}")
+            return 0
+        for path in skipped:
+            print(f"skip: {path.name} (no converter for {path.suffix or '<none>'})")
+        if not paths:
+            print(f"No supported files found under {root}")
+            return 0
 
     failures = 0
     for index, path in enumerate(paths, start=1):
         try:
-            text = path.read_text(encoding="utf-8")
+            converted = convert_to_markdown(path)
+            title = converted.title_hint or path.stem
+            source_type = args.source_type or converted.source_type
             turn_id = f"t{index}" if args.session_id is not None else None
             result = await _ingest_text(
-                text=text,
-                title=path.stem,
-                source_type=args.source_type,
+                text=converted.text,
+                title=title,
+                source_type=source_type,
                 session_id=args.session_id,
                 turn_id=turn_id,
                 debug=args.debug,
             )
             print(f"[{index}/{len(paths)}] {path.name}")
             print(_format_summary(result))
+        except ConverterError as exc:
+            failures += 1
+            print(f"[{index}/{len(paths)}] {path.name}: CONVERT_ERROR {exc}")
+            if args.stop_on_error:
+                return 1
         except Exception as exc:
             failures += 1
             print(f"[{index}/{len(paths)}] {path.name}: ERROR {exc}")

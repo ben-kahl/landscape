@@ -58,7 +58,7 @@ graph TD
 
 | Area | Status |
 |---|---|
-| Text ingestion | LLM extraction, chunking, entity resolution, Neo4j writes, Qdrant writes |
+| Document ingestion | Markdown, text, PDF, DOCX, PPTX, XLSX, HTML, CSV, JSON, EPUB, RTF via markitdown; LLM extraction, chunking, entity resolution, Neo4j writes, Qdrant writes |
 | Hybrid retrieval | Vector search, graph expansion, merge/rank, recency and distance scoring |
 | Temporal memory | Bitemporal facts: separate system time (`ingested_at` / `system_until`) and valid time (`effective_from` / `effective_until`); supersession-aware retrieval for functional conflicts; `as_of` time-travel queries; negative-polarity facts stored and surfaced distinctly |
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
@@ -144,9 +144,10 @@ Use the CLI to inspect and operate the local Landscape stack:
 ```bash
 uv run landscape --help
 uv run landscape status --verbose
-uv run landscape ingest /path/to/document.md
-uv run landscape ingest /path/to/document.md --title "Architecture Notes" --source-type markdown
-uv run landscape ingest-dir ./docs --glob "*.md"
+uv run landscape ingest /path/to/notes.md
+uv run landscape ingest /path/to/paper.pdf --title "Aurora Design Doc"
+uv run landscape ingest-dir ./docs            # walks every supported file
+uv run landscape ingest-dir ./docs --glob "*.md"  # strict pattern mode
 uv run landscape query "Who leads the project using PostgreSQL?"
 uv run landscape graph counts
 uv run landscape graph entity "Project Atlas"
@@ -154,6 +155,19 @@ uv run landscape graph neighbors "Project Atlas" --hops 2
 uv run landscape seed killer-demo --confirm
 uv run landscape wipe --confirm
 ```
+
+`ingest` infers the source format from the file extension and converts it to
+markdown via [markitdown](https://github.com/microsoft/markitdown) before
+extraction. Supported formats today: markdown, text, PDF, DOCX, PPTX, XLSX,
+XLS, HTML, CSV, JSON, XML, EPUB, RTF. Files with unrecognized extensions are
+read as utf-8 text. `--source-type` is an override; by default the recorded
+source type matches the input format (so a fact extracted from a PDF shows
+`source_type: pdf` in provenance even though the chunker only saw markdown).
+
+`ingest-dir` walks every file in the directory by default and dispatches by
+extension; files without a known converter are skipped with a single log line.
+Pass `--glob "<pattern>"` to opt into strict-pattern mode and ingest only
+matching files.
 
 The CLI defaults to host-reachable service URLs for local use: Neo4j on
 `bolt://localhost:7687`, Qdrant on `http://localhost:6333`, and Ollama on

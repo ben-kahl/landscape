@@ -3,6 +3,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from time import perf_counter
 
 from landscape.config import settings
@@ -14,6 +15,7 @@ from landscape.extraction.entity_type_coercion import coerce_entity_type
 from landscape.extraction.llm import _parse_iso_temporal
 from landscape.extraction.rel_type_coercion import coerce_rel_type
 from landscape.extraction.schema import normalize_subtype
+from landscape.ingestion.converters import convert_to_markdown
 from landscape.memory_graph.models import AssertionPayload
 from landscape.memory_graph.service import persist_assertion_and_maybe_promote
 from landscape.observability import IngestLogContext, create_ingest_log_context
@@ -405,3 +407,29 @@ async def ingest(
     except Exception as exc:
         log.emit_failed(exc)
         raise
+
+
+async def ingest_file(
+    path: Path,
+    title: str | None = None,
+    source_type: str | None = None,
+    session_id: str | None = None,
+    turn_id: str | None = None,
+    debug: bool = False,
+    log_context: IngestLogContext | None = None,
+) -> IngestResult:
+    """Convert ``path`` to markdown via the converter dispatch, then ingest.
+
+    ``source_type`` overrides the converter's inferred type when provided.
+    ``title`` falls back to the converter's title hint, then to the file stem.
+    """
+    converted = convert_to_markdown(path)
+    return await ingest(
+        text=converted.text,
+        title=title or converted.title_hint or path.stem,
+        source_type=source_type or converted.source_type,
+        session_id=session_id,
+        turn_id=turn_id,
+        debug=debug,
+        log_context=log_context,
+    )
