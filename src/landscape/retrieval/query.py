@@ -110,17 +110,23 @@ async def _hydrate_memory_path_details(
 
 async def _hydrate_current_non_traversable_entity_memory(
     entity_ids: list[str],
+    as_of: str | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     # Historical helper name retained for test monkeypatches and call-site
     # compatibility. The retrieval payload now wants all current adjacent facts,
     # not only scalar/non-traversable ones.
-    return await neo4j_store.get_current_fact_details_for_entities(entity_ids)
+    return await neo4j_store.get_current_fact_details_for_entities(
+        entity_ids, as_of=as_of
+    )
 
 
 async def _hydrate_current_entity_memory(
     entity_ids: list[str],
+    as_of: str | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    return await _hydrate_current_non_traversable_entity_memory(entity_ids)
+    return await _hydrate_current_non_traversable_entity_memory(
+        entity_ids, as_of=as_of
+    )
 
 
 async def retrieve(
@@ -134,6 +140,7 @@ async def retrieve(
     since: datetime | None = None,
     debug: bool = False,
     include_historical: bool = False,
+    as_of: str | None = None,
     log_context: RetrievalLogContext | None = None,
 ) -> RetrievalResult:
     """Hybrid retrieval: seed by vector similarity, expand by graph BFS,
@@ -253,7 +260,7 @@ async def retrieve(
         # 3. Hydrate seed entity info (name, type, access_count, last_accessed).
         stage_started_at = log.set_stage("seed_hydration_completed")
         seed_rows = await _hydrate_entities(
-            list(seed_sims.keys()), include_historical=include_historical
+            list(seed_sims.keys()), include_historical=include_historical, as_of=as_of
         )
         log.emit(
             "seed_hydration_completed",
@@ -297,7 +304,7 @@ async def retrieve(
         live_seed_ids = [row["entity_id"] for row in seed_rows]
         stage_started_at = log.set_stage("graph_expansion_completed")
         expansions = await neo4j_store.bfs_expand_memory_rel(
-            live_seed_ids, max_hops=hops, include_historical=include_historical
+            live_seed_ids, max_hops=hops, include_historical=include_historical, as_of=as_of
         )
         log.emit(
             "graph_expansion_completed",
@@ -505,7 +512,7 @@ async def retrieve(
 
         entity_ids_ranked = [item.entity_id for item in ranked]
         current_entity_facts, current_entity_assertions = (
-            await _hydrate_current_entity_memory(entity_ids_ranked)
+            await _hydrate_current_entity_memory(entity_ids_ranked, as_of=as_of)
         )
         if current_entity_facts:
             facts_by_entity_id: dict[str, list[dict[str, object]]] = {}
@@ -579,7 +586,9 @@ async def retrieve(
 
 
 async def _hydrate_entities(
-    element_ids: list[str], include_historical: bool = False
+    element_ids: list[str],
+    include_historical: bool = False,
+    as_of: str | None = None,
 ) -> list[dict]:
     """Hydrate canonical entities by stable app id and drop stale-only nodes.
 
@@ -589,5 +598,5 @@ async def _hydrate_entities(
     facts masquerading as live seeds. When include_historical is True, the
     stale-only drop is skipped so superseded entities remain rankable."""
     return await neo4j_store.get_rankable_entities(
-        element_ids, include_historical=include_historical
+        element_ids, include_historical=include_historical, as_of=as_of
     )

@@ -248,7 +248,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         return [
             {
                 "entity_id": "eric-id",
@@ -259,7 +259,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         return [
             {
                 "seed_id": "eric-id",
@@ -458,7 +458,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         assert ids == ["travel-id", "cube-id"]
         return [
             {
@@ -477,7 +477,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
             },
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         return []
 
     async def fake_touch_entities(ids, now):
@@ -486,7 +486,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
     async def fake_touch_relations(ids, now):
         return None
 
-    async def fake_hydrate_current_entity_memory(entity_ids):
+    async def fake_hydrate_current_entity_memory(entity_ids, as_of=None):
         assert entity_ids == ["travel-id", "cube-id"]
         return (
             [
@@ -658,7 +658,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         return [
             {
                 "entity_id": "atlas-id",
@@ -669,7 +669,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -743,7 +743,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         return [
             {
                 "entity_id": "atlas-id",
@@ -754,7 +754,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         assert seed_ids == ["atlas-id"]
         assert max_hops == 2
         return [
@@ -852,7 +852,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
     async def fake_get_entities_from_chunks(chunk_ids):
         return [{"entity_id": "atlas-id", "chunk_eids": chunk_ids}]
 
-    async def fake_hydrate_entities(ids, include_historical=False):
+    async def fake_hydrate_entities(ids, include_historical=False, as_of=None):
         return [
             {
                 "entity_id": "atlas-id",
@@ -863,7 +863,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -936,6 +936,7 @@ async def test_query_api_threads_debug_flag(monkeypatch, http_client):
         since=None,
         debug=False,
         include_historical=False,
+        as_of=None,
         log_context=None,
     ):
         calls.append(
@@ -1012,6 +1013,7 @@ async def test_query_cli_threads_include_historical_flag(monkeypatch, capsys):
         since=None,
         debug=False,
         include_historical=False,
+        as_of=None,
         log_context=None,
     ):
         calls.append(
@@ -1058,6 +1060,7 @@ async def test_query_cli_threads_include_historical_flag(monkeypatch, capsys):
             no_reinforce=False,
             debug=False,
             include_historical=True,
+            as_of=None,
         )
     )
 
@@ -1070,6 +1073,141 @@ async def test_query_cli_threads_include_historical_flag(monkeypatch, capsys):
         }
     ]
     assert "1. Project Atlas [PROJECT]" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_query_cli_threads_as_of_flag(monkeypatch, capsys):
+    from argparse import Namespace
+
+    from landscape.cli import query as query_cli
+    from landscape.retrieval.query import RetrievalResult
+
+    calls = []
+
+    class FakeEncoder:
+        def load_model(self):
+            return None
+
+    class FakeStore:
+        async def init_collection(self):
+            return None
+
+        async def init_chunks_collection(self):
+            return None
+
+    async def fake_retrieve(
+        query_text,
+        hops=2,
+        limit=10,
+        chunk_limit=3,
+        weights=None,
+        reinforce=True,
+        session_id=None,
+        since=None,
+        debug=False,
+        include_historical=False,
+        as_of=None,
+        log_context=None,
+    ):
+        calls.append({"as_of": as_of})
+        return RetrievalResult(
+            query=query_text,
+            results=[],
+            touched_entity_ids=[],
+            touched_edge_ids=[],
+            chunks=[],
+        )
+
+    async def noop_close_runtime(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        query_cli,
+        "_get_runtime",
+        lambda: (FakeEncoder(), fake_retrieve, FakeStore(), FakeStore()),
+    )
+    monkeypatch.setattr(query_cli, "close_runtime", noop_close_runtime)
+
+    exit_code = await query_cli.handle_query(
+        Namespace(
+            text="q",
+            hops=2,
+            limit=10,
+            no_reinforce=False,
+            debug=False,
+            include_historical=False,
+            as_of="2023-06-01T00:00:00+00:00",
+        )
+    )
+
+    assert exit_code == 0
+    assert calls == [{"as_of": "2023-06-01T00:00:00+00:00"}]
+    capsys.readouterr()
+
+
+def test_cli_as_of_argparse_rejects_garbage(capsys):
+    import argparse
+
+    from landscape.cli import query as query_cli
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    query_cli.register(subparsers)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["query", "hello", "--as-of", "yesterday"])
+    err = capsys.readouterr().err
+    assert "--as-of" in err and ("ISO" in err or "iso" in err.lower())
+
+
+def test_cli_as_of_argparse_normalizes_naive_to_utc():
+    import argparse
+
+    from landscape.cli import query as query_cli
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    query_cli.register(subparsers)
+
+    args = parser.parse_args(["query", "hello", "--as-of", "2023-06-01T00:00:00"])
+    assert args.as_of == "2023-06-01T00:00:00+00:00"
+
+
+def test_api_normalize_as_of_naive_becomes_utc():
+    from datetime import datetime
+
+    from landscape.api.query import _normalize_as_of
+    naive = datetime(2023, 6, 1, 0, 0, 0)
+    assert _normalize_as_of(naive) == "2023-06-01T00:00:00+00:00"
+
+
+def test_api_normalize_as_of_aware_converted_to_utc():
+    from datetime import datetime, timedelta, timezone
+
+    from landscape.api.query import _normalize_as_of
+    aware_pst = datetime(2023, 6, 1, 0, 0, 0, tzinfo=timezone(timedelta(hours=-8)))
+    assert _normalize_as_of(aware_pst) == "2023-06-01T08:00:00+00:00"
+
+
+def test_api_normalize_as_of_none_passes_through():
+    from landscape.api.query import _normalize_as_of
+    assert _normalize_as_of(None) is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_rejects_garbage_as_of(monkeypatch):
+    import landscape.mcp_app as mcp_mod
+    from landscape.mcp_app import search
+
+    async def fake_retrieve(*a, **kw):
+        raise AssertionError("retrieve should not be called for garbage as_of")
+
+    monkeypatch.setattr(mcp_mod, "require_current_scope", lambda *a, **kw: None)
+    monkeypatch.setattr("landscape.retrieval.query.retrieve", fake_retrieve)
+
+    with pytest.raises(ValueError, match="ISO-8601"):
+        await search(query="hello", as_of="yesterday")
 
 
 @pytest.mark.asyncio
@@ -1191,7 +1329,7 @@ async def test_retrieve_seeds_canonical_entity_from_alias_resolution(monkeypatch
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(entity_ids, include_historical=False):
+    async def fake_hydrate_entities(entity_ids, include_historical=False, as_of=None):
         assert entity_ids == ["robert-id"]
         return [
             {
@@ -1203,7 +1341,7 @@ async def test_retrieve_seeds_canonical_entity_from_alias_resolution(monkeypatch
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False, as_of=None):
         assert seed_ids == ["robert-id"]
         return []
 
@@ -1280,3 +1418,356 @@ def test_retrieval_log_sink_writes_jsonl_to_process_scoped_file(tmp_path):
     assert first["event"] == "retrieval_started"
     assert second["event"] == "retrieval_completed"
     assert second["top_results"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_bfs_expand_memory_rel_filters_by_as_of(neo4j_driver):
+    """Build three edges with effective ranges 2020-2022, 2022-2024, 2024-NULL.
+    as_of=2023-01-01 returns the middle one only; as_of=None returns all live;
+    as_of=2025 returns the last."""
+    from landscape.storage import neo4j_store
+
+    subj = "AsOfAlice"
+    objs = ["AsOfAcmeA", "AsOfAcmeB", "AsOfAcmeC"]
+    ranges = [
+        ("2020-01-01T00:00:00+00:00", "2022-01-01T00:00:00+00:00"),
+        ("2022-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00"),
+        ("2024-01-01T00:00:00+00:00", None),
+    ]
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj] + objs,
+        )
+        subj_id = (
+            await (
+                await session.run(
+                    "CREATE (e:Entity {id: $id, name: $n, type: 'PERSON', canonical: true}) "
+                    "RETURN e.id AS id",
+                    id="entity:asof-subj", n=subj,
+                )
+            ).single()
+        )["id"]
+        for i, (name, (ef, eu)) in enumerate(zip(objs, ranges, strict=True)):
+            obj_id = (
+                await (
+                    await session.run(
+                        "CREATE (e:Entity {id: $id, name: $n, type: 'ORG', canonical: true}) "
+                        "RETURN e.id AS id",
+                        id=f"entity:asof-obj-{i}", n=name,
+                    )
+                ).single()
+            )["id"]
+            await session.run(
+                """
+                MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+                CREATE (s)-[:MEMORY_REL {
+                    memory_fact_id: $fid, family: 'WORKS_FOR',
+                    ingested_at: '2026-05-25T00:00:00+00:00',
+                    system_until: null,
+                    effective_from: $ef, effective_until: $eu,
+                    confidence_agg: 0.9, subject_entity_id: $sid, object_entity_id: $oid,
+                    access_count: 0, last_accessed: null, updated_at: '2026-05-25T00:00:00+00:00',
+                    negated: false
+                }]->(o)
+                """,
+                sid=subj_id, oid=obj_id, fid=f"fact:asof-{i}", ef=ef, eu=eu,
+            )
+
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        [subj_id], max_hops=1, as_of="2023-01-01T00:00:00+00:00"
+    )
+    assert {r["target_name"] for r in rows} == {"AsOfAcmeB"}
+
+    rows = await neo4j_store.bfs_expand_memory_rel([subj_id], max_hops=1)
+    assert {r["target_name"] for r in rows} == set(objs)
+
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        [subj_id], max_hops=1, as_of="2025-06-01T00:00:00+00:00"
+    )
+    assert {r["target_name"] for r in rows} == {"AsOfAcmeC"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_bfs_expand_memory_rel_as_of_includes_null_effective_from(neo4j_driver):
+    """Edges with NULL effective_from must surface for any as_of (permissive)."""
+    from landscape.storage import neo4j_store
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run("MATCH (e:Entity {id: 'entity:null-eff-s'}) DETACH DELETE e")
+        await session.run("MATCH (e:Entity {id: 'entity:null-eff-o'}) DETACH DELETE e")
+        await session.run(
+            "CREATE (s:Entity {id: 'entity:null-eff-s', name: 'NullEffSubj', "
+            "  type: 'PERSON', canonical: true}), "
+            "       (o:Entity {id: 'entity:null-eff-o', name: 'NullEffObj', "
+            "  type: 'ORG', canonical: true}) "
+            "CREATE (s)-[:MEMORY_REL {memory_fact_id: 'fact:null-eff', family: 'WORKS_FOR', "
+            "  ingested_at: '2026-01-01T00:00:00+00:00', system_until: null, "
+            "  effective_from: null, effective_until: null, confidence_agg: 0.9, "
+            "  subject_entity_id: 'entity:null-eff-s', object_entity_id: 'entity:null-eff-o', "
+            "  access_count: 0, last_accessed: null, updated_at: '2026-01-01T00:00:00+00:00', "
+            "  negated: false}]->(o)"
+        )
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        ["entity:null-eff-s"], max_hops=1, as_of="2010-01-01T00:00:00+00:00"
+    )
+    assert {r["target_name"] for r in rows} == {"NullEffObj"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_get_rankable_entities_as_of_surfaces_superseded_entities(neo4j_driver):
+    """An entity whose only edges are system-superseded but event-time-valid at
+    as_of must still be rankable. Supersession here represents 'world moved on',
+    not 'we were wrong' — the historical belief is still current."""
+    from landscape.storage import neo4j_store
+
+    subj = "AsOfHydAlice"
+    obj = "AsOfHydAcme"
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj, obj],
+        )
+        subj_row = await (
+            await session.run(
+                "CREATE (e:Entity {id: $id, name: $n, type: 'PERSON', canonical: true}) "
+                "RETURN e.id AS id",
+                id="entity:asof-hyd-subj", n=subj,
+            )
+        ).single()
+        obj_row = await (
+            await session.run(
+                "CREATE (e:Entity {id: $id, name: $n, type: 'ORG', canonical: true}) "
+                "RETURN e.id AS id",
+                id="entity:asof-hyd-obj", n=obj,
+            )
+        ).single()
+        # Edge is system-superseded (system_until set) but event-time
+        # covers 2020-06.
+        await session.run(
+            """
+            MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+            CREATE (s)-[:MEMORY_REL {
+                memory_fact_id: 'fact:asof-hyd', family: 'WORKS_FOR',
+                ingested_at: '2026-01-01T00:00:00+00:00',
+                system_until: '2026-02-01T00:00:00+00:00',
+                effective_from: '2018-01-01T00:00:00+00:00',
+                effective_until: '2021-03-01T00:00:00+00:00',
+                confidence_agg: 0.9, subject_entity_id: $sid, object_entity_id: $oid,
+                access_count: 0, last_accessed: null,
+                updated_at: '2026-01-01T00:00:00+00:00', negated: false
+            }]->(o)
+            """,
+            sid=subj_row["id"], oid=obj_row["id"],
+        )
+
+    # as_of within the superseded edge's effective window — Acme should be
+    # rankable even with include_historical=False (the as_of itself should
+    # override system-time gating).
+    rows = await neo4j_store.get_rankable_entities(
+        [subj_row["id"], obj_row["id"]],
+        as_of="2020-06-01T00:00:00+00:00",
+    )
+    names = {r["name"] for r in rows}
+    assert names == {subj, obj}
+
+    # as_of outside the window — both endpoints drop. Their only edge is
+    # event-time-invalid at 2025, and total_edges counts that edge for both,
+    # so neither passes total_edges=0 OR effective_at_as_of>0.
+    rows = await neo4j_store.get_rankable_entities(
+        [subj_row["id"], obj_row["id"]],
+        as_of="2025-06-01T00:00:00+00:00",
+    )
+    names = {r["name"] for r in rows}
+    assert names == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_bfs_expand_memory_rel_as_of_surfaces_superseded_edges(neo4j_driver):
+    """A superseded MEMORY_REL whose effective range covers as_of must still
+    surface in BFS traversal. as_of overrides system-time gating."""
+    from landscape.storage import neo4j_store
+
+    subj_name = "BfsAsOfAlice"
+    obj_name = "BfsAsOfAcme"
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj_name, obj_name],
+        )
+        subj_id = (
+            await (
+                await session.run(
+                    "CREATE (e:Entity {id: $id, name: $n, type: 'PERSON', canonical: true}) "
+                    "RETURN e.id AS id",
+                    id="entity:bfs-asof-subj", n=subj_name,
+                )
+            ).single()
+        )["id"]
+        obj_id = (
+            await (
+                await session.run(
+                    "CREATE (e:Entity {id: $id, name: $n, type: 'ORG', canonical: true}) "
+                    "RETURN e.id AS id",
+                    id="entity:bfs-asof-obj", n=obj_name,
+                )
+            ).single()
+        )["id"]
+        await session.run(
+            """
+            MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+            CREATE (s)-[:MEMORY_REL {
+                memory_fact_id: 'fact:bfs-asof', family: 'WORKS_FOR',
+                ingested_at: '2026-01-01T00:00:00+00:00',
+                system_until: '2026-02-01T00:00:00+00:00',
+                effective_from: '2018-01-01T00:00:00+00:00',
+                effective_until: '2021-03-01T00:00:00+00:00',
+                confidence_agg: 0.9, subject_entity_id: $sid, object_entity_id: $oid,
+                access_count: 0, last_accessed: null,
+                updated_at: '2026-01-01T00:00:00+00:00', negated: false
+            }]->(o)
+            """,
+            sid=subj_id, oid=obj_id,
+        )
+
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        [subj_id], max_hops=1, as_of="2020-06-01T00:00:00+00:00"
+    )
+    assert {r["target_name"] for r in rows} == {obj_name}
+
+    rows = await neo4j_store.bfs_expand_memory_rel(
+        [subj_id], max_hops=1, as_of="2025-06-01T00:00:00+00:00"
+    )
+    assert rows == []
+
+    # Without as_of, the superseded edge stays hidden by default.
+    rows = await neo4j_store.bfs_expand_memory_rel([subj_id], max_hops=1)
+    assert rows == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_get_current_fact_details_filters_by_as_of(neo4j_driver):
+    """Per-entity hydration must respect as_of so the response payload's
+    facts list reflects the queried moment, not the system-current state."""
+    from landscape.storage import neo4j_store
+
+    subj = "EntHydAlice"
+    old_obj = "EntHydAcme"
+    new_obj = "EntHydGamma"
+    old_eff_from = "2018-01-01T00:00:00+00:00"
+    old_eff_until = "2023-11-01T00:00:00+00:00"
+    new_eff_from = "2023-11-01T00:00:00+00:00"
+
+    await neo4j_store.ensure_memory_graph_schema()
+    async with neo4j_driver.session() as session:
+        # Clean slate
+        await session.run(
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=[subj, old_obj, new_obj],
+        )
+        await session.run(
+            "MATCH (f:MemoryFact) WHERE f.id IN $ids DETACH DELETE f",
+            ids=["fact:ent-hyd-old", "fact:ent-hyd-new"],
+        )
+
+        # Entities
+        create_entity = (
+            "CREATE (e:Entity {id: $id, name: $n, type: $t, canonical: true}) "
+            "RETURN e.id AS id"
+        )
+        subj_id = (await (await session.run(
+            create_entity, id="entity:ent-hyd-subj", n=subj, t="PERSON",
+        )).single())["id"]
+        old_obj_id = (await (await session.run(
+            create_entity, id="entity:ent-hyd-old-obj", n=old_obj, t="ORG",
+        )).single())["id"]
+        new_obj_id = (await (await session.run(
+            create_entity, id="entity:ent-hyd-new-obj", n=new_obj, t="ORG",
+        )).single())["id"]
+
+        # Old MemoryFact (system-superseded, event-time 2018-2023)
+        await session.run(
+            """
+            MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+            CREATE (f:MemoryFact {
+                id: 'fact:ent-hyd-old', family: 'WORKS_FOR',
+                ingested_at: '2026-01-01T00:00:00+00:00',
+                system_until: '2026-02-01T00:00:00+00:00',
+                effective_from: $ef, effective_until: $eu,
+                confidence_agg: 0.9, support_count: 1, negated: false,
+                fact_key: 'fk:old', slot_key: 'sk:old',
+                subtype: null, value_text: null, value_number: null, value_unit: null,
+                value_kind: null, value_time: null, quantity_value: null,
+                quantity_unit: null, quantity_kind: null, time_scope: null
+            })
+            CREATE (s)-[:AS_SUBJECT]->(f)
+            CREATE (f)-[:AS_OBJECT]->(o)
+            CREATE (s)-[:MEMORY_REL {memory_fact_id: 'fact:ent-hyd-old', family: 'WORKS_FOR',
+                ingested_at: '2026-01-01T00:00:00+00:00',
+                system_until: '2026-02-01T00:00:00+00:00',
+                effective_from: $ef, effective_until: $eu,
+                confidence_agg: 0.9, subject_entity_id: $sid, object_entity_id: $oid,
+                access_count: 0, last_accessed: null,
+                updated_at: '2026-01-01T00:00:00+00:00', negated: false}]->(o)
+            """,
+            sid=subj_id, oid=old_obj_id, ef=old_eff_from, eu=old_eff_until,
+        )
+        # New MemoryFact (current)
+        await session.run(
+            """
+            MATCH (s:Entity {id: $sid}), (o:Entity {id: $oid})
+            CREATE (f:MemoryFact {
+                id: 'fact:ent-hyd-new', family: 'WORKS_FOR',
+                ingested_at: '2026-02-01T00:00:00+00:00',
+                system_until: null,
+                effective_from: $ef, effective_until: null,
+                confidence_agg: 0.95, support_count: 1, negated: false,
+                fact_key: 'fk:new', slot_key: 'sk:new',
+                subtype: null, value_text: null, value_number: null, value_unit: null,
+                value_kind: null, value_time: null, quantity_value: null,
+                quantity_unit: null, quantity_kind: null, time_scope: null
+            })
+            CREATE (s)-[:AS_SUBJECT]->(f)
+            CREATE (f)-[:AS_OBJECT]->(o)
+            CREATE (s)-[:MEMORY_REL {memory_fact_id: 'fact:ent-hyd-new', family: 'WORKS_FOR',
+                ingested_at: '2026-02-01T00:00:00+00:00',
+                system_until: null,
+                effective_from: $ef, effective_until: null,
+                confidence_agg: 0.95, subject_entity_id: $sid, object_entity_id: $oid,
+                access_count: 0, last_accessed: null,
+                updated_at: '2026-02-01T00:00:00+00:00', negated: false}]->(o)
+            """,
+            sid=subj_id, oid=new_obj_id, ef=new_eff_from,
+        )
+
+    # Without as_of: only the system-current new fact.
+    facts, _ = await neo4j_store.get_current_fact_details_for_entities([subj_id])
+    fact_ids = {f["memory_fact_id"] for f in facts}
+    assert fact_ids == {"fact:ent-hyd-new"}
+
+    # as_of inside old window: only the old fact (event-time-valid), even though
+    # it is system-superseded.
+    facts, _ = await neo4j_store.get_current_fact_details_for_entities(
+        [subj_id], as_of="2020-06-01T00:00:00+00:00"
+    )
+    fact_ids = {f["memory_fact_id"] for f in facts}
+    assert fact_ids == {"fact:ent-hyd-old"}
+
+    # as_of after both effective_from boundaries: only the new fact.
+    facts, _ = await neo4j_store.get_current_fact_details_for_entities(
+        [subj_id], as_of="2025-01-01T00:00:00+00:00"
+    )
+    fact_ids = {f["memory_fact_id"] for f in facts}
+    assert fact_ids == {"fact:ent-hyd-new"}

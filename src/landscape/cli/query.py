@@ -7,6 +7,19 @@ from landscape.observability import ensure_query_cli_logging
 from landscape.retrieval.render import render_fact, render_path
 
 
+def _parse_as_of(value: str) -> str:
+    from datetime import UTC, datetime
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"--as-of must be an ISO-8601 timestamp; got {value!r}"
+        ) from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat()
+
+
 def _get_runtime():
     from landscape.embeddings import encoder
     from landscape.retrieval.query import retrieve
@@ -26,6 +39,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--no-reinforce", action="store_true")
     parser.add_argument("--include-historical", action="store_true")
+    parser.add_argument(
+        "--as-of",
+        type=_parse_as_of,
+        default=None,
+        help="ISO-8601 timestamp; return facts true in the world at this moment.",
+    )
     parser.add_argument("--debug", action="store_true")
     parser.set_defaults(func=handle_query)
 
@@ -44,6 +63,7 @@ async def handle_query(args: argparse.Namespace) -> int:
             reinforce=not args.no_reinforce,
             debug=args.debug,
             include_historical=args.include_historical,
+            as_of=args.as_of,
         )
         if not result.results:
             print("No results.")
