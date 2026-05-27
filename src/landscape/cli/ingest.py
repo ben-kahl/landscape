@@ -20,15 +20,24 @@ def _get_runtime():
 def register(subparsers: argparse._SubParsersAction) -> None:
     ingest_parser = subparsers.add_parser(
         "ingest",
-        help="Ingest one UTF-8 text or Markdown file",
-        description="Ingest one UTF-8 text or Markdown file through the local pipeline.",
+        help="Ingest one file (markdown, text, PDF, DOCX, PPTX, XLSX, HTML, CSV, ...)",
+        description=(
+            "Ingest one file through the local pipeline. The file format is "
+            "inferred from its extension and converted to markdown via "
+            "markitdown when needed (PDF, DOCX, PPTX, XLSX, HTML, CSV, JSON, "
+            "XML, EPUB, RTF). Markdown and plain text are passed through "
+            "unchanged. Unknown extensions are read as utf-8 text."
+        ),
     )
     ingest_parser.add_argument("path", help="Path to the input file")
     ingest_parser.add_argument("--title", help="Document title", default=None)
     ingest_parser.add_argument(
         "--source-type",
-        help="Source type recorded with the document",
-        default="text",
+        help=(
+            "Override the source type recorded with the document. "
+            "Default: inferred from the file extension."
+        ),
+        default=None,
     )
     ingest_parser.add_argument("--session-id", default=None)
     ingest_parser.add_argument("--turn-id", default=None)
@@ -71,17 +80,6 @@ def _validate_provenance(
         parser.error("session-id and turn-id must be provided together")
     if session_id is not None and (not session_id.strip() or not turn_id.strip()):
         parser.error("session-id and turn-id must be non-empty")
-
-
-def _read_file(parser: argparse.ArgumentParser, path: Path) -> str:
-    if not path.exists():
-        parser.error(f"path does not exist: {path}")
-    if not path.is_file():
-        parser.error(f"path is not a file: {path}")
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        parser.error(str(exc))
 
 
 def _format_summary(result) -> str:
@@ -212,23 +210,38 @@ async def _ingest_text(
 
 
 async def handle_ingest(args: argparse.Namespace) -> int:
+    from landscape.ingestion.converters import (
+        ConverterError,
+        convert_to_markdown,
+    )
+
     parser = argparse.ArgumentParser(prog="landscape ingest")
     _validate_provenance(parser, args.session_id, args.turn_id)
     path = Path(args.path)
-    text = _read_file(parser, path)
-    title = args.title or path.stem
+
+    # Convert once, up front, so we can surface a clean error before spinning
+    # up the encoder / Neo4j / Qdrant connections — and so we know the final
+    # source_type before constructing the progress bar.
+    try:
+        converted = convert_to_markdown(path)
+    except ConverterError as exc:
+        parser.error(str(exc))
+
+    title = args.title or converted.title_hint or path.stem
+    source_type = args.source_type or converted.source_type
+
     if _progress_enabled(args.progress):
         with CliIngestProgress(
             title=title,
-            source_type=args.source_type,
+            source_type=source_type,
             session_id=args.session_id,
             turn_id=args.turn_id,
             debug=args.debug,
         ) as progress:
             result = await _ingest_text(
-                text=text,
+                text=converted.text,
                 title=title,
-                source_type=args.source_type,
+                source_type=source_type,
                 session_id=args.session_id,
                 turn_id=args.turn_id,
                 debug=args.debug,
@@ -236,9 +249,9 @@ async def handle_ingest(args: argparse.Namespace) -> int:
             )
     else:
         result = await _ingest_text(
-            text=text,
+            text=converted.text,
             title=title,
-            source_type=args.source_type,
+            source_type=source_type,
             session_id=args.session_id,
             turn_id=args.turn_id,
             debug=args.debug,
