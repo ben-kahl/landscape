@@ -65,7 +65,7 @@ graph TD
 |---|---|
 | Text ingestion | LLM extraction, chunking, entity resolution, Neo4j writes, Qdrant writes |
 | Hybrid retrieval | Vector search, graph expansion, merge/rank, recency and distance scoring |
-| Temporal memory | Supersession-aware retrieval for functional conflicts; negative-polarity facts stored and surfaced distinctly |
+| Temporal memory | Bitemporal facts: separate system time (`ingested_at` / `system_until`) and valid time (`effective_from` / `effective_until`); supersession-aware retrieval for functional conflicts; `as_of` time-travel queries; negative-polarity facts stored and surfaced distinctly |
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
 | Agent access | MCP server, conversation history, LangChain retriever, FastAPI, local CLI |
 | Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval smoke harness |
@@ -272,7 +272,7 @@ The MCP tools:
 
 | Tool | Description |
 |---|---|
-| `search` | Hybrid retrieve: vector similarity + graph traversal up to N hops |
+| `search` | Hybrid retrieve: vector similarity + graph traversal up to N hops; accepts `as_of` (ISO-8601) for time-travel queries against historical fact state |
 | `remember` | Ingest free-text; extract entities and relations into the graph |
 | `capture_turn` | Capture an explicit conversation turn and schedule background ingestion |
 | `add_entity` | Directly assert a named entity with type and provenance |
@@ -345,6 +345,27 @@ uv run python scripts/bench_chromadb.py     # ChromaDB baseline
 ```
 
 Results are printed as a Markdown table. On the killer-demo corpus, hybrid retrieval stays at 7/7 P@k (100.0%) with 0.326 MRR and 64ms average latency; vector-only reaches 85.7% P@k, 0.213 MRR, and 42ms latency; graph-only remains at 0.0% P@k, 0.000 MRR, and 2ms latency. The killer-demo corpus lives in `tests/fixtures/killer_demo_corpus/`.
+
+## Bitemporal facts
+
+Every `MemoryFact` (and the live `MEMORY_REL` edge that mirrors it) carries two
+independent time axes:
+
+| Axis | Fields | Meaning |
+|---|---|---|
+| System time | `ingested_at`, `system_until` | When Landscape learned the fact and, if superseded, when a newer version took over. `system_until` is `NULL` for the current version. |
+| Valid time | `effective_from`, `effective_until` | When the fact was true in the world. Extracted from the source text when an explicit calendar reference is present; otherwise `NULL`. |
+
+Retrieval defaults to "current as of now": facts where `system_until IS NULL`.
+The `as_of` parameter on `search` (API, CLI, and MCP) shifts the system-time
+filter so callers can ask what Landscape *believed* at a past moment, even if
+that belief has since been superseded. Pass `include_historical=true` to bypass
+the system-time filter entirely.
+
+When a functional fact is superseded, the prior version's `system_until` is
+closed to the new fact's `effective_from` (not just "now"), so the system-time
+chain reflects the actual succession point in the world rather than ingest
+order.
 
 ## Design rationale and known limitations
 
