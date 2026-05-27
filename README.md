@@ -21,21 +21,16 @@ LangChain, and Model Context Protocol.
 
 Seven questions across 1/2/3-hop bands, same killer-demo corpus (`tests/fixtures/killer_demo_corpus/`):
 
-| Mode                 | P@k    | MRR    | Notes                                               |
-|----------------------|--------|--------|-----------------------------------------------------|
-| Landscape (hybrid)   | 100%   | 0.306  | Hits all 7 queries including the 3-hop chain        |
-| Landscape (vector)   | 71.4%  | 0.149  | Misses the 2-hop "who approved Aurora's database?"  |
-| ChromaDB*            | 86%    | 0.43*  | Misses the 3-hop chain entirely (P@1 = 0% at 3-hop) |
+| Mode                | Questions answered | Notes                                              |
+|---------------------|--------------------|----------------------------------------------------|
+| Landscape (hybrid)  | 7 / 7              | Hits the 3-hop chain                               |
+| Landscape (vector)  | 5 / 7              | Misses the 2-hop "who approved Aurora's database?" |
+| ChromaDB (baseline) | 6 / 7              | Misses the 3-hop chain entirely                    |
 
-*ChromaDB is evaluated at chunk level; Landscape at entity level. Do not compare MRR numbers directly — the granularity differs. The apples-to-apples claim is per-question: ChromaDB answers 6/7 questions (all 1/2-hop), Landscape hybrid answers 7/7 including the one that requires "Aurora → Sarah → Platform Team" in a single traversal. No single chunk in the corpus contains that chain, so chunk similarity can never surface it.
-
-The 3-hop question is the proof point. Reproduce the benchmark with:
-
-```bash
-uv sync --extra dev --extra bench
-uv run python scripts/bench_retrieval.py    # Landscape hybrid + vector + graph
-uv run python scripts/bench_chromadb.py     # ChromaDB baseline
-```
+The proof point is the 3-hop question: no single chunk contains the
+"Aurora → Sarah → Platform Team" path, so chunk similarity cannot surface it;
+graph traversal can. Reproduction commands are in
+[Reproduce the benchmarks](#reproduce-the-benchmarks).
 
 ## Architecture
 
@@ -69,8 +64,8 @@ graph TD
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
 | Agent access | MCP server, conversation history, LangChain retriever, FastAPI, local CLI |
 | Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval smoke harness |
-| Phase 3.5 hardening | In progress: ranking tuning, benchmark hardening, relation normalization, resolver improvements |
-| Phase 4 | Next major feature area: expanded ingestion paths for documents, integrations, conversations, and multimodal memory |
+| Phase 3.5 hardening | In progress: ranking tuning, LongMemEval beyond smoke, resolver improvements |
+| Phase 4 | Next: expanded ingestion (richer document inputs, drive integrations, multimodal) |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design rationale, data
 model details, benchmark notes, and known limitations.
@@ -125,34 +120,22 @@ Default test endpoints:
 | Qdrant HTTP | `http://localhost:16333` | `http://localhost:6333` |
 | Qdrant gRPC | `localhost:16334` | `localhost:6334` |
 
-Override the test services with `LANDSCAPE_TEST_NEO4J_URI`,
-`LANDSCAPE_TEST_NEO4J_USER`, `LANDSCAPE_TEST_NEO4J_PASSWORD`, and
-`LANDSCAPE_TEST_QDRANT_URL`. Tests refuse to wipe the live default Neo4j/Qdrant
-ports unless `LANDSCAPE_ALLOW_LIVE_TEST_WIPE=1` is set deliberately.
+Tests refuse to wipe the live default Neo4j/Qdrant ports unless
+`LANDSCAPE_ALLOW_LIVE_TEST_WIPE=1` is set deliberately. Override the test
+endpoints with the `LANDSCAPE_TEST_NEO4J_*` and `LANDSCAPE_TEST_QDRANT_URL`
+env vars. Ollama defaults to `http://localhost:11434` and is not wiped by tests.
 
-Ollama still defaults to `http://localhost:11434`; tests do not wipe Ollama
-state.
-
-If the script selects Docker-managed Ollama, pull the default model once:
+If the script selects Docker-managed Ollama, pull the default model once
+(substitute `ollama-cpu`, `ollama-nvidia`, or `ollama-amd` for your profile):
 
 ```bash
-docker compose exec ollama-cpu ollama pull llama3.1:8b        # CPU profile
-docker compose exec ollama-nvidia ollama pull llama3.1:8b     # NVIDIA profile
-docker compose exec ollama-amd ollama pull llama3.1:8b        # AMD profile
+docker compose exec ollama-<profile> ollama pull llama3.1:8b
 ```
 
-On macOS, run Ollama on the host and let Docker reach it through
-`host.docker.internal`:
+On macOS, run Ollama on the host (`brew install ollama && ollama serve &&
+ollama pull llama3.1:8b`) and let Docker reach it via `host.docker.internal`.
 
-```bash
-brew install ollama
-ollama serve
-ollama pull llama3.1:8b
-docker compose up -d
-```
-
-You can still bypass detection and set `COMPOSE_PROFILES` manually in `.env`.
-Supported profiles are `cpu`, `gpu-nvidia`, `gpu-amd`, and `host`.
+Supported `COMPOSE_PROFILES` values: `cpu`, `gpu-nvidia`, `gpu-amd`, `host`.
 
 ## CLI
 
@@ -251,24 +234,14 @@ so clients resolve the correct token and registration endpoints automatically.
 HTTPS is required for remote deployments — the OAuth spec prohibits non-loopback
 HTTP redirect URIs without TLS.
 
-## Use Landscape as MCP memory
+## MCP tools
 
-Configure your MCP client to connect to the shared HTTP endpoint instead of
-launching a standalone MCP subprocess.
+Point any MCP client at `http://127.0.0.1:8000/mcp` (the FastAPI app must be
+running; the `NEO4J_*`, `QDRANT_URL`, and `OLLAMA_URL` env vars apply to that
+server process). Multiple clients connected to the same URL share one Landscape
+process. The legacy stdio launcher `landscape-mcp` is still available but is
+process-per-client; prefer HTTP unless you need stdio.
 
-For clients that accept a URL-based MCP server definition, point them at:
-
-```text
-http://127.0.0.1:8000/mcp
-```
-
-If your MCP client uses a different config shape, the essential inputs are:
-
-- server URL: `http://127.0.0.1:8000/mcp`
-- the FastAPI app must already be running
-- the existing `NEO4J_*`, `QDRANT_URL`, and `OLLAMA_URL` env vars still apply to the server process
-
-The MCP tools:
 
 | Tool | Description |
 |---|---|
@@ -326,16 +299,6 @@ client's hook payload before posting to Landscape. Keep using MCP `remember`
 for deliberate document ingestion; hooks are intended for low-friction
 conversation memory.
 
-### MCP transport note
-
-The recommended setup is the shared streamable HTTP endpoint mounted at
-`http://127.0.0.1:8000/mcp`. When clients connect to that endpoint, they share
-the same long-running FastAPI/MCP server process.
-
-Standalone stdio MCP launchers remain process-per-client: each client or
-subagent that starts `landscape-mcp` gets its own server subprocess. Use the
-HTTP endpoint when you want multiple agents to share one Landscape MCP instance.
-
 ## Reproduce the benchmarks
 
 ```bash
@@ -344,7 +307,9 @@ uv run python scripts/bench_retrieval.py    # Landscape hybrid + vector + graph
 uv run python scripts/bench_chromadb.py     # ChromaDB baseline
 ```
 
-Results are printed as a Markdown table. On the killer-demo corpus, hybrid retrieval stays at 7/7 P@k (100.0%) with 0.326 MRR and 64ms average latency; vector-only reaches 85.7% P@k, 0.213 MRR, and 42ms latency; graph-only remains at 0.0% P@k, 0.000 MRR, and 2ms latency. The killer-demo corpus lives in `tests/fixtures/killer_demo_corpus/`.
+The killer-demo corpus lives in `tests/fixtures/killer_demo_corpus/`. Results
+are printed as a Markdown table; the numbers in [The killer demo](#the-killer-demo)
+above were produced this way.
 
 ## Bitemporal facts
 
