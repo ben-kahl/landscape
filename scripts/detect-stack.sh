@@ -19,10 +19,12 @@ has_nvidia() {
 }
 
 has_amd() {
-  command -v rocminfo >/dev/null 2>&1 && rocminfo >/dev/null 2>&1 && return 0
-  [[ -e /dev/kfd ]] && return 0
-  command -v lspci >/dev/null 2>&1 && lspci 2>/dev/null | grep -Eiq 'vga.*(amd|ati|radeon)' && return 0
-  return 1
+  # Require rocminfo to succeed AND report at least one GPU agent. lspci-based
+  # detection catches integrated Radeon iGPUs (e.g. Ryzen APUs) where the ROCm
+  # image is slower than CPU; /dev/kfd alone is the same hazard. If the user
+  # has a discrete ROCm-capable GPU, rocminfo is the canonical install check.
+  command -v rocminfo >/dev/null 2>&1 || return 1
+  rocminfo 2>/dev/null | grep -Eiq '^\s*Device Type:\s*GPU'
 }
 
 OS="$(detect_os)"
