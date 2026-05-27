@@ -72,6 +72,18 @@ def test_extraction_prompt_mentions_quantity_fields():
     assert "10 hours" in prompt
     assert "three bikes" in prompt
 
+
+@pytest.mark.unit
+def test_extraction_prompt_covers_temporal_trigger_phrasings():
+    from landscape.extraction import llm
+
+    prompt = llm._SYSTEM_PROMPT
+
+    assert "started/joined/began" in prompt
+    assert "left" in prompt and "in 2022-08" in prompt
+    assert "from 2019 onward" in prompt
+    assert "NOT also emit a separate HAPPENED_ON" in prompt
+
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_ingest_creates_graph_and_vectors(http_client, neo4j_driver, qdrant_client):
@@ -900,6 +912,8 @@ async def test_ingest_passes_negated_to_assertion_payload():
     negated_relation.quantity_unit = None
     negated_relation.quantity_kind = None
     negated_relation.time_scope = None
+    negated_relation.effective_from = None
+    negated_relation.effective_until = None
     negated_relation.negated = True
 
     extraction = MagicMock(entities=[], relations=[negated_relation])

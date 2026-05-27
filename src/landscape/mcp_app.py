@@ -128,6 +128,7 @@ async def search(
     session_id: str | None = None,
     since_hours: int | None = None,
     include_historical: bool = False,
+    as_of: str | None = None,
     debug: bool = False,
     verbose: bool = False,
 ) -> str:
@@ -139,6 +140,15 @@ async def search(
     """
     require_current_scope("agent")
     from landscape.retrieval.query import retrieve
+
+    if as_of is not None:
+        try:
+            _dt = datetime.fromisoformat(as_of)
+        except ValueError as exc:
+            raise ValueError(f"as_of must be ISO-8601; got {as_of!r}") from exc
+        if _dt.tzinfo is None:
+            _dt = _dt.replace(tzinfo=UTC)
+        as_of = _dt.astimezone(UTC).isoformat()
 
     since = (
         datetime.now(UTC) - timedelta(hours=since_hours)
@@ -154,6 +164,7 @@ async def search(
         since=since,
         debug=debug,
         include_historical=include_historical,
+        as_of=as_of,
     )
     if verbose:
         output = {

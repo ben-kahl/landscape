@@ -596,6 +596,7 @@ async def test_search_threads_debug_flag_to_retrieve(monkeypatch):
         since=None,
         debug=False,
         include_historical=False,
+        as_of=None,
         log_context=None,
     ):
         calls.append(

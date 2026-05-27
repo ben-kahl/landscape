@@ -130,18 +130,23 @@ async def get_memory_fact_details_batch(
 
 async def get_current_fact_details_for_entities(
     entity_ids: list[str],
+    as_of: str | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     if not entity_ids:
         return [], []
 
     unique_entity_ids = list(dict.fromkeys(entity_ids))
-    driver = get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            """
+    if as_of:
+        temporal_clause = (
+            "AND (fact.effective_from IS NULL OR fact.effective_from <= $as_of)\n"
+            "              AND (fact.effective_until IS NULL OR fact.effective_until > $as_of)"
+        )
+    else:
+        temporal_clause = "AND fact.system_until IS NULL"
+    cypher = """
             MATCH (subject:Entity)-[:AS_SUBJECT]->(fact:MemoryFact)
             WHERE subject.id IN $entity_ids
-              AND fact.system_until IS NULL
+              __TEMPORAL_CLAUSE__
             OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
             OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: fact.id}]->(object)
             OPTIONAL MATCH (a:Assertion)-[:SUPPORTS]->(fact)
@@ -196,8 +201,13 @@ async def get_current_fact_details_for_entities(
                      created_at: a.created_at
                    }] AS supporting_assertions
             ORDER BY subject.id, fact.family, fact.id
-            """,
+            """
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            cypher.replace("__TEMPORAL_CLAUSE__", temporal_clause),
             entity_ids=unique_entity_ids,
+            as_of=as_of,
         )
         rows = [dict(record) async for record in result]
 
@@ -217,6 +227,7 @@ async def bfs_expand_memory_rel(
     seed_entity_ids: list[str],
     max_hops: int,
     include_historical: bool = False,
+    as_of: str | None = None,
 ) -> list[dict[str, Any]]:
     if not seed_entity_ids:
         return []
@@ -225,8 +236,14 @@ async def bfs_expand_memory_rel(
     seed_ids = await _resolve_entity_app_ids(seed_entity_ids)
     if not seed_ids:
         return []
-    temporal_filter = (
-        "" if include_historical else "AND ALL(r IN rels WHERE r.system_until IS NULL)"
+    if as_of or include_historical:
+        temporal_filter = ""
+    else:
+        temporal_filter = "AND ALL(r IN rels WHERE r.system_until IS NULL)"
+    as_of_filter = (
+        "AND ALL(r IN rels WHERE (r.effective_from IS NULL OR r.effective_from <= $as_of) "
+        "AND (r.effective_until IS NULL OR r.effective_until > $as_of))"
+        if as_of else ""
     )
     query = f"""
     MATCH (seed:Entity) WHERE seed.id IN $seed_ids
@@ -234,6 +251,7 @@ async def bfs_expand_memory_rel(
     WHERE seed.id <> target.id
       AND target.canonical = true
       {temporal_filter}
+      {as_of_filter}
     RETURN
       seed.id AS seed_id,
       seed.name AS seed_name,
@@ -257,7 +275,7 @@ async def bfs_expand_memory_rel(
     """
     driver = get_driver()
     async with driver.session() as session:
-        result = await session.run(query, seed_ids=seed_ids)
+        result = await session.run(query, seed_ids=seed_ids, as_of=as_of)
         return [dict(record) async for record in result]
 
 

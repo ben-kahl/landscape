@@ -119,4 +119,6 @@ volumes:
   neo4j_data:
   qdrant_storage:
   ollama_models:
+    name: landscape_ollama_models
+    external: true
   landscape_auth_data:

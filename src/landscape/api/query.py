@@ -9,6 +9,14 @@ from landscape.security import AgentPrincipal
 router = APIRouter()
 
 
+def _normalize_as_of(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
+
+
 class QueryRequest(BaseModel):
     text: str
     hops: int = Field(default=2, ge=1, le=5)
@@ -19,6 +27,7 @@ class QueryRequest(BaseModel):
     since_hours: int | None = Field(default=None, ge=1)
     debug: bool = False
     include_historical: bool = False
+    as_of: datetime | None = None
 
 
 class PathNodeModel(BaseModel):
@@ -89,6 +98,7 @@ async def query_endpoint(req: QueryRequest, auth: AgentPrincipal) -> QueryRespon
         since=since,
         debug=req.debug,
         include_historical=req.include_historical,
+        as_of=_normalize_as_of(req.as_of),
     )
     return QueryResponse(
         query=result.query,
