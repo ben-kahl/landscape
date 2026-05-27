@@ -126,14 +126,38 @@ The graph expansion is the main differentiator. If a query starts near one node
 but the answer lives two or three relationships away, Neo4j can retrieve that
 path directly.
 
+## Bitemporal Fact Model
+
+Every `MemoryFact` and its mirroring `MEMORY_REL` edge carry two independent
+time axes:
+
+| Axis | Fields on `MemoryFact` / `MEMORY_REL` | Meaning |
+|---|---|---|
+| System time | `ingested_at`, `system_until` | When Landscape learned the fact and, if superseded, when a newer version took over. `system_until IS NULL` denotes the current version. |
+| Valid time | `effective_from`, `effective_until` | When the fact was true in the world. Populated only when the source text gives an explicit calendar reference. |
+
+System time tracks Landscape's belief history. Valid time tracks the world.
+The two axes move independently: a fact can have a fixed `effective_from` in
+2023 but only enter the graph (`ingested_at`) in 2026, and a later correction
+can supersede it (`system_until` set) without changing what valid-time interval
+the prior belief covered.
+
+Retrieval defaults to the current system-time slice (`system_until IS NULL`).
+Callers can pass `as_of` (ISO-8601) to shift the system-time filter and ask
+what Landscape believed at a past moment, even if that belief has since been
+superseded. Passing `include_historical=true` bypasses the system-time filter
+entirely so all versions are visible.
+
 ## Supersession Model
 
 Supersession is modeled at the `MemoryFact` layer, not on raw assertions.
 `Assertion` records remain immutable source evidence. When a newer extraction
-conflicts with an existing current fact, Landscape creates a new versioned
-`MemoryFact`, marks the prior version superseded, and keeps historical
-`MEMORY_REL` edges with `current = false` while traversal only follows the
-current edges.
+conflicts with an existing current functional fact, Landscape creates a new
+versioned `MemoryFact`, closes the prior version's `system_until` to the new
+fact's `effective_from` (so the system-time chain reflects the actual
+succession point in the world rather than ingest order), and retains the
+historical `MEMORY_REL` edges with a closed `system_until` while traversal
+only follows the current edges.
 
 This keeps provenance intact while ensuring retrieval only walks live facts.
 Non-conflicting facts remain additive, and superseded versions stay available
@@ -185,19 +209,31 @@ hardware speed.
 
 ## Phase 3.5 Exit Criteria
 
-The normative criteria live in [README.md](../README.md#phase-35-exit-criteria). This section keeps the same terminology but does not duplicate the policy text.
+Phase 3.5 is about hardening the existing system, not adding new capabilities.
+Exit means the implemented behavior is stable, documented, and reproducibly
+measured.
 
 ### CI Required
 
-- See [README.md](../README.md#ci-required) for the command-level CI Required criteria.
+- `uv run ruff check src tests` passes.
+- `uv run pytest -m "unit or smoke"` passes (the fast regression slice).
 
 ### Local Required
 
-- See [README.md](../README.md#local-required) for the command-level Local Required criteria.
+- Full `uv run pytest` against the test Compose stack passes on the local
+  Ollama path. This run is slow (~20 minutes) and destructive against the test
+  Neo4j / Qdrant; it is not part of CI.
+- `uv run python scripts/bench_retrieval.py` reproduces the killer-demo numbers
+  printed in the README within run-to-run variance.
 
 ### Exit Condition
 
-- See [README.md](../README.md#exit-condition) for the phase 3.5 exit condition and phase 4 handoff point.
+Source-of-truth docs (README, this file) describe the implemented system,
+benchmark scope is explicit about what is hardened versus smoke-only, and the
+bitemporal fact model is documented end-to-end. Once those conditions hold,
+phase 4 input-expansion work (richer text ingestion paths, drive integrations,
+automatic conversation capture, multimodal) can start without dragging
+phase-3.5 cleanup along with it.
 
 ## Known Limitations
 
