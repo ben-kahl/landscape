@@ -349,6 +349,7 @@ async def ingest(
                 subject_entity_id=subject_entity_id,
                 object_entity_id=object_entity_id,
                 chunk_ids=[],
+                now=now,
             )
             if promotion.outcome == "created":
                 relations_created += 1

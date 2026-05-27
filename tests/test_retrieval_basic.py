@@ -177,8 +177,8 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
             """
             MATCH (s:Entity) WHERE s.id = $subject_id
             MATCH (s)-[r:MEMORY_REL {family: 'WORKS_FOR'}]->(o:Entity)
-            RETURN o.name AS target, r.valid_until AS valid_until,
-                   (r.valid_until IS NULL) AS current, r.memory_fact_id AS fact_id
+            RETURN o.name AS target, r.system_until AS system_until,
+                   (r.system_until IS NULL) AS current, r.memory_fact_id AS fact_id
             ORDER BY o.name
             """,
             subject_id=subject_id,
@@ -187,15 +187,15 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
 
         old_fact_record = await (
             await session.run(
-                "MATCH (f:MemoryFact {id: $fact_id}) RETURN f.valid_until AS valid_until, "
-                "(f.valid_until IS NULL) AS current",
+                "MATCH (f:MemoryFact {id: $fact_id}) RETURN f.system_until AS system_until, "
+                "(f.system_until IS NULL) AS current",
                 fact_id=old_fact,
             )
         ).single()
         new_fact_record = await (
             await session.run(
-                "MATCH (f:MemoryFact {id: $fact_id}) RETURN f.valid_until AS valid_until, "
-                "(f.valid_until IS NULL) AS current",
+                "MATCH (f:MemoryFact {id: $fact_id}) RETURN f.system_until AS system_until, "
+                "(f.system_until IS NULL) AS current",
                 fact_id=new_fact,
             )
         ).single()
@@ -209,12 +209,21 @@ async def test_temporal_filter_excludes_superseded(neo4j_driver):
     assert old_obj not in target_names, (
         f"Superseded target {old_obj} should be filtered out, got: {target_names}"
     )
-    assert old_fact_record is not None and old_fact_record["valid_until"] is not None
-    assert new_fact_record is not None and new_fact_record["valid_until"] is None
-    assert {record["target"]: record["valid_until"] is None for record in records} == {
+    assert old_fact_record is not None and old_fact_record["system_until"] is not None
+    assert new_fact_record is not None and new_fact_record["system_until"] is None
+    assert {record["target"]: record["system_until"] is None for record in records} == {
         old_obj: False,
         new_obj: True,
     }
+
+    historical = await neo4j_store.bfs_expand_memory_rel(
+        [subject_id], max_hops=2, include_historical=True
+    )
+    historical_targets = {row["target_name"] for row in historical}
+    assert {old_obj, new_obj}.issubset(historical_targets), (
+        f"include_historical should surface both superseded and live targets, "
+        f"got: {historical_targets}"
+    )
 
 
 @pytest.mark.asyncio
@@ -239,7 +248,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         return [
             {
                 "entity_id": "eric-id",
@@ -250,7 +259,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         return [
             {
                 "seed_id": "eric-id",
@@ -286,7 +295,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
                 {
                     "memory_fact_id": "fact-1",
                     "family": "DISCUSSION",
-                    "valid_until": None,
+                    "system_until": None,
                     "current": True,
                     "fact_key": "fact-key",
                     "slot_key": "slot-key",
@@ -299,7 +308,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
                     "object_entity_id": "netflix-id",
                     "object_name": "Netflix",
                     "object_type": "TECHNOLOGY",
-                    "memory_rel_valid_until": None,
+                    "memory_rel_system_until": None,
                     "memory_rel_current": True,
                     "value_text": None,
                     "value_number": None,
@@ -379,7 +388,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
         {
             "memory_fact_id": "fact-1",
             "family": "DISCUSSION",
-            "valid_until": None,
+            "system_until": None,
             "current": True,
             "fact_key": "fact-key",
             "slot_key": "slot-key",
@@ -392,7 +401,7 @@ async def test_retrieval_hydrates_memory_facts_and_supporting_assertions(monkeyp
             "object_entity_id": "netflix-id",
             "object_name": "Netflix",
             "object_type": "TECHNOLOGY",
-            "memory_rel_valid_until": None,
+            "memory_rel_system_until": None,
             "memory_rel_current": True,
             "value_text": None,
             "value_number": None,
@@ -449,7 +458,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         assert ids == ["travel-id", "cube-id"]
         return [
             {
@@ -468,7 +477,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
             },
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         return []
 
     async def fake_touch_entities(ids, now):
@@ -484,7 +493,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
                 {
                     "memory_fact_id": "fact-1",
                     "family": "HAS_ATTRIBUTE",
-                    "valid_until": None,
+                    "system_until": None,
                     "current": True,
                     "fact_key": "fact-key",
                     "slot_key": "slot-key",
@@ -506,7 +515,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
                     "object_entity_id": "cube-id",
                     "object_name": "packing cube",
                     "object_type": "n",
-                    "memory_rel_valid_until": None,
+                    "memory_rel_system_until": None,
                     "memory_rel_current": True,
                 }
             ],
@@ -573,7 +582,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
     expected_fact = {
         "memory_fact_id": "fact-1",
         "family": "HAS_ATTRIBUTE",
-        "valid_until": None,
+        "system_until": None,
         "current": True,
         "fact_key": "fact-key",
         "slot_key": "slot-key",
@@ -595,7 +604,7 @@ async def test_retrieval_hydrates_direct_current_memory_for_seed_entities(monkey
         "object_entity_id": "cube-id",
         "object_name": "packing cube",
         "object_type": "n",
-        "memory_rel_valid_until": None,
+        "memory_rel_system_until": None,
         "memory_rel_current": True,
     }
     expected_assertion = {
@@ -649,7 +658,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         return [
             {
                 "entity_id": "atlas-id",
@@ -660,7 +669,7 @@ async def test_retrieve_emits_summary_logs_by_default(monkeypatch, caplog):
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -734,7 +743,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         return [
             {
                 "entity_id": "atlas-id",
@@ -745,7 +754,7 @@ async def test_retrieval_uses_memory_rel_traversal(monkeypatch):
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         assert seed_ids == ["atlas-id"]
         assert max_hops == 2
         return [
@@ -843,7 +852,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
     async def fake_get_entities_from_chunks(chunk_ids):
         return [{"entity_id": "atlas-id", "chunk_eids": chunk_ids}]
 
-    async def fake_hydrate_entities(ids):
+    async def fake_hydrate_entities(ids, include_historical=False):
         return [
             {
                 "entity_id": "atlas-id",
@@ -854,7 +863,7 @@ async def test_retrieve_emits_debug_stage_logs_when_requested(monkeypatch, caplo
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         return []
 
     async def noop_touch(*args, **kwargs):
@@ -1182,7 +1191,7 @@ async def test_retrieve_seeds_canonical_entity_from_alias_resolution(monkeypatch
     async def fake_get_entities_from_chunks(chunk_ids):
         return []
 
-    async def fake_hydrate_entities(entity_ids):
+    async def fake_hydrate_entities(entity_ids, include_historical=False):
         assert entity_ids == ["robert-id"]
         return [
             {
@@ -1194,7 +1203,7 @@ async def test_retrieve_seeds_canonical_entity_from_alias_resolution(monkeypatch
             }
         ]
 
-    async def fake_bfs_expand_memory_rel(seed_ids, max_hops):
+    async def fake_bfs_expand_memory_rel(seed_ids, max_hops, include_historical=False):
         assert seed_ids == ["robert-id"]
         return []
 

@@ -44,12 +44,12 @@ async def handle_counts(args: argparse.Namespace) -> int:
                 CALL () { MATCH (c:Chunk) RETURN count(c) AS chunks }
                 CALL () {
                   MATCH ()-[live:MEMORY_REL]->()
-                  WHERE live.valid_until IS NULL
+                  WHERE live.system_until IS NULL
                   RETURN count(live) AS live_relations
                 }
                 CALL () {
                   MATCH ()-[stale:MEMORY_REL]->()
-                  WHERE stale.valid_until IS NOT NULL
+                  WHERE stale.system_until IS NOT NULL
                   RETURN count(stale) AS superseded_relations
                 }
                 RETURN documents, entities, chunks, live_relations, superseded_relations
@@ -108,7 +108,7 @@ async def handle_neighbors(args: argparse.Namespace) -> int:
                 WHERE toLower(start.name) = toLower($name)
                 MATCH path = (start)-[:MEMORY_REL*1..3]-(other:Entity)
                 WHERE length(path) <= $hops
-                  AND all(r IN relationships(path) WHERE r.valid_until IS NULL)
+                  AND all(r IN relationships(path) WHERE r.system_until IS NULL)
                 RETURN other.name AS name, other.type AS type, length(path) AS distance,
                        [r IN relationships(path) | r.family] AS rel_types
                 ORDER BY distance, name

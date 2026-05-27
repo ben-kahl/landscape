@@ -7,7 +7,7 @@ from landscape.storage.neo4j_driver import get_driver
 from landscape.storage.neo4j_entities import _resolve_entity_app_id
 
 
-async def merge_assertion(payload: AssertionPayload) -> str:
+async def merge_assertion(payload: AssertionPayload, *, now: str | None = None) -> str:
     from landscape.memory_graph import assertion_id
 
     aid = assertion_id(
@@ -80,7 +80,7 @@ async def merge_assertion(payload: AssertionPayload) -> str:
             quantity_kind=payload.quantity_kind,
             time_scope=payload.time_scope,
             chunk_refs=chunk_ref_ids,
-            now=datetime.now(UTC).isoformat(),
+            now=now or datetime.now(UTC).isoformat(),
         )
     return aid
 

@@ -3,8 +3,8 @@
     "description": "Multi-document scenarios that test the supersession + subtype + retrieval behavior the vocab-expansion spec targets. Each scenario specifies an ingest sequence (ordered), the expected final graph state assertions, and a set of retrieval queries with expected-top results.",
     "ingest_order_matters": true,
     "assertion_format": {
-      "final_state.live_relations": "list of edges that MUST exist with valid_until IS NULL after the full ingest sequence",
-      "final_state.superseded_relations": "list of edges that MUST exist with valid_until IS NOT NULL",
+      "final_state.live_relations": "list of edges that MUST exist with system_until IS NULL after the full ingest sequence",
+      "final_state.superseded_relations": "list of edges that MUST exist with system_until IS NOT NULL",
       "final_state.absent_relations": "list of (subject, type, object) triples that MUST NOT exist in any form",
       "retrieval_queries": "natural-language queries, with expected entity names in top-k results"
     }

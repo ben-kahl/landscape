@@ -14,7 +14,7 @@ Ground-truth corpus for benchmarking the vocab-expansion proposal in `specs/voca
 Ingest each doc independently; compare extracted (type, subject, object) triples against ground truth. Score precision and recall, with synonym hits counted as correct when the produced type is in `acceptable_synonyms` for that ground-truth relation. Subtype scoring is separate (exact match or cosine similarity — decide at measurement time).
 
 ### Supersession correctness
-Run the ingest sequences in `scenarios.json` in order. After each scenario, query Neo4j for edges with `valid_until IS NULL` and `valid_until IS NOT NULL` and diff against `final_state.live_relations` / `final_state.superseded_relations`.
+Run the ingest sequences in `scenarios.json` in order. After each scenario, query Neo4j for edges with `system_until IS NULL` and `system_until IS NOT NULL` and diff against `final_state.live_relations` / `final_state.superseded_relations`.
 
 ### Retrieval quality
 Run the retrieval queries in each scenario via `retrieve()`. Score by whether `expect_top_names` all appear in the top-k (k = len(expect_top_names) + 2). Multi-hop queries are marked with `notes` explaining the reasoning path.
