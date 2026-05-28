@@ -335,6 +335,97 @@ async def add_relation(
 
 
 @mcp.tool()
+async def lookup_entity(
+    name: str,
+    include_historical: bool = False,
+    as_of: str | None = None,
+) -> str:
+    """Look up a single canonical entity by name and return everything Landscape
+    knows about it: aliases, live facts (or as-of-time facts when ``as_of`` is
+    provided), and entity metadata.
+
+    Returns a compact JSON payload. When the name resolves to a canonical
+    entity, the payload includes ``entity`` (id, name, type, aliases) and
+    ``facts`` (a list of rendered fact strings such as
+    ``"Benjamin L Kahl [Person] -[WORKS_FOR]-> Hackingtons Inc [Organization]"``).
+    When no canonical match is found, the payload is
+    ``{"match": "miss", "suggestions": [...]}`` listing up to 3 of the
+    closest substring-matched entities so the caller can re-issue with a
+    more precise name.
+
+    Use ``lookup_entity`` when you have an entity in mind and want a complete
+    dump of its current state, as opposed to ``search`` which takes a question
+    and returns ranked candidates. ``include_historical=true`` includes
+    superseded facts; ``as_of`` (ISO-8601) shifts the system-time filter to
+    a past moment.
+    """
+    require_current_scope("agent")
+    from landscape.storage.neo4j_entities import find_canonical_entities_by_name
+    from landscape.storage.neo4j_memory import get_current_fact_details_for_entities
+
+    matches = await find_canonical_entities_by_name(name, limit=5)
+    if not matches:
+        return json.dumps({"match": "miss", "suggestions": []})
+
+    best = matches[0]
+    if best["match"] not in {"exact_name", "exact_alias"}:
+        return json.dumps(
+            {
+                "match": "miss",
+                "suggestions": [
+                    {
+                        "entity_id": m["entity_id"],
+                        "name": m["name"],
+                        "type": m["type"],
+                        "match": m["match"],
+                    }
+                    for m in matches[:3]
+                ],
+            }
+        )
+
+    memory_facts, _ = await get_current_fact_details_for_entities(
+        [best["entity_id"]],
+        as_of=as_of,
+    )
+    if not include_historical and as_of is None:
+        memory_facts = [f for f in memory_facts if f.get("current")]
+
+    facts_rendered = [
+        {
+            "id": fact.get("memory_fact_id"),
+            "text": _render_fact(fact),
+            "confidence": fact.get("confidence_agg"),
+            "current": bool(fact.get("current")),
+            "negated": bool(fact.get("negated")),
+        }
+        for fact in memory_facts
+    ]
+
+    return json.dumps(
+        {
+            "match": best["match"],
+            "entity": {
+                "entity_id": best["entity_id"],
+                "name": best["name"],
+                "type": best["type"],
+                "aliases": best["aliases"],
+            },
+            "facts": facts_rendered,
+            "other_matches": [
+                {
+                    "entity_id": m["entity_id"],
+                    "name": m["name"],
+                    "type": m["type"],
+                    "match": m["match"],
+                }
+                for m in matches[1:]
+            ],
+        }
+    )
+
+
+@mcp.tool()
 async def graph_query(cypher: str, params: dict | None = None) -> str:
     """Execute a read-only Cypher query against the Neo4j knowledge graph."""
     require_current_scope("graph_query")
