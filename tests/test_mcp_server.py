@@ -39,6 +39,7 @@ async def test_mcp_app_registers_expected_tools():
         "capture_turn",
         "add_entity",
         "add_relation",
+        "lookup_entity",
         "graph_query",
         "status",
         "conversation_history",
@@ -293,6 +294,132 @@ async def test_remember_threads_debug_flag_to_pipeline(monkeypatch):
             "debug": True,
         }
     ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lookup_entity_exact_name_returns_facts(monkeypatch):
+    """An exact-name match returns the canonical entity and its live facts."""
+
+    async def fake_find(name, limit=5):
+        return [
+            {
+                "entity_id": "ent-ben",
+                "name": "Benjamin L Kahl",
+                "type": "Person",
+                "aliases": ["Ben Kahl"],
+                "match": "exact_name",
+            }
+        ]
+
+    async def fake_get_facts(entity_ids, as_of=None):
+        assert entity_ids == ["ent-ben"]
+        memory_facts = [
+            {
+                "memory_fact_id": "f1",
+                "family": "WORKS_FOR",
+                "subject_name": "Benjamin L Kahl",
+                "subject_type": "Person",
+                "object_name": "Hackingtons Inc",
+                "object_type": "Organization",
+                "object_entity_id": "ent-hack",
+                "confidence_agg": 0.9,
+                "current": True,
+                "negated": False,
+            }
+        ]
+        return memory_facts, []
+
+    monkeypatch.setattr(
+        "landscape.storage.neo4j_entities.find_canonical_entities_by_name", fake_find
+    )
+    monkeypatch.setattr(
+        "landscape.storage.neo4j_memory.get_current_fact_details_for_entities",
+        fake_get_facts,
+    )
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "lookup_entity", {"name": "Benjamin L Kahl"}
+        )
+
+    assert not result.isError, f"Tool returned error: {result.content}"
+    payload = json.loads(result.content[0].text)
+    assert payload["match"] == "exact_name"
+    assert payload["entity"]["name"] == "Benjamin L Kahl"
+    assert payload["entity"]["aliases"] == ["Ben Kahl"]
+    assert len(payload["facts"]) == 1
+    assert "Benjamin L Kahl" in payload["facts"][0]["text"]
+    assert "Hackingtons Inc" in payload["facts"][0]["text"]
+    assert "WORKS_FOR" in payload["facts"][0]["text"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lookup_entity_returns_miss_with_suggestions(monkeypatch):
+    """When no exact match exists, return a miss payload with up to 3
+    substring-matched suggestions."""
+
+    async def fake_find(name, limit=5):
+        # No exact match — only substring matches.
+        return [
+            {
+                "entity_id": "ent-a",
+                "name": "Aurora Project",
+                "type": "Project",
+                "aliases": [],
+                "match": "substring_name",
+            },
+            {
+                "entity_id": "ent-b",
+                "name": "Aurora Database",
+                "type": "Technology",
+                "aliases": [],
+                "match": "substring_name",
+            },
+        ]
+
+    async def fail_get_facts(*args, **kwargs):  # pragma: no cover — must not run
+        raise AssertionError("fact lookup should not run on a miss")
+
+    monkeypatch.setattr(
+        "landscape.storage.neo4j_entities.find_canonical_entities_by_name", fake_find
+    )
+    monkeypatch.setattr(
+        "landscape.storage.neo4j_memory.get_current_fact_details_for_entities",
+        fail_get_facts,
+    )
+
+    async with _mcp_client() as client:
+        result = await client.call_tool("lookup_entity", {"name": "aurora"})
+
+    assert not result.isError
+    payload = json.loads(result.content[0].text)
+    assert payload["match"] == "miss"
+    assert len(payload["suggestions"]) == 2
+    assert payload["suggestions"][0]["name"] == "Aurora Project"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lookup_entity_returns_miss_when_nothing_matches(monkeypatch):
+    """No matches at all → empty miss payload."""
+
+    async def fake_find(name, limit=5):
+        return []
+
+    monkeypatch.setattr(
+        "landscape.storage.neo4j_entities.find_canonical_entities_by_name", fake_find
+    )
+
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "lookup_entity", {"name": "completely unknown thing"}
+        )
+
+    assert not result.isError
+    payload = json.loads(result.content[0].text)
+    assert payload == {"match": "miss", "suggestions": []}
 
 
 @pytest.mark.unit

@@ -202,6 +202,76 @@ async def add_alias(
     await merge_alias(canonical_element_id, alias, source_doc, confidence)
 
 
+async def find_canonical_entities_by_name(
+    name: str, limit: int = 5
+) -> list[dict[str, Any]]:
+    """Find canonical entities whose name or alias matches ``name``.
+
+    Returns the canonical record(s) with name, type, id, aliases, and
+    ``match`` ∈ {"exact_name", "exact_alias", "substring_name",
+    "substring_alias"} indicating how the row was matched, sorted from
+    best match (exact_name) to weakest (substring_alias). Returns the empty
+    list when nothing matches.
+
+    Used by the MCP ``lookup_entity`` tool to convert a free-text entity
+    name into a canonical Neo4j id before pulling its facts. Callers that
+    need fuzzy/embedding-based matching should fall back to a vector
+    search when this returns an empty list.
+    """
+    normalized = " ".join(name.strip().lower().split())
+    if not normalized:
+        return []
+
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (e:Entity)
+            WHERE e.canonical = true
+            OPTIONAL MATCH (a:Alias)-[:SAME_AS]->(e)
+            WITH e,
+                 toLower(trim(e.name)) AS canonical_name,
+                 collect(DISTINCT toLower(trim(a.name))) AS alias_names,
+                 collect(DISTINCT a.name) AS alias_display_names
+            WITH e, canonical_name, alias_names, alias_display_names,
+                 CASE
+                   WHEN canonical_name = $needle THEN 0
+                   WHEN $needle IN alias_names THEN 1
+                   WHEN canonical_name CONTAINS $needle THEN 2
+                   WHEN any(an IN alias_names WHERE an CONTAINS $needle) THEN 3
+                   ELSE -1
+                 END AS rank
+            WHERE rank >= 0
+            RETURN e.id AS entity_id,
+                   e.name AS name,
+                   e.type AS type,
+                   [n IN alias_display_names WHERE n IS NOT NULL] AS aliases,
+                   rank
+            ORDER BY rank ASC, size(e.name) ASC, e.name ASC
+            LIMIT $limit
+            """,
+            needle=normalized,
+            limit=limit,
+        )
+        rows = [dict(record) async for record in result]
+    match_labels = {
+        0: "exact_name",
+        1: "exact_alias",
+        2: "substring_name",
+        3: "substring_alias",
+    }
+    return [
+        {
+            "entity_id": row["entity_id"],
+            "name": row["name"],
+            "type": row["type"],
+            "aliases": row["aliases"],
+            "match": match_labels.get(row["rank"], "unknown"),
+        }
+        for row in rows
+    ]
+
+
 async def resolve_seed_entity_ids(query_text: str) -> list[str]:
     normalized_query = " ".join(query_text.strip().lower().split())
     if not normalized_query:
