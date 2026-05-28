@@ -261,12 +261,30 @@ process-per-client; prefer HTTP unless you need stdio.
 |---|---|
 | `search` | Hybrid retrieve: vector similarity + graph traversal up to N hops; accepts `as_of` (ISO-8601) for time-travel queries against historical fact state |
 | `remember` | Ingest free-text; extract entities and relations into the graph |
+| `lookup_entity` | Entity-centered lookup: returns canonical entity + aliases + live facts for an exact name/alias match, or a miss + substring-match suggestions otherwise; supports `as_of` and `include_historical` |
 | `capture_turn` | Capture an explicit conversation turn and schedule background ingestion |
 | `add_entity` | Directly assert a named entity with type and provenance |
 | `add_relation` | Assert a typed edge between two entities; supersedes functional conflicts |
 | `graph_query` | Run a read-only Cypher query against the knowledge graph |
 | `status` | Return a ~200-token summary: entity count, top entities, recent agent writes |
 | `conversation_history` | Return chronological turns and entities mentioned in a session |
+
+### Ingesting files from an agent conversation
+
+There is intentionally no `remember_file` MCP tool. File ingestion happens
+through the CLI, which the agent invokes via its existing shell access:
+
+```bash
+landscape ingest ~/Downloads/paper.pdf --session-id $SESSION --turn-id $TURN
+```
+
+The CLI reads the file directly from the agent's local filesystem (no
+filesystem-topology problem), uses the markitdown converter dispatch
+(PDF/DOCX/PPTX/XLSX/HTML/CSV/JSON/EPUB/RTF + markdown/text passthrough), and
+records the same session/turn provenance the MCP write-back tools use. For
+long-running ingestion of large PDFs, run the command in the background
+(`&` / `nohup` / the agent harness's background-shell feature) so the agent
+is not blocked on extraction.
 
 ### Automatic MCP conversation ingestion
 
