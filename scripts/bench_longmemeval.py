@@ -16,8 +16,15 @@ Metrics reported:
   hit_at_k_rate      — retrieval coverage proxy (was the gold entity in top-k?)
   judge_correct_rate — answer quality (correct + abstained) / total
 
+Databases:
+    Targets the isolated TEST stack by default (docker-compose.test.yml,
+    Neo4j :17687 / Qdrant :16333), NOT the live stack — the benchmark wipes
+    the databases between questions. Bring it up with:
+        docker compose -f docker-compose.test.yml up -d
+    Override targets via LANDSCAPE_TEST_NEO4J_URI / LANDSCAPE_TEST_QDRANT_URL.
+
 Usage:
-    # Requires docker stack up (Neo4j, Qdrant, Ollama) and AWS credentials.
+    # Requires the test stack up (Neo4j, Qdrant) + Ollama, and AWS credentials.
     uv run python scripts/bench_longmemeval.py \\
         --data tests/longmemeval_s_cleaned.json \\
         --n-questions 10 \\
@@ -50,11 +57,23 @@ import random
 import sys
 import time
 
-os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
-os.environ.setdefault("NEO4J_USER", "neo4j")
-os.environ.setdefault("NEO4J_PASSWORD", "landscape-dev")
-os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
-os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
+# Target the isolated test stack (docker-compose.test.yml: ports 17687/16333),
+# not the live default stack. The benchmark wipes the databases between every
+# question, so it must never point at the live stack by default. We reuse the
+# same resolver + safety guard the pytest suite uses (tests/stack_config.py);
+# override targets with LANDSCAPE_TEST_NEO4J_URI / LANDSCAPE_TEST_QDRANT_URL.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tests"))
+from stack_config import (  # noqa: E402
+    assert_safe_to_wipe,
+    resolve_test_stack_config,
+)
+
+TEST_STACK = resolve_test_stack_config(os.environ)
+os.environ["NEO4J_URI"] = TEST_STACK.neo4j_uri
+os.environ["NEO4J_USER"] = TEST_STACK.neo4j_auth[0]
+os.environ["NEO4J_PASSWORD"] = TEST_STACK.neo4j_auth[1]
+os.environ["QDRANT_URL"] = TEST_STACK.qdrant_url
+os.environ["OLLAMA_URL"] = TEST_STACK.ollama_url
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from landscape import pipeline  # noqa: E402
@@ -73,6 +92,9 @@ def _safe_id(raw: str) -> str:
 
 
 async def _wipe_stack() -> None:
+    # Mirror the pytest guard: refuse to wipe the live default stack unless the
+    # operator explicitly opts in via LANDSCAPE_ALLOW_LIVE_TEST_WIPE=1.
+    assert_safe_to_wipe(TEST_STACK, os.environ)
     driver = neo4j_store.get_driver()
     async with driver.session() as session:
         await session.run("MATCH (n) DETACH DELETE n")
