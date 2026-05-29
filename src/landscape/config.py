@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -95,6 +96,16 @@ class Settings(BaseSettings):
     auth_db_path: str = "~/.config/landscape/auth.db"
 
     model_config = {"env_file": ".env", "case_sensitive": False, "extra": "ignore"}
+
+    @model_validator(mode="after")
+    def _validate_conversation_capture_window(self) -> "Settings":
+        # Enforce the documented invariant even when env vars override defaults.
+        if self.conversation_window_overlap_turns >= self.conversation_window_max_turns:
+            raise ValueError(
+                "conversation_window_overlap_turns must be smaller than "
+                "conversation_window_max_turns"
+            )
+        return self
 
     def model_post_init(self, _context: object) -> None:
         if self.llm_profile not in LLM_PROFILES:
