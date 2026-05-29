@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     # decay_lambda chosen so exp(-lambda * 7 days) == 0.5 — a true 7-day half-life
     decay_lambda: float = math.log(2) / (7 * 86400)
     reinforcement_cap: float = 2.0
+    # Minimum cosine similarity for a Qdrant-derived seed to anchor graph
+    # expansion. Direct substring/alias seeds (assigned 1.0) are never gated.
+    seed_sim_floor: float = 0.3
 
     # Weave (W&B) tracing for the LLM extraction pipeline. Unset = disabled.
     # Set to e.g. "landscape-extraction" or "<entity>/landscape-extraction".
