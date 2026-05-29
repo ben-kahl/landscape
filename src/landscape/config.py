@@ -72,6 +72,15 @@ class Settings(BaseSettings):
     # expansion. Direct substring/alias seeds (assigned 1.0) are never gated.
     seed_sim_floor: float = 0.3
 
+    # --- Automatic conversation capture (Phase 4) ---
+    # Flush a session's buffered turns once this many are pending.
+    conversation_window_max_turns: int = 12
+    # Or flush after this many seconds with no new turns (debounce).
+    conversation_idle_flush_seconds: float = 120.0
+    # Turns carried from the previous flushed window into the next, for
+    # cross-window coreference. Must be < conversation_window_max_turns.
+    conversation_window_overlap_turns: int = 2
+
     # Weave (W&B) tracing for the LLM extraction pipeline. Unset = disabled.
     # Set to e.g. "landscape-extraction" or "<entity>/landscape-extraction".
     weave_project: str | None = None
