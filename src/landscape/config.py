@@ -64,9 +64,13 @@ class Settings(BaseSettings):
     scoring_beta: float = 0.8  # graph proximity
     scoring_gamma: float = 0.2  # reinforcement (multiplicative, was 0.4 additive)
     scoring_delta: float = 0.3  # edge confidence
+    scoring_sim_decay: float = 0.6  # per-hop decay applied to inherited vector sim
     # decay_lambda chosen so exp(-lambda * 7 days) == 0.5 — a true 7-day half-life
     decay_lambda: float = math.log(2) / (7 * 86400)
     reinforcement_cap: float = 2.0
+    # Minimum cosine similarity for a Qdrant-derived seed to anchor graph
+    # expansion. Direct substring/alias seeds (assigned 1.0) are never gated.
+    seed_sim_floor: float = 0.3
 
     # Weave (W&B) tracing for the LLM extraction pipeline. Unset = disabled.
     # Set to e.g. "landscape-extraction" or "<entity>/landscape-extraction".

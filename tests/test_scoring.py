@@ -193,3 +193,78 @@ def test_rumination_bound_preserved_under_gating():
     ceiling = max_possible_score(WEIGHTS)
     assert s <= ceiling + 1e-9
     assert r <= WEIGHTS.reinforcement_cap
+
+
+# --- Change 1: vector similarity decays with hop distance ---------------------
+
+# Isolates the vector-sim term (beta/gamma/delta zeroed) so the score reduces to
+# alpha * vector_sim * sim_decay**distance — making the decay assertions exact.
+DECAY_WEIGHTS = ScoringWeights(
+    alpha=1.0,
+    beta=0.0,
+    gamma=0.0,
+    delta=0.0,
+    decay_lambda=math.log(2) / (7 * 86400),
+    reinforcement_cap=2.0,
+    sim_decay=0.6,
+)
+
+
+def test_vector_sim_decays_geometrically_with_distance():
+    """Same vector_sim, increasing hop distance ⇒ geometric decay of the
+    vsim contribution, and distance 0 is untouched (decay**0 == 1)."""
+    s0 = score_candidate(0.8, 0, 0.0, 0.0, DECAY_WEIGHTS)
+    s1 = score_candidate(0.8, 1, 0.0, 0.0, DECAY_WEIGHTS)
+    s2 = score_candidate(0.8, 2, 0.0, 0.0, DECAY_WEIGHTS)
+    assert abs(s0 - 0.8) < 1e-9  # distance 0: no decay
+    assert abs(s1 - 0.8 * 0.6) < 1e-9  # one hop
+    assert abs(s2 - 0.8 * 0.6**2) < 1e-9  # two hops
+    assert s0 > s1 > s2  # strictly decreasing
+
+
+def test_sim_decay_one_reproduces_undecayed_behavior():
+    """sim_decay == 1.0 leaves the vector-sim contribution flat across hops —
+    i.e. identical to the pre-change scoring."""
+    no_decay = ScoringWeights(
+        alpha=1.0,
+        beta=0.0,
+        gamma=0.0,
+        delta=0.0,
+        decay_lambda=math.log(2) / (7 * 86400),
+        reinforcement_cap=2.0,
+        sim_decay=1.0,
+    )
+    assert abs(score_candidate(0.7, 0, 0.0, 0.0, no_decay) - 0.7) < 1e-9
+    assert abs(score_candidate(0.7, 3, 0.0, 0.0, no_decay) - 0.7) < 1e-9
+
+
+def test_sim_decay_does_not_change_max_possible_score():
+    """The ceiling lives at distance 0 (decay**0 == 1, proximity == 1), so the
+    max_possible_score invariant is unaffected by sim decay."""
+    w = ScoringWeights(
+        alpha=1.0,
+        beta=0.8,
+        gamma=0.2,
+        delta=0.3,
+        decay_lambda=math.log(2) / (7 * 86400),
+        reinforcement_cap=2.0,
+        sim_decay=0.6,
+    )
+    now = datetime.now(UTC)
+    r = reinforcement_score(10_000_000, now, now, w)
+    s = score_candidate(1.0, 0, 1.0, r, w)
+    assert abs(s - max_possible_score(w)) < 1e-9
+
+
+def test_from_settings_reads_sim_decay(monkeypatch):
+    """from_settings() wires the new scoring_sim_decay knob into the weights."""
+    from landscape.config import settings as cfg
+
+    monkeypatch.setattr(cfg, "scoring_sim_decay", 0.42)
+    assert ScoringWeights.from_settings().sim_decay == 0.42
+
+
+def test_default_weights_construction_is_undecayed():
+    """A ScoringWeights built without sim_decay defaults to no decay, so
+    existing call sites and tests keep their pre-change behavior."""
+    assert WEIGHTS.sim_decay == 1.0

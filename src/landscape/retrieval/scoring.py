@@ -13,6 +13,9 @@ class ScoringWeights:
     delta: float  # edge confidence
     decay_lambda: float
     reinforcement_cap: float
+    # Per-hop geometric decay on inherited vector sim. 1.0 == no decay, which
+    # keeps any weights built without this arg at the pre-change behavior.
+    sim_decay: float = 1.0
 
     @classmethod
     def from_settings(cls) -> "ScoringWeights":
@@ -23,6 +26,7 @@ class ScoringWeights:
             delta=settings.scoring_delta,
             decay_lambda=settings.decay_lambda,
             reinforcement_cap=settings.reinforcement_cap,
+            sim_decay=settings.scoring_sim_decay,
         )
 
 
@@ -53,11 +57,16 @@ def score_candidate(
     """Combine the four signals into a final score under multiplicative gating.
 
     Base relevance is additive over vec_sim, proximity, and edge_confidence.
+    The vector-sim term decays geometrically with hop distance (sim_decay**dist)
+    so a candidate reached far from a strong seed no longer inherits the seed's
+    full similarity; distance 0 is untouched (sim_decay**0 == 1).
     Reinforcement acts as a bounded multiplier: score = base * (1 + γ·reinforcement).
     Max possible: (α + β + δ) · (1 + γ·cap)."""
-    proximity = 1.0 / (1.0 + max(0, graph_distance))
+    distance = max(0, graph_distance)
+    proximity = 1.0 / (1.0 + distance)
+    decayed_sim = max(0.0, min(1.0, vector_sim)) * (weights.sim_decay**distance)
     base = (
-        weights.alpha * max(0.0, min(1.0, vector_sim))
+        weights.alpha * decayed_sim
         + weights.beta * proximity
         + weights.delta * max(0.0, min(1.0, edge_confidence))
     )

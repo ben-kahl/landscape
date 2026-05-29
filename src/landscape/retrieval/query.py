@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import Literal
 
+from landscape.config import settings
 from landscape.embeddings import encoder
 from landscape.observability import RetrievalLogContext, create_retrieval_log_context
 from landscape.retrieval.scoring import (
@@ -19,6 +20,52 @@ from landscape.storage import neo4j_store, qdrant_store
 # so direct entity hits retain precedence in the score. max() means entities that
 # ARE in the entity search results keep their full score regardless.
 _CHUNK_ENTITY_SIM_DISCOUNT = 0.7
+
+
+def _build_seed_sims(
+    *,
+    direct_seed_ids: list[str],
+    entity_hits: list,
+    chunk_entities: list[dict],
+    chunk_score_by_id: dict[str, float],
+    chunk_ids: list[str],
+    seed_floor: float,
+) -> dict[str, float]:
+    """Construct the graph-seed similarity map, applying the vector-seed floor.
+
+    Direct substring/alias seeds (assigned 1.0) are authoritative and never
+    gated. Qdrant entity hits below ``seed_floor`` are dropped so a query with
+    no good vector match doesn't anchor BFS on noise. Chunk-propagated seeds use
+    a discounted chunk score; a sub-floor propagation can introduce nothing new
+    and never lowers an entity already seeded above the floor.
+    """
+    seed_sims: dict[str, float] = {}
+    for entity_id in direct_seed_ids:
+        seed_sims[entity_id] = max(seed_sims.get(entity_id, 0.0), 1.0)
+    for hit in entity_hits:
+        payload = hit.payload or {}
+        entity_id = payload.get("entity_id")
+        if not entity_id:
+            continue
+        score = float(hit.score)
+        if score < seed_floor:
+            continue
+        seed_sims[entity_id] = max(seed_sims.get(entity_id, 0.0), score)
+    for ent in chunk_entities:
+        entity_id = ent["entity_id"]
+        src_chunk_ids = (
+            ent["chunk_eids"] if ent.get("chunk_eids") is not None else chunk_ids
+        )
+        best = max(
+            (chunk_score_by_id.get(cid, 0.0) for cid in src_chunk_ids),
+            default=0.0,
+        )
+        seed_value = best * _CHUNK_ENTITY_SIM_DISCOUNT
+        if entity_id not in seed_sims and seed_value < seed_floor:
+            continue
+        seed_sims[entity_id] = max(seed_sims.get(entity_id, 0.0), seed_value)
+    return seed_sims
+
 
 _VALUE_KEYS = (
     "value_text", "value_number", "value_unit", "value_kind", "value_time",
@@ -188,16 +235,6 @@ async def retrieve(
             duration_ms=round((perf_counter() - stage_started_at) * 1000, 3),
         )
 
-        seed_sims: dict[str, float] = {}
-        for entity_id in direct_seed_ids:
-            seed_sims[entity_id] = max(seed_sims.get(entity_id, 0.0), 1.0)
-        for hit in entity_hits:
-            payload = hit.payload or {}
-            entity_id = payload.get("entity_id")
-            if not entity_id:
-                continue
-            seed_sims[entity_id] = max(seed_sims.get(entity_id, 0.0), float(hit.score))
-
         chunk_ids: list[str] = []
         chunk_score_by_id: dict[str, float] = {}
         retrieved_chunks: list[RetrievedChunk] = []
@@ -221,18 +258,16 @@ async def retrieve(
 
         stage_started_at = log.set_stage("chunk_entity_propagation_completed")
         chunk_entities = await neo4j_store.get_entities_from_chunks(chunk_ids)
-        for ent in chunk_entities:
-            entity_id = ent["entity_id"]
-            src_chunk_ids = (
-                ent["chunk_eids"] if ent.get("chunk_eids") is not None else chunk_ids
-            )
-            best = max(
-                (chunk_score_by_id.get(cid, 0.0) for cid in src_chunk_ids),
-                default=0.0,
-            )
-            seed_sims[entity_id] = max(
-                seed_sims.get(entity_id, 0.0), best * _CHUNK_ENTITY_SIM_DISCOUNT
-            )
+        # Build graph seeds with the vector-seed floor applied. Chunk display
+        # (retrieved_chunks above) is independent of this gate.
+        seed_sims = _build_seed_sims(
+            direct_seed_ids=direct_seed_ids,
+            entity_hits=entity_hits,
+            chunk_entities=chunk_entities,
+            chunk_score_by_id=chunk_score_by_id,
+            chunk_ids=chunk_ids,
+            seed_floor=settings.seed_sim_floor,
+        )
         log.emit(
             "chunk_entity_propagation_completed",
             propagated_entity_count=len(chunk_entities),
