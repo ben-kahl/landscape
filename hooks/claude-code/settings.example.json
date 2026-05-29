@@ -23,6 +23,18 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/landscape_capture_hook.py claude-code",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

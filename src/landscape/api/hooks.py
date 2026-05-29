@@ -24,6 +24,15 @@ class ConversationTurnHookResponse(BaseModel):
     scheduled: bool
 
 
+class SessionEndHookRequest(BaseModel):
+    client: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+
+
+class SessionEndHookResponse(BaseModel):
+    flushed: bool
+
+
 @router.post("/conversation-turn", response_model=ConversationTurnHookResponse)
 async def capture_conversation_turn_hook(
     req: ConversationTurnHookRequest,
@@ -51,3 +60,15 @@ async def capture_conversation_turn_hook(
         debug=req.debug,
     )
     return ConversationTurnHookResponse(accepted=True, scheduled=True)
+
+
+@router.post("/session-end", response_model=SessionEndHookResponse)
+async def session_end_hook(
+    req: SessionEndHookRequest,
+    auth: AgentPrincipal,
+) -> SessionEndHookResponse:
+    del auth
+    from landscape import mcp_app
+
+    await mcp_app.flush_conversation_session(req.session_id)
+    return SessionEndHookResponse(flushed=True)

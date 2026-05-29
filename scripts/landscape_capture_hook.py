@@ -26,6 +26,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"landscape hook ignored invalid JSON: {exc}", file=sys.stderr)
         return 0
 
+    event_name = ""
+    if isinstance(payload, dict):
+        event_name = str(payload.get("hook_event_name") or payload.get("event_name") or "")
+    if event_name == "SessionEnd":
+        session_id = ""
+        if isinstance(payload, dict):
+            session_id = str(payload.get("session_id") or payload.get("sessionID") or "")
+        if session_id:
+            end_url = os.environ.get(
+                "LANDSCAPE_SESSION_END_URL",
+                DEFAULT_HOOK_URL.replace("/conversation-turn", "/session-end"),
+            )
+            _post_turn(end_url, token, {"client": client, "session_id": session_id})
+        return 0
+
     turns = extract_turns(client, payload)
     for turn in turns:
         _post_turn(hook_url, token, turn.__dict__)
