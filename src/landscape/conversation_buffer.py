@@ -115,6 +115,9 @@ class ConversationBufferManager:
             return
         try:
             await self._flush_fn(session_id, window)
+        except asyncio.CancelledError:
+            buffer.restore_window()
+            raise
         except Exception:
             buffer.restore_window()
             logger.exception("conversation buffer flush failed for session %s", session_id)

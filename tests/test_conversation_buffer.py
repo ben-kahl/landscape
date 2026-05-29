@@ -110,3 +110,25 @@ async def test_manager_failed_flush_preserves_pending_for_retry():
 
     await mgr.flush_session("s1")
     assert attempts == [("s1", ["t0", "t1"]), ("s1", ["t0", "t1"])]
+
+
+@pytest.mark.asyncio
+async def test_manager_cancelled_flush_restores_pending_and_reraises():
+    from landscape.conversation_buffer import ConversationBufferManager
+
+    attempts: list[tuple[str, list[str]]] = []
+
+    async def flush_fn(session_id, window):
+        attempts.append((session_id, [t.turn_id for t in window]))
+        if len(attempts) == 1:
+            raise asyncio.CancelledError
+
+    mgr = ConversationBufferManager(flush_fn, max_turns=2, idle_seconds=999, overlap_turns=1)
+    await mgr.add_turn(_turn("t0", "fact zero"))
+    with pytest.raises(asyncio.CancelledError):
+        await mgr.add_turn(_turn("t1", "fact one"))
+
+    assert attempts == [("s1", ["t0", "t1"])]
+
+    await mgr.flush_session("s1")
+    assert attempts == [("s1", ["t0", "t1"]), ("s1", ["t0", "t1"])]
