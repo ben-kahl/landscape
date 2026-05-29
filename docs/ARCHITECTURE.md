@@ -111,6 +111,37 @@ changed.
 The extractor is intentionally schema-first. This makes downstream retrieval
 more reliable than storing only raw text or model-generated prose summaries.
 
+### Automatic Conversation Capture
+
+Agent conversations enter through the MCP `capture_turn` tool or the HTTP hook
+receiver at `POST /hooks/conversation-turn`. Both paths use the same
+conversation-turn shape: `session_id`, `turn_id`, `role`, and `text`.
+
+The capture path is buffered by session:
+
+1. The server filters empty turns, tool/function roles, duplicate turn
+   fingerprints, and turns already covered by explicit `remember` writes.
+2. Accepted turns append to an in-memory `ConversationBufferManager` session
+   buffer.
+3. A flush is triggered by window size, idle timeout, or
+   `POST /hooks/session-end`.
+4. The flush runs one local Ollama salience-selection pass over the window plus
+   the configured tail overlap.
+5. Selected turns are kept verbatim, ordered by their source turn index, joined
+   as one document, and sent through the normal ingestion pipeline.
+6. The resulting document is linked to every contributing `Turn`, so retrieval
+   can explain which conversation turns produced a fact.
+
+The salience categories are `identity`, `preference`, `decision`, `fact`,
+`relationship`, and `state_change`. The selector discards greetings,
+acknowledgements, tool chatter, transient task mechanics, and undecided
+hypotheticals before graph ingestion.
+
+The hook adapter in `scripts/landscape_capture_hook.py` posts regular turn
+events to `/hooks/conversation-turn` and Claude Code `SessionEnd` events to
+`/hooks/session-end`. The hook path uses local Ollama and local storage only,
+but every selected fact is persistent memory in Neo4j/Qdrant.
+
 ## Retrieval Flow
 
 1. Embed the user query.
@@ -230,10 +261,10 @@ measured.
 
 Source-of-truth docs (README, this file) describe the implemented system,
 benchmark scope is explicit about what is hardened versus smoke-only, and the
-bitemporal fact model is documented end-to-end. Once those conditions hold,
-phase 4 input-expansion work (richer text ingestion paths, drive integrations,
-automatic conversation capture, multimodal) can start without dragging
-phase-3.5 cleanup along with it.
+bitemporal fact model is documented end-to-end. The first phase-4 input path,
+automatic conversation capture, is now implemented as a buffered salience
+pipeline; remaining phase-4 work can focus on richer text ingestion paths,
+drive integrations, and multimodal inputs.
 
 ## Known Limitations
 
@@ -286,13 +317,12 @@ operational polish.
   agent-authored write-back that does not match ingestion-time labels exactly.
 - Semantic relation clustering / supersession hardening so novel relation labels
   can participate in canonical reasoning and temporal updates.
-- Automatic agent-conversation ingestion so useful conversational memory does
-  not depend on explicit `add_entity` / `add_relation` calls for every fact.
+- Conversation-capture hardening: tune salience precision, expand client hook
+  coverage, and keep session-end behavior documented per supported agent.
 - Benchmark hardening and reproducibility beyond the current killer-demo and
   LongMemEval smoke harness.
 - The canonical verification workflow is documented in `README.md` and should
   stay aligned with the current CI-safe regression gate as commands evolve.
 - Expanded ingestion modes as the next major feature area: richer document
-  inputs, drive-platform integrations such as Google Drive, automatic
-  conversation capture, and visual/multimodal ingestion through OCR and local
-  multimodal models.
+  inputs, drive-platform integrations such as Google Drive, and
+  visual/multimodal ingestion through OCR and local multimodal models.

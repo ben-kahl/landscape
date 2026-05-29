@@ -62,10 +62,10 @@ graph TD
 | Hybrid retrieval | Vector search, graph expansion, merge/rank, recency and distance scoring |
 | Temporal memory | Bitemporal facts: separate system time (`ingested_at` / `system_until`) and valid time (`effective_from` / `effective_until`); supersession-aware retrieval for functional conflicts; `as_of` time-travel queries; negative-polarity facts stored and surfaced distinctly |
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
-| Agent access | MCP server, conversation history, LangChain retriever, FastAPI, local CLI |
+| Agent access | MCP server, conversation history, automatic conversation capture, LangChain retriever, FastAPI, local CLI |
 | Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval smoke harness |
 | Phase 3.5 hardening | In progress: ranking tuning, LongMemEval beyond smoke, resolver improvements |
-| Phase 4 | Next: expanded ingestion (richer document inputs, drive integrations, multimodal) |
+| Phase 4 | In progress: automatic conversation capture; next expanded ingestion includes richer document inputs, drive integrations, and multimodal |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design rationale, data
 model details, benchmark notes, and known limitations.
@@ -290,13 +290,25 @@ is not blocked on extraction.
 
 Landscape can ingest eligible MCP conversation turns through `capture_turn`.
 Clients provide `session_id`, `turn_id`, `role`, and `text`; Landscape validates
-the turn, schedules ingestion in the background, and returns immediately. The
-foreground agent interaction is not blocked on extraction, embedding, Neo4j
-writes, or Qdrant writes.
+the turn, appends it to a per-session buffer, and returns immediately. The
+foreground agent interaction is not blocked on salience selection, extraction,
+embedding, Neo4j writes, or Qdrant writes.
 
 `capture_turn` is the MCP-first safety-net path for ordinary conversation
 memory. `remember` remains the explicit synchronous document-ingest tool, and
 `add_entity` / `add_relation` remain the precise structured write-back tools.
+
+Buffered capture flushes on three triggers:
+
+- `CONVERSATION_WINDOW_MAX_TURNS` pending turns, default `12`
+- `CONVERSATION_IDLE_FLUSH_SECONDS` without a new accepted turn, default `120.0`
+- an explicit session-end signal through `POST /hooks/session-end`
+
+Each flush runs one local Ollama salience pass over the pending window plus the
+configured tail overlap (`CONVERSATION_WINDOW_OVERLAP_TURNS`, default `2`).
+The salience pass selects original turns; it does not rewrite them. Selected
+turns are ingested as one document and linked back to every contributing
+`Conversation` / `Turn` for provenance.
 
 ### Agent hook conversation capture
 
@@ -306,23 +318,26 @@ adapters to call Landscape's HTTP hook receiver:
 
 ```text
 POST http://127.0.0.1:8000/hooks/conversation-turn
+POST http://127.0.0.1:8000/hooks/session-end
 ```
 
 The receiver accepts `{client, session_id, turn_id, role, text}`, applies the
-same eligibility checks as `capture_turn`, and schedules background ingestion.
-It requires the same bearer auth as the other FastAPI write endpoints, so hook
-processes should export:
+same eligibility checks as `capture_turn`, and appends eligible turns to the
+session buffer. The session-end receiver accepts `{client, session_id}` and
+flushes any pending turns immediately. Both endpoints require the same bearer
+auth as the other FastAPI write endpoints, so hook processes should export:
 
 ```bash
 export LANDSCAPE_API_TOKEN="<oauth access token with agent scope>"
 export LANDSCAPE_HOOK_URL="http://127.0.0.1:8000/hooks/conversation-turn"
+export LANDSCAPE_SESSION_END_URL="http://127.0.0.1:8000/hooks/session-end"
 ```
 
 Hook examples live under `hooks/`:
 
 | Client | Files | Notes |
 |---|---|---|
-| Claude Code | `hooks/claude-code/settings.example.json` | Copy or merge into `.claude/settings.json` or `~/.claude/settings.json`. Captures user prompts and the latest assistant transcript turn on `Stop`. |
+| Claude Code | `hooks/claude-code/settings.example.json` | Copy or merge into `.claude/settings.json` or `~/.claude/settings.json`. Captures user prompts, the latest assistant transcript turn on `Stop`, and flushes on `SessionEnd`. |
 | Codex | `hooks/codex/config.example.toml`, `hooks/codex/hooks.example.json` | Enable `codex_hooks`, then copy or merge hooks into `.codex/` or `~/.codex/`. Captures prompt and stop hook payloads when Codex exposes them. |
 | OpenCode | `hooks/opencode/landscape-conversation.js` | Copy into `.opencode/plugins/` or `~/.config/opencode/plugins/`. Captures `message.updated` events. |
 
@@ -330,6 +345,20 @@ All examples call `scripts/landscape_capture_hook.py`, which normalizes each
 client's hook payload before posting to Landscape. Keep using MCP `remember`
 for deliberate document ingestion; hooks are intended for low-friction
 conversation memory.
+
+### Conversation capture provenance and privacy
+
+Automatic capture stores only turns selected as durable, future-relevant memory:
+identity/role, stable preferences, decisions, stable facts, relationships, and
+state changes or corrections. Greetings, acknowledgements, tool chatter, task
+mechanics, and transient clarifying questions are discarded before graph
+ingestion.
+
+Everything captured lands in your local Neo4j/Qdrant stack with
+`Conversation` / `Turn` provenance. The salience and extraction calls use local
+Ollama, so the hook path does not require cloud APIs, but captured facts are
+still persistent local memory. Treat hook enablement as an explicit choice to
+store useful conversation facts.
 
 ## Reproduce the benchmarks
 
