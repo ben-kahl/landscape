@@ -62,11 +62,17 @@ mcp = FastMCP(
 )
 _AUTO_INGEST_SEEN_FINGERPRINTS: set[str] = set()
 _EXPLICIT_MEMORY_TURN_KEYS: set[tuple[str, str]] = set()
+_EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS: set[tuple[str, str]] = set()
 _DEBUG_CAPTURE_SESSIONS: set[str] = set()
 
 
 def _turn_key(session_id: str, turn_id: str) -> tuple[str, str]:
     return (session_id, turn_id)
+
+
+def _is_explicit_memory_turn(session_id: str, turn_id: str) -> bool:
+    key = _turn_key(session_id, turn_id)
+    return key in _EXPLICIT_MEMORY_TURN_KEYS or key in _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS
 
 
 async def _flush_window(session_id: str, window: list[Any]) -> None:
@@ -76,7 +82,7 @@ async def _flush_window(session_id: str, window: list[Any]) -> None:
     window = [
         turn
         for turn in window
-        if _turn_key(turn.session_id, turn.turn_id) not in _EXPLICIT_MEMORY_TURN_KEYS
+        if not _is_explicit_memory_turn(turn.session_id, turn.turn_id)
     ]
     debug = session_id in _DEBUG_CAPTURE_SESSIONS
     try:
@@ -121,7 +127,7 @@ async def _auto_ingest_turn(
 ):
     from landscape.conversation_ingestion import ConversationTurn
 
-    if _turn_key(session_id, turn_id) in _EXPLICIT_MEMORY_TURN_KEYS:
+    if _is_explicit_memory_turn(session_id, turn_id):
         return None
 
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
@@ -270,14 +276,21 @@ async def remember(
     require_current_scope("agent")
     from landscape.pipeline import ingest
 
-    result = await ingest(
-        text,
-        title,
-        session_id=session_id,
-        turn_id=turn_id,
-        debug=debug,
-    )
-    _EXPLICIT_MEMORY_TURN_KEYS.add(_turn_key(session_id, turn_id))
+    key = _turn_key(session_id, turn_id)
+    _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.add(key)
+    try:
+        result = await ingest(
+            text,
+            title,
+            session_id=session_id,
+            turn_id=turn_id,
+            debug=debug,
+        )
+    except Exception:
+        _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.discard(key)
+        raise
+    _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.discard(key)
+    _EXPLICIT_MEMORY_TURN_KEYS.add(key)
     output = {
         "doc_id": result.doc_id,
         "entities_created": result.entities_created,
@@ -301,7 +314,7 @@ async def capture_turn(
     from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
 
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
-    if _turn_key(session_id, turn_id) in _EXPLICIT_MEMORY_TURN_KEYS:
+    if _is_explicit_memory_turn(session_id, turn_id):
         return json.dumps({"accepted": False, "scheduled": False})
     if not should_auto_ingest_turn(turn, seen_fingerprints=set()):
         return json.dumps({"accepted": False, "scheduled": False})

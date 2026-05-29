@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 import textwrap
@@ -130,3 +131,60 @@ async def test_flush_window_clears_debug_state_when_ingest_fails(monkeypatch):
         await mcp_app._flush_window("s-fail", [])
 
     assert "s-fail" not in mcp_app._DEBUG_CAPTURE_SESSIONS
+
+
+@pytest.mark.asyncio
+async def test_remember_reserves_turn_before_ingest_completes(monkeypatch):
+    from landscape import mcp_app
+    from landscape.pipeline import IngestResult
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    mcp_app._EXPLICIT_MEMORY_TURN_KEYS.clear()
+    mcp_app._EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.clear()
+
+    async def fake_ingest(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return IngestResult(
+            doc_id="doc-1",
+            already_existed=False,
+            entities_created=1,
+            entities_reinforced=0,
+            relations_created=0,
+            relations_reinforced=0,
+            relations_superseded=0,
+            chunks_created=1,
+        )
+
+    monkeypatch.setattr(mcp_app, "require_current_scope", lambda scope: None)
+    monkeypatch.setattr("landscape.pipeline.ingest", fake_ingest)
+
+    task = asyncio.create_task(
+        mcp_app.remember("Alice joined Acme.", "alice", "s1", "t1")
+    )
+    try:
+        await entered.wait()
+        assert mcp_app._is_explicit_memory_turn("s1", "t1") is True
+    finally:
+        release.set()
+        await task
+
+
+@pytest.mark.asyncio
+async def test_remember_clears_in_flight_reservation_on_failure(monkeypatch):
+    from landscape import mcp_app
+
+    mcp_app._EXPLICIT_MEMORY_TURN_KEYS.clear()
+    mcp_app._EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.clear()
+
+    async def fake_ingest(*args, **kwargs):
+        raise RuntimeError("ingest failed")
+
+    monkeypatch.setattr(mcp_app, "require_current_scope", lambda scope: None)
+    monkeypatch.setattr("landscape.pipeline.ingest", fake_ingest)
+
+    with pytest.raises(RuntimeError, match="ingest failed"):
+        await mcp_app.remember("Alice joined Acme.", "alice", "s1", "t1")
+
+    assert mcp_app._is_explicit_memory_turn("s1", "t1") is False
