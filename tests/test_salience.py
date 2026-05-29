@@ -101,6 +101,30 @@ def test_select_salient_ignores_out_of_range_indices(monkeypatch):
     assert [i.turn_id for i in items] == ["t1"]
 
 
+def test_select_salient_returns_items_in_source_order(monkeypatch):
+    import landscape.extraction.salience as salience
+
+    turns = [
+        _turn("t1", "user", "I work at Acme."),
+        _turn("t2", "user", "My manager is Dana."),
+        _turn("t3", "user", "We chose Postgres."),
+    ]
+
+    def fake_call(prompt: str):
+        return salience.SalienceSelection(
+            selected=[
+                salience.SalienceSelectionItem(turn_index=3, category="decision"),
+                salience.SalienceSelectionItem(turn_index=1, category="identity"),
+            ]
+        )
+
+    monkeypatch.setattr(salience, "_call_salience_model", fake_call)
+    items = salience.select_salient(turns)
+
+    assert [i.turn_id for i in items] == ["t1", "t3"]
+    assert [i.turn_index for i in items] == [1, 3]
+
+
 def test_select_salient_drops_invalid_categories(monkeypatch):
     import landscape.extraction.salience as salience
 

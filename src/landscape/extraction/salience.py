@@ -58,6 +58,7 @@ class SalientItem:
     turn_id: str
     text: str
     category: str
+    turn_index: int | None = None
 
 
 def _num_ctx() -> int:
@@ -104,7 +105,7 @@ def select_salient(turns: list[ConversationTurn]) -> list[SalientItem]:
     prompt = f"{_SYSTEM_PROMPT}\n\n{_render_turns(eligible)}"
     selection = _call_salience_model(prompt)
 
-    items: list[SalientItem] = []
+    selected_by_index: dict[int, SalienceCategory] = {}
     seen: set[int] = set()
     for selected in selection.selected:
         idx = selected.turn_index
@@ -116,8 +117,17 @@ def select_salient(turns: list[ConversationTurn]) -> list[SalientItem]:
         ):
             continue
         seen.add(idx)
+        selected_by_index[idx] = selected.category
+
+    items: list[SalientItem] = []
+    for idx in sorted(selected_by_index):
         turn = eligible[idx - 1]
         items.append(
-            SalientItem(turn_id=turn.turn_id, text=turn.text, category=selected.category)
+            SalientItem(
+                turn_id=turn.turn_id,
+                text=turn.text,
+                category=selected_by_index[idx],
+                turn_index=idx,
+            )
         )
     return items

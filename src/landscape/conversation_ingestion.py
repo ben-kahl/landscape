@@ -194,6 +194,18 @@ async def ingest_conversation_window(
     if not salient_items:
         return None
 
+    ordered_items = sorted(
+        enumerate(salient_items),
+        key=lambda indexed_item: (
+            getattr(indexed_item[1], "turn_index", None) is None,
+            getattr(indexed_item[1], "turn_index", None)
+            if getattr(indexed_item[1], "turn_index", None) is not None
+            else indexed_item[1].turn_id,
+            indexed_item[0],
+        ),
+    )
+    salient_items = [item for _, item in ordered_items]
+
     first = salient_items[0]
     title = f"conversation:{session_id}:window:{first.turn_id}"
     log = create_ingest_log_context(
