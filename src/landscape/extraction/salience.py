@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import ollama
 from pydantic import BaseModel
 
 from landscape.config import LLM_PROFILES, settings
 from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
-from landscape.observability.weave_tracing import traced
+from landscape.middleware.token_counter import increment_ollama_tokens
+from landscape.observability.weave_tracing import record_token_usage, traced
+
+SalienceCategory = Literal[
+    "identity",
+    "preference",
+    "decision",
+    "fact",
+    "relationship",
+    "state_change",
+]
 
 SALIENCE_CATEGORIES = (
     "identity",
@@ -17,6 +28,7 @@ SALIENCE_CATEGORIES = (
     "relationship",
     "state_change",
 )
+_SALIENCE_CATEGORY_SET = frozenset(SALIENCE_CATEGORIES)
 
 _SYSTEM_PROMPT = (
     "You decide which conversation turns are worth remembering as long-term memory.\n"
@@ -34,7 +46,7 @@ _SYSTEM_PROMPT = (
 
 class SalienceSelectionItem(BaseModel):
     turn_index: int
-    category: str
+    category: SalienceCategory
 
 
 class SalienceSelection(BaseModel):
@@ -68,6 +80,17 @@ def _call_salience_model(prompt: str) -> SalienceSelection:
         format=SalienceSelection.model_json_schema(),
         options={"num_ctx": _num_ctx()},
     )
+    prompt_tokens = getattr(response, "prompt_eval_count", 0) or 0
+    completion_tokens = getattr(response, "eval_count", 0) or 0
+    increment_ollama_tokens(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+    record_token_usage(
+        settings.llm_model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
     return SalienceSelection.model_validate_json(response.message.content)
 
 
@@ -85,7 +108,12 @@ def select_salient(turns: list[ConversationTurn]) -> list[SalientItem]:
     seen: set[int] = set()
     for selected in selection.selected:
         idx = selected.turn_index
-        if idx < 1 or idx > len(eligible) or idx in seen:
+        if (
+            idx < 1
+            or idx > len(eligible)
+            or idx in seen
+            or selected.category not in _SALIENCE_CATEGORY_SET
+        ):
             continue
         seen.add(idx)
         turn = eligible[idx - 1]

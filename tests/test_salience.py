@@ -1,3 +1,6 @@
+import json
+from types import SimpleNamespace
+
 import pytest
 
 from landscape.conversation_ingestion import ConversationTurn
@@ -96,6 +99,71 @@ def test_select_salient_ignores_out_of_range_indices(monkeypatch):
     monkeypatch.setattr(salience, "_call_salience_model", fake_call)
     items = salience.select_salient(turns)
     assert [i.turn_id for i in items] == ["t1"]
+
+
+def test_select_salient_drops_invalid_categories(monkeypatch):
+    import landscape.extraction.salience as salience
+
+    turns = [_turn("t1", "user", "I lead the Platform team.")]
+
+    def fake_call(prompt: str):
+        return salience.SalienceSelection.model_construct(
+            selected=[
+                salience.SalienceSelectionItem(turn_index=1, category="identity"),
+                salience.SalienceSelectionItem.model_construct(
+                    turn_index=1, category="bogus"
+                ),
+            ]
+        )
+
+    monkeypatch.setattr(salience, "_call_salience_model", fake_call)
+    items = salience.select_salient(turns)
+
+    assert [i.category for i in items] == ["identity"]
+
+
+def test_call_salience_model_records_token_usage(monkeypatch):
+    import landscape.extraction.salience as salience
+
+    recorded_tokens: list[tuple[int, int]] = []
+    recorded_usage: list[tuple[str, int, int]] = []
+
+    class FakeClient:
+        def __init__(self, host: str):
+            self.host = host
+
+        def chat(self, **kwargs):
+            assert kwargs["options"]["num_ctx"] == 1234
+            return SimpleNamespace(
+                message=SimpleNamespace(
+                    content=json.dumps({"selected": []}),
+                ),
+                prompt_eval_count=11,
+                eval_count=7,
+            )
+
+    monkeypatch.setattr(salience.ollama, "Client", FakeClient)
+    monkeypatch.setattr(salience, "_num_ctx", lambda: 1234)
+    monkeypatch.setattr(
+        salience,
+        "increment_ollama_tokens",
+        lambda *, prompt_tokens, completion_tokens: recorded_tokens.append(
+            (prompt_tokens, completion_tokens)
+        ),
+    )
+    monkeypatch.setattr(
+        salience,
+        "record_token_usage",
+        lambda model, *, prompt_tokens, completion_tokens: recorded_usage.append(
+            (model, prompt_tokens, completion_tokens)
+        ),
+    )
+
+    selection = salience._call_salience_model("prompt")
+
+    assert selection.selected == []
+    assert recorded_tokens == [(11, 7)]
+    assert recorded_usage == [("llama3.1:8b", 11, 7)]
 
 
 @pytest.mark.external
