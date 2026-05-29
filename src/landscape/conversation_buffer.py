@@ -21,6 +21,7 @@ class SessionBuffer:
         self.pending: list[ConversationTurn] = []
         self._seen: set[str] = set()
         self._last_flushed_tail: list[ConversationTurn] = []
+        self._flush_snapshot: tuple[list[ConversationTurn], list[ConversationTurn]] | None = None
 
     def append(self, turn: ConversationTurn) -> bool:
         if not should_auto_ingest_turn(turn, seen_fingerprints=self._seen):
@@ -44,11 +45,23 @@ class SessionBuffer:
     def take_window(self, *, overlap_turns: int) -> list[ConversationTurn]:
         if not self.pending:
             return []
+        self._flush_snapshot = (self.pending.copy(), self._last_flushed_tail.copy())
         window = self._last_flushed_tail + self.pending
         overlap = max(0, overlap_turns)
         self._last_flushed_tail = self.pending[-overlap:] if overlap else []
         self.pending = []
         return window
+
+    def commit_window(self) -> None:
+        self._flush_snapshot = None
+
+    def restore_window(self) -> None:
+        if self._flush_snapshot is None:
+            return
+        pending, last_flushed_tail = self._flush_snapshot
+        self.pending = pending + self.pending
+        self._last_flushed_tail = last_flushed_tail
+        self._flush_snapshot = None
 
 
 FlushFn = Callable[[str, list[ConversationTurn]], Awaitable[None]]
@@ -96,13 +109,17 @@ class ConversationBufferManager:
 
     async def _flush_locked(self, session_id: str) -> None:
         self._cancel_idle_timer(session_id)
-        window = self._buffer(session_id).take_window(overlap_turns=self._overlap_turns)
+        buffer = self._buffer(session_id)
+        window = buffer.take_window(overlap_turns=self._overlap_turns)
         if not window:
             return
         try:
             await self._flush_fn(session_id, window)
         except Exception:
+            buffer.restore_window()
             logger.exception("conversation buffer flush failed for session %s", session_id)
+        else:
+            buffer.commit_window()
 
     def _arm_idle_timer(self, session_id: str) -> None:
         self._cancel_idle_timer(session_id)
@@ -110,7 +127,7 @@ class ConversationBufferManager:
 
     def _cancel_idle_timer(self, session_id: str) -> None:
         task = self._idle_tasks.pop(session_id, None)
-        if task is not None and not task.done():
+        if task is not None and not task.done() and task is not asyncio.current_task():
             task.cancel()
 
     async def _idle_flush(self, session_id: str) -> None:

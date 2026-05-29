@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from landscape.conversation_ingestion import ConversationTurn
@@ -68,3 +70,43 @@ async def test_manager_size_trigger_invokes_flush_fn():
     assert flushed == []
     await mgr.add_turn(_turn("t1", "fact one"))
     assert flushed == [("s1", ["t0", "t1"])]
+
+
+@pytest.mark.asyncio
+async def test_manager_idle_trigger_completes_flush_fn():
+    from landscape.conversation_buffer import ConversationBufferManager
+
+    flushed: list[tuple[str, list[str]]] = []
+    flushed_event = asyncio.Event()
+
+    async def flush_fn(session_id, window):
+        await asyncio.sleep(0)
+        flushed.append((session_id, [t.turn_id for t in window]))
+        flushed_event.set()
+
+    mgr = ConversationBufferManager(flush_fn, max_turns=99, idle_seconds=0.01, overlap_turns=0)
+    await mgr.add_turn(_turn("t0", "fact zero"))
+
+    await asyncio.wait_for(flushed_event.wait(), timeout=0.5)
+    assert flushed == [("s1", ["t0"])]
+
+
+@pytest.mark.asyncio
+async def test_manager_failed_flush_preserves_pending_for_retry():
+    from landscape.conversation_buffer import ConversationBufferManager
+
+    attempts: list[tuple[str, list[str]]] = []
+
+    async def flush_fn(session_id, window):
+        attempts.append((session_id, [t.turn_id for t in window]))
+        if len(attempts) == 1:
+            raise RuntimeError("temporary flush failure")
+
+    mgr = ConversationBufferManager(flush_fn, max_turns=2, idle_seconds=999, overlap_turns=1)
+    await mgr.add_turn(_turn("t0", "fact zero"))
+    await mgr.add_turn(_turn("t1", "fact one"))
+
+    assert attempts == [("s1", ["t0", "t1"])]
+
+    await mgr.flush_session("s1")
+    assert attempts == [("s1", ["t0", "t1"]), ("s1", ["t0", "t1"])]
