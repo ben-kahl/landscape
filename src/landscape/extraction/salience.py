@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import ollama
+from pydantic import BaseModel
+
+from landscape.config import LLM_PROFILES, settings
+from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
+from landscape.observability.weave_tracing import traced
+
+SALIENCE_CATEGORIES = (
+    "identity",
+    "preference",
+    "decision",
+    "fact",
+    "relationship",
+    "state_change",
+)
+
+_SYSTEM_PROMPT = (
+    "You decide which conversation turns are worth remembering as long-term memory.\n"
+    "You are given NUMBERED turns. Return ONLY the turns that state durable, "
+    "future-relevant information: user identity/role, stable preferences, decisions "
+    "and commitments, stable facts about people/projects/tools, relationships, or "
+    "state changes/corrections.\n"
+    "DISCARD: greetings, acknowledgements, small talk, undecided hypotheticals, "
+    "transient task mechanics, tool chatter, and ephemeral clarifying questions.\n"
+    "For each kept turn return its turn_index (the number shown) and a category from: "
+    f"{', '.join(SALIENCE_CATEGORIES)}. If nothing is worth remembering, return an "
+    "empty list."
+)
+
+
+class SalienceSelectionItem(BaseModel):
+    turn_index: int
+    category: str
+
+
+class SalienceSelection(BaseModel):
+    selected: list[SalienceSelectionItem]
+
+
+@dataclass(frozen=True)
+class SalientItem:
+    turn_id: str
+    text: str
+    category: str
+
+
+def _num_ctx() -> int:
+    profile = LLM_PROFILES.get(settings.llm_profile)
+    return profile.num_ctx if profile is not None else 8192
+
+
+def _render_turns(turns: list[ConversationTurn]) -> str:
+    lines: list[str] = []
+    for i, turn in enumerate(turns, start=1):
+        lines.append(f"[{i}] ({turn.role}) {turn.text.strip()}")
+    return "\n".join(lines)
+
+
+def _call_salience_model(prompt: str) -> SalienceSelection:
+    client = ollama.Client(host=settings.ollama_url)
+    response = client.chat(
+        model=settings.llm_model,
+        messages=[{"role": "user", "content": prompt}],
+        format=SalienceSelection.model_json_schema(),
+        options={"num_ctx": _num_ctx()},
+    )
+    return SalienceSelection.model_validate_json(response.message.content)
+
+
+@traced(name="salience.select")
+def select_salient(turns: list[ConversationTurn]) -> list[SalientItem]:
+    """Return the memory-worthy turns with provenance intact."""
+    eligible = [turn for turn in turns if should_auto_ingest_turn(turn)]
+    if not eligible:
+        return []
+
+    prompt = f"{_SYSTEM_PROMPT}\n\n{_render_turns(eligible)}"
+    selection = _call_salience_model(prompt)
+
+    items: list[SalientItem] = []
+    seen: set[int] = set()
+    for selected in selection.selected:
+        idx = selected.turn_index
+        if idx < 1 or idx > len(eligible) or idx in seen:
+            continue
+        seen.add(idx)
+        turn = eligible[idx - 1]
+        items.append(
+            SalientItem(turn_id=turn.turn_id, text=turn.text, category=selected.category)
+        )
+    return items
