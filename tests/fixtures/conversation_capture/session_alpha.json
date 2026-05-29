@@ -1,0 +1,9 @@
+{
+  "session_id": "demo-alpha",
+  "turns": [
+    {"turn_id": "a1", "role": "user", "text": "I'm Mara, I lead the Atlas project."},
+    {"turn_id": "a2", "role": "assistant", "text": "Nice to meet you, Mara."},
+    {"turn_id": "a3", "role": "user", "text": "Atlas runs on Neo4j for the graph layer."},
+    {"turn_id": "a4", "role": "user", "text": "Priya is the DBA who approved the Neo4j rollout."}
+  ]
+}
