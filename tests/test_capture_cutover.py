@@ -69,3 +69,64 @@ async def test_auto_ingestion_debug_reaches_window_ingest(monkeypatch):
     await mcp_app.flush_conversation_session("s-debug")
 
     assert captured == [True]
+
+
+@pytest.mark.asyncio
+async def test_flush_window_skips_turns_written_by_explicit_memory(monkeypatch):
+    from landscape import mcp_app
+    from landscape.conversation_ingestion import ConversationTurn
+
+    captured: list[list[str]] = []
+
+    def fake_select_salient(window):
+        captured.append([turn.turn_id for turn in window])
+        return []
+
+    async def fake_ingest_conversation_window(session_id, salient, *, debug=False):
+        return None
+
+    monkeypatch.setattr(
+        "landscape.extraction.salience.select_salient",
+        fake_select_salient,
+    )
+    monkeypatch.setattr(
+        "landscape.conversation_ingestion.ingest_conversation_window",
+        fake_ingest_conversation_window,
+    )
+    monkeypatch.setattr(mcp_app, "_EXPLICIT_MEMORY_TURN_KEYS", {("s1", "t1")})
+
+    await mcp_app._flush_window(
+        "s1",
+        [
+            ConversationTurn("s1", "t1", "user", "explicitly remembered"),
+            ConversationTurn("s1", "t2", "user", "auto captured"),
+        ],
+    )
+
+    assert captured == [["t2"]]
+
+
+@pytest.mark.asyncio
+async def test_flush_window_clears_debug_state_when_ingest_fails(monkeypatch):
+    from landscape import mcp_app
+
+    def fake_select_salient(window):
+        return []
+
+    async def fake_ingest_conversation_window(session_id, salient, *, debug=False):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "landscape.extraction.salience.select_salient",
+        fake_select_salient,
+    )
+    monkeypatch.setattr(
+        "landscape.conversation_ingestion.ingest_conversation_window",
+        fake_ingest_conversation_window,
+    )
+    mcp_app._DEBUG_CAPTURE_SESSIONS.add("s-fail")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await mcp_app._flush_window("s-fail", [])
+
+    assert "s-fail" not in mcp_app._DEBUG_CAPTURE_SESSIONS

@@ -73,10 +73,17 @@ async def _flush_window(session_id: str, window: list[Any]) -> None:
     from landscape.conversation_ingestion import ingest_conversation_window
     from landscape.extraction.salience import select_salient
 
-    salient = select_salient(window)
+    window = [
+        turn
+        for turn in window
+        if _turn_key(turn.session_id, turn.turn_id) not in _EXPLICIT_MEMORY_TURN_KEYS
+    ]
     debug = session_id in _DEBUG_CAPTURE_SESSIONS
-    await ingest_conversation_window(session_id, salient, debug=debug)
-    _DEBUG_CAPTURE_SESSIONS.discard(session_id)
+    try:
+        salient = select_salient(window)
+        await ingest_conversation_window(session_id, salient, debug=debug)
+    finally:
+        _DEBUG_CAPTURE_SESSIONS.discard(session_id)
 
 
 class _LazyConversationBufferManager:
