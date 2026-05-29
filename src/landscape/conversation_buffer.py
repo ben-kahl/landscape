@@ -121,6 +121,8 @@ class ConversationBufferManager:
         except Exception:
             buffer.restore_window()
             logger.exception("conversation buffer flush failed for session %s", session_id)
+            if buffer.has_pending():
+                self._arm_idle_timer(session_id)
         else:
             buffer.commit_window()
 

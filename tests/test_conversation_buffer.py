@@ -132,3 +132,23 @@ async def test_manager_cancelled_flush_restores_pending_and_reraises():
 
     await mgr.flush_session("s1")
     assert attempts == [("s1", ["t0", "t1"]), ("s1", ["t0", "t1"])]
+
+
+@pytest.mark.asyncio
+async def test_manager_idle_failure_retries_after_idle_delay():
+    from landscape.conversation_buffer import ConversationBufferManager
+
+    attempts: list[tuple[str, list[str]]] = []
+    succeeded = asyncio.Event()
+
+    async def flush_fn(session_id, window):
+        attempts.append((session_id, [t.turn_id for t in window]))
+        if len(attempts) == 1:
+            raise RuntimeError("temporary flush failure")
+        succeeded.set()
+
+    mgr = ConversationBufferManager(flush_fn, max_turns=99, idle_seconds=0.01, overlap_turns=0)
+    await mgr.add_turn(_turn("t0", "fact zero"))
+
+    await asyncio.wait_for(succeeded.wait(), timeout=0.5)
+    assert attempts == [("s1", ["t0"]), ("s1", ["t0"])]
