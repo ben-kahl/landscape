@@ -87,6 +87,11 @@ async def _flush_window(session_id: str, window: list[Any]) -> None:
     debug = session_id in _DEBUG_CAPTURE_SESSIONS
     try:
         salient = select_salient(window)
+        salient = [
+            item
+            for item in salient
+            if not _is_explicit_memory_turn(session_id, item.turn_id)
+        ]
         await ingest_conversation_window(session_id, salient, debug=debug)
     finally:
         _DEBUG_CAPTURE_SESSIONS.discard(session_id)

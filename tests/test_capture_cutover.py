@@ -108,6 +108,46 @@ async def test_flush_window_skips_turns_written_by_explicit_memory(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_flush_window_rechecks_explicit_memory_after_salience(monkeypatch):
+    from landscape import mcp_app
+    from landscape.conversation_ingestion import ConversationTurn
+    from landscape.extraction.salience import SalientItem
+
+    captured_salient: list[list[str]] = []
+    mcp_app._EXPLICIT_MEMORY_TURN_KEYS.clear()
+    mcp_app._EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.clear()
+
+    def fake_select_salient(window):
+        mcp_app._EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.add(("s1", "t1"))
+        return [
+            SalientItem(turn_id="t1", text="explicitly remembered", category="fact"),
+            SalientItem(turn_id="t2", text="auto captured", category="fact"),
+        ]
+
+    async def fake_ingest_conversation_window(session_id, salient, *, debug=False):
+        captured_salient.append([item.turn_id for item in salient])
+
+    monkeypatch.setattr(
+        "landscape.extraction.salience.select_salient",
+        fake_select_salient,
+    )
+    monkeypatch.setattr(
+        "landscape.conversation_ingestion.ingest_conversation_window",
+        fake_ingest_conversation_window,
+    )
+
+    await mcp_app._flush_window(
+        "s1",
+        [
+            ConversationTurn("s1", "t1", "user", "explicitly remembered"),
+            ConversationTurn("s1", "t2", "user", "auto captured"),
+        ],
+    )
+
+    assert captured_salient == [["t2"]]
+
+
+@pytest.mark.asyncio
 async def test_flush_window_clears_debug_state_when_ingest_fails(monkeypatch):
     from landscape import mcp_app
 
