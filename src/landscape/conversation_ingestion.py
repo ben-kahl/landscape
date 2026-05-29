@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from landscape.observability import create_ingest_log_context
 from landscape.pipeline import IngestResult, ingest
+from landscape.storage import neo4j_store
+
+if TYPE_CHECKING:
+    from landscape.extraction.salience import SalientItem
 
 _TOOL_NOISE_ROLES = frozenset({"tool", "function"})
 
@@ -178,3 +183,37 @@ async def ingest_conversation_turn(
         reason=None,
         ingest_result=result,
     )
+
+
+async def ingest_conversation_window(
+    session_id: str,
+    salient_items: list[SalientItem],
+    *,
+    debug: bool = False,
+) -> IngestResult | None:
+    if not salient_items:
+        return None
+
+    first = salient_items[0]
+    title = f"conversation:{session_id}:window:{first.turn_id}"
+    log = create_ingest_log_context(
+        title=title,
+        source_type="text",
+        session_id=session_id,
+        turn_id=first.turn_id,
+        debug=debug,
+    )
+    result = await ingest(
+        "\n\n".join(item.text for item in salient_items),
+        title,
+        session_id=session_id,
+        turn_id=first.turn_id,
+        debug=debug,
+        log_context=log,
+    )
+
+    for item in salient_items[1:]:
+        turn_element_id, _ = await neo4j_store.merge_turn(session_id, item.turn_id)
+        await neo4j_store.link_document_to_turn(result.doc_id, turn_element_id)
+
+    return result
