@@ -188,3 +188,37 @@ async def test_remember_clears_in_flight_reservation_on_failure(monkeypatch):
         await mcp_app.remember("Alice joined Acme.", "alice", "s1", "t1")
 
     assert mcp_app._is_explicit_memory_turn("s1", "t1") is False
+
+
+@pytest.mark.asyncio
+async def test_auto_ingest_clears_debug_state_when_buffer_append_raises(monkeypatch):
+    from landscape import mcp_app
+
+    async def fake_add_turn(turn):
+        raise RuntimeError("append failed")
+
+    monkeypatch.setattr(mcp_app._buffer_manager, "add_turn", fake_add_turn)
+
+    with pytest.raises(RuntimeError, match="append failed"):
+        await mcp_app._auto_ingest_turn("I use Neo4j.", "s-append", "t1", debug=True)
+
+    assert "s-append" not in mcp_app._DEBUG_CAPTURE_SESSIONS
+
+
+@pytest.mark.asyncio
+async def test_remember_clears_in_flight_reservation_on_cancellation(monkeypatch):
+    from landscape import mcp_app
+
+    mcp_app._EXPLICIT_MEMORY_TURN_KEYS.clear()
+    mcp_app._EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.clear()
+
+    async def fake_ingest(*args, **kwargs):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(mcp_app, "require_current_scope", lambda scope: None)
+    monkeypatch.setattr("landscape.pipeline.ingest", fake_ingest)
+
+    with pytest.raises(asyncio.CancelledError):
+        await mcp_app.remember("Alice joined Acme.", "alice", "s1", "t1")
+
+    assert mcp_app._is_explicit_memory_turn("s1", "t1") is False

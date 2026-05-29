@@ -133,7 +133,12 @@ async def _auto_ingest_turn(
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
     if debug:
         _DEBUG_CAPTURE_SESSIONS.add(session_id)
-    accepted = await _buffer_manager.add_turn(turn)
+    try:
+        accepted = await _buffer_manager.add_turn(turn)
+    except BaseException:
+        if debug:
+            _DEBUG_CAPTURE_SESSIONS.discard(session_id)
+        raise
     if not accepted:
         _DEBUG_CAPTURE_SESSIONS.discard(session_id)
     return accepted
@@ -286,7 +291,7 @@ async def remember(
             turn_id=turn_id,
             debug=debug,
         )
-    except Exception:
+    except BaseException:
         _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.discard(key)
         raise
     _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.discard(key)
