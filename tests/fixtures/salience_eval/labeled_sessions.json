@@ -1,0 +1,47 @@
+[
+  {
+    "session_id": "eval-1",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "morning!"},
+      {"turn_id": "2", "role": "user", "text": "I switched teams; I'm on Search now."},
+      {"turn_id": "3", "role": "assistant", "text": "Got it."}
+    ],
+    "memory_worthy_turn_ids": ["2"]
+  },
+  {
+    "session_id": "eval-2",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "Can you help me debug this?"},
+      {"turn_id": "2", "role": "user", "text": "For database work, I prefer Postgres over MySQL."},
+      {"turn_id": "3", "role": "tool", "text": "<pytest output omitted>"}
+    ],
+    "memory_worthy_turn_ids": ["2"]
+  },
+  {
+    "session_id": "eval-3",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "We decided that Project Atlas will use Neo4j for graph traversal."},
+      {"turn_id": "2", "role": "assistant", "text": "I'll update the plan."},
+      {"turn_id": "3", "role": "user", "text": "Maybe we can revisit UI polish later."}
+    ],
+    "memory_worthy_turn_ids": ["1"]
+  },
+  {
+    "session_id": "eval-4",
+    "turns": [
+      {"turn_id": "1", "role": "assistant", "text": "Which manager should I record?"},
+      {"turn_id": "2", "role": "user", "text": "Dana is my manager on the Platform team."},
+      {"turn_id": "3", "role": "user", "text": "thanks"}
+    ],
+    "memory_worthy_turn_ids": ["2"]
+  },
+  {
+    "session_id": "eval-5",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "I no longer work for Acme; I joined Zylos in April."},
+      {"turn_id": "2", "role": "assistant", "text": "Noted."},
+      {"turn_id": "3", "role": "tool", "text": "{\"status\": \"ok\"}"}
+    ],
+    "memory_worthy_turn_ids": ["1"]
+  }
+]
