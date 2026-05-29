@@ -11,14 +11,13 @@ import json
 import logging
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.fastmcp import FastMCP
 from pydantic import AnyHttpUrl
 
 from landscape.config import settings
-from landscape.conversation_buffer import ConversationBufferManager
-from landscape.conversation_ingestion import ConversationTurn
 from landscape.retrieval.render import (
     build_compact_payload as _build_compact_output,
 )
@@ -63,26 +62,47 @@ mcp = FastMCP(
 )
 _AUTO_INGEST_SEEN_FINGERPRINTS: set[str] = set()
 _EXPLICIT_MEMORY_TURN_KEYS: set[tuple[str, str]] = set()
+_DEBUG_CAPTURE_SESSIONS: set[str] = set()
 
 
 def _turn_key(session_id: str, turn_id: str) -> tuple[str, str]:
     return (session_id, turn_id)
 
 
-async def _flush_window(session_id: str, window: list[ConversationTurn]) -> None:
+async def _flush_window(session_id: str, window: list[Any]) -> None:
     from landscape.conversation_ingestion import ingest_conversation_window
     from landscape.extraction.salience import select_salient
 
     salient = select_salient(window)
-    await ingest_conversation_window(session_id, salient)
+    debug = session_id in _DEBUG_CAPTURE_SESSIONS
+    await ingest_conversation_window(session_id, salient, debug=debug)
+    _DEBUG_CAPTURE_SESSIONS.discard(session_id)
 
 
-_buffer_manager = ConversationBufferManager(
-    _flush_window,
-    max_turns=settings.conversation_window_max_turns,
-    idle_seconds=settings.conversation_idle_flush_seconds,
-    overlap_turns=settings.conversation_window_overlap_turns,
-)
+class _LazyConversationBufferManager:
+    def __init__(self) -> None:
+        self._manager: Any | None = None
+
+    def _get(self) -> Any:
+        if self._manager is None:
+            from landscape.conversation_buffer import ConversationBufferManager
+
+            self._manager = ConversationBufferManager(
+                _flush_window,
+                max_turns=settings.conversation_window_max_turns,
+                idle_seconds=settings.conversation_idle_flush_seconds,
+                overlap_turns=settings.conversation_window_overlap_turns,
+            )
+        return self._manager
+
+    async def add_turn(self, turn: Any) -> bool:
+        return await self._get().add_turn(turn)
+
+    async def flush_session(self, session_id: str) -> None:
+        await self._get().flush_session(session_id)
+
+
+_buffer_manager = _LazyConversationBufferManager()
 
 
 async def _auto_ingest_turn(
@@ -92,11 +112,18 @@ async def _auto_ingest_turn(
     role: str = "user",
     debug: bool = False,
 ):
+    from landscape.conversation_ingestion import ConversationTurn
+
     if _turn_key(session_id, turn_id) in _EXPLICIT_MEMORY_TURN_KEYS:
         return None
 
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
-    return await _buffer_manager.add_turn(turn)
+    if debug:
+        _DEBUG_CAPTURE_SESSIONS.add(session_id)
+    accepted = await _buffer_manager.add_turn(turn)
+    if not accepted:
+        _DEBUG_CAPTURE_SESSIONS.discard(session_id)
+    return accepted
 
 
 def _log_auto_ingestion_failure(task: asyncio.Task) -> None:
