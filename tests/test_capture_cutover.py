@@ -73,6 +73,42 @@ async def test_auto_ingestion_debug_reaches_window_ingest(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_debug_flag_survives_later_rejected_turn(monkeypatch):
+    """A debug turn buffered first must keep the session's debug flag even when a
+    later turn in the same session is rejected by the buffer (regression: the
+    rejected turn used to wipe the session-scoped flag, losing debug ingest)."""
+    from landscape import mcp_app
+
+    captured: list[bool] = []
+
+    def fake_select_salient(window):
+        return []
+
+    async def fake_ingest_conversation_window(session_id, salient, *, debug=False):
+        captured.append(debug)
+
+    monkeypatch.setattr(
+        "landscape.extraction.salience.select_salient",
+        fake_select_salient,
+    )
+    monkeypatch.setattr(
+        "landscape.conversation_ingestion.ingest_conversation_window",
+        fake_ingest_conversation_window,
+    )
+    mcp_app._DEBUG_CAPTURE_SESSIONS.discard("s-mixed")
+
+    # t1 is buffered with debug=True -> session flagged.
+    await mcp_app._auto_ingest_turn("durable fact", "s-mixed", "t1", debug=True)
+    # t2 (non-debug, empty) is rejected by the real buffer; the rejection must
+    # not clear the debug flag set by t1, which is still pending.
+    await mcp_app._auto_ingest_turn("   ", "s-mixed", "t2", debug=False)
+
+    await mcp_app.flush_conversation_session("s-mixed")
+
+    assert captured == [True]
+
+
+@pytest.mark.asyncio
 async def test_flush_window_skips_turns_written_by_explicit_memory(monkeypatch):
     from landscape import mcp_app
     from landscape.conversation_ingestion import ConversationTurn

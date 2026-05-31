@@ -60,7 +60,6 @@ mcp = FastMCP(
         revocation_options=RevocationOptions(enabled=True),
     ),
 )
-_AUTO_INGEST_SEEN_FINGERPRINTS: set[str] = set()
 _EXPLICIT_MEMORY_TURN_KEYS: set[tuple[str, str]] = set()
 _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS: set[tuple[str, str]] = set()
 _DEBUG_CAPTURE_SESSIONS: set[str] = set()
@@ -136,15 +135,19 @@ async def _auto_ingest_turn(
         return None
 
     turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
-    if debug:
+    # Track whether THIS call is the one that flags the session for debug. The
+    # flag is session-scoped but turns flush later as a window, so a rejected
+    # turn must not wipe a flag an earlier pending turn already set.
+    newly_debug = debug and session_id not in _DEBUG_CAPTURE_SESSIONS
+    if newly_debug:
         _DEBUG_CAPTURE_SESSIONS.add(session_id)
     try:
         accepted = await _buffer_manager.add_turn(turn)
     except BaseException:
-        if debug:
+        if newly_debug:
             _DEBUG_CAPTURE_SESSIONS.discard(session_id)
         raise
-    if not accepted:
+    if not accepted and newly_debug:
         _DEBUG_CAPTURE_SESSIONS.discard(session_id)
     return accepted
 
