@@ -20,6 +20,21 @@ FIXTURE = (
 
 @pytest.mark.asyncio
 async def test_multihop_answer_from_captured_conversation(neo4j_driver, qdrant_client):
+    from landscape.embeddings import encoder
+    from landscape.storage import qdrant_store
+
+    # The autouse isolation fixture drops Qdrant collections and the app
+    # lifespan never runs in-process, so recreate the collections and load the
+    # encoder before driving the capture path directly (mirrors the in-process
+    # external tests in test_retrieval_basic.py).
+    existing = await qdrant_store.get_client().get_collections()
+    names = {c.name for c in existing.collections}
+    if qdrant_store.COLLECTION not in names:
+        await qdrant_store.init_collection()
+    if qdrant_store.CHUNKS_COLLECTION not in names:
+        await qdrant_store.init_chunks_collection()
+    encoder.load_model()
+
     data = json.loads(FIXTURE.read_text())
     turns = [
         ConversationTurn(data["session_id"], turn["turn_id"], turn["role"], turn["text"])
