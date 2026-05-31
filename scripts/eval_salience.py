@@ -8,8 +8,14 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sys
+
+# Default to the host-reachable Ollama when run against a local docker stack;
+# the config default (http://ollama:11434) is only resolvable inside the
+# compose network. Matches the other host-run scripts in scripts/.
+os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
