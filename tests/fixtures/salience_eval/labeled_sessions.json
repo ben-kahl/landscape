@@ -43,5 +43,93 @@
       {"turn_id": "3", "role": "tool", "text": "{\"status\": \"ok\"}"}
     ],
     "memory_worthy_turn_ids": ["1"]
+  },
+  {
+    "session_id": "eval-6",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "how's your day going?"},
+      {"turn_id": "2", "role": "assistant", "text": "Doing well, thanks for asking!"},
+      {"turn_id": "3", "role": "user", "text": "haha nice"}
+    ],
+    "memory_worthy_turn_ids": []
+  },
+  {
+    "session_id": "eval-7",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "What if we rewrote everything in Rust someday?"},
+      {"turn_id": "2", "role": "assistant", "text": "Could be interesting, but lots of tradeoffs."},
+      {"turn_id": "3", "role": "user", "text": "Anyway, we're sticking with Go for the backend."}
+    ],
+    "memory_worthy_turn_ids": ["3"]
+  },
+  {
+    "session_id": "eval-8",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "I'm Priya, I'm the lead DBA."},
+      {"turn_id": "2", "role": "user", "text": "I always want database migrations reviewed before they run."},
+      {"turn_id": "3", "role": "assistant", "text": "Understood."}
+    ],
+    "memory_worthy_turn_ids": ["1", "2"]
+  },
+  {
+    "session_id": "eval-9",
+    "turns": [
+      {"turn_id": "1", "role": "assistant", "text": "Do you mean the staging or the prod database?"},
+      {"turn_id": "2", "role": "user", "text": "staging, for now"},
+      {"turn_id": "3", "role": "assistant", "text": "Thanks, looking into it."}
+    ],
+    "memory_worthy_turn_ids": []
+  },
+  {
+    "session_id": "eval-10",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "Atlas is deployed on AWS in us-east-1."},
+      {"turn_id": "2", "role": "assistant", "text": "Got it, noted."}
+    ],
+    "memory_worthy_turn_ids": ["1"]
+  },
+  {
+    "session_id": "eval-11",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "Sam reports to me on the Infra team."},
+      {"turn_id": "2", "role": "assistant", "text": "ok"},
+      {"turn_id": "3", "role": "user", "text": "lol that standup ran way too long today"}
+    ],
+    "memory_worthy_turn_ids": ["1"]
+  },
+  {
+    "session_id": "eval-12",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "Correction: the launch date is now June 15, not May 30."},
+      {"turn_id": "2", "role": "assistant", "text": "Updated."}
+    ],
+    "memory_worthy_turn_ids": ["1"]
+  },
+  {
+    "session_id": "eval-13",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "Here's the snippet I'm testing: def double(x): return x * 2"},
+      {"turn_id": "2", "role": "user", "text": "We standardized on pytest for all of our testing."},
+      {"turn_id": "3", "role": "assistant", "text": "Makes sense."}
+    ],
+    "memory_worthy_turn_ids": ["2"]
+  },
+  {
+    "session_id": "eval-14",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "We've committed to shipping the public API by Q3."},
+      {"turn_id": "2", "role": "user", "text": "I'll own the auth module for that release."},
+      {"turn_id": "3", "role": "assistant", "text": "Sounds good."}
+    ],
+    "memory_worthy_turn_ids": ["1", "2"]
+  },
+  {
+    "session_id": "eval-15",
+    "turns": [
+      {"turn_id": "1", "role": "user", "text": "ok go ahead and run the test suite"},
+      {"turn_id": "2", "role": "assistant", "text": "Running it now."},
+      {"turn_id": "3", "role": "user", "text": "great, thanks"}
+    ],
+    "memory_worthy_turn_ids": []
   }
 ]
