@@ -328,10 +328,38 @@ flushes any pending turns immediately. Both endpoints require the same bearer
 auth as the other FastAPI write endpoints, so hook processes should export:
 
 ```bash
+export LANDSCAPE_HOME="/absolute/path/to/landscape"   # this checkout
 export LANDSCAPE_API_TOKEN="<oauth access token with agent scope>"
 export LANDSCAPE_HOOK_URL="http://127.0.0.1:8000/hooks/conversation-turn"
 export LANDSCAPE_SESSION_END_URL="http://127.0.0.1:8000/hooks/session-end"
 ```
+
+Mint the `LANDSCAPE_API_TOKEN` with the CLI — it issues a long-lived bearer
+token with `agent` scope for non-interactive clients (hooks, scripts) and prints
+it once:
+
+```bash
+landscape auth issue-token --name claude-code-hook --scope agent
+# → prints:  export LANDSCAPE_API_TOKEN="…"   (copy it; it is not recoverable)
+```
+
+Run it against the same `AUTH_DB_PATH` the server uses (for the Docker stack:
+`docker exec <app-container> python3 -m landscape.cli auth issue-token ...`).
+Add `--expires-days N` for a time-limited token. Revoke any issued token with
+`landscape auth disable-client --client-id <id>` (shown in the output and in
+`landscape auth list-clients`). The other tokens come from the interactive MCP
+OAuth flow; `issue-token` is the path for the HTTP hooks.
+
+Export these from your shell profile (e.g. `~/.zshrc`) so they are present in
+every session, not just inside this repo. `LANDSCAPE_HOME` is what lets the
+hooks run from **any** project or as a **global** hook: the example commands
+invoke `"$LANDSCAPE_HOME/scripts/landscape_capture_hook.py"` by absolute path
+rather than a repo-relative one, because clients run hooks with the *current*
+project as the working directory — a relative path only resolves inside this
+checkout. The capture script is dependency-free (Python 3 standard library
+only) and locates its own `src/`, so any `python3` on `PATH` can run it.
+GUI-launched clients that do not inherit your shell environment may need the
+absolute path written directly into the command instead of `$LANDSCAPE_HOME`.
 
 Hook examples live under `hooks/`:
 
@@ -341,8 +369,9 @@ Hook examples live under `hooks/`:
 | Codex | `hooks/codex/config.example.toml`, `hooks/codex/hooks.example.json` | Enable `codex_hooks`, then copy or merge hooks into `.codex/` or `~/.codex/`. Captures prompt and stop hook payloads when Codex exposes them. |
 | OpenCode | `hooks/opencode/landscape-conversation.js` | Copy into `.opencode/plugins/` or `~/.config/opencode/plugins/`. Captures `message.updated` events. |
 
-All examples call `scripts/landscape_capture_hook.py`, which normalizes each
-client's hook payload before posting to Landscape. Keep using MCP `remember`
+All examples call `$LANDSCAPE_HOME/scripts/landscape_capture_hook.py`, which
+normalizes each client's hook payload before posting to Landscape. Keep using
+MCP `remember`
 for deliberate document ingestion; hooks are intended for low-friction
 conversation memory.
 
