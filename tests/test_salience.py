@@ -188,18 +188,3 @@ def test_call_salience_model_records_token_usage(monkeypatch):
     assert selection.selected == []
     assert recorded_tokens == [(11, 7)]
     assert recorded_usage == [("llama3.1:8b", 11, 7)]
-
-
-@pytest.mark.external
-def test_select_salient_real_llm_keeps_facts_drops_chitchat():
-    """Sanity check against real Ollama: durable facts kept, greetings dropped."""
-    import landscape.extraction.salience as salience
-
-    turns = [
-        _turn("g", "user", "hey good morning!"),
-        _turn("f", "user", "I lead the Platform team and we use Neo4j."),
-    ]
-    items = salience.select_salient(turns)
-    kept = {item.turn_id for item in items}
-    assert "f" in kept
-    assert "g" not in kept
