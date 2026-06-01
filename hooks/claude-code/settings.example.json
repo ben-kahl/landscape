@@ -30,7 +30,6 @@
           {
             "type": "command",
             "command": "python3 \"$LANDSCAPE_HOME/scripts/landscape_capture_hook.py\" claude-code",
-            "async": true,
             "timeout": 10
           }
         ]
