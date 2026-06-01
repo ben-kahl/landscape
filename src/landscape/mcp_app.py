@@ -340,6 +340,19 @@ async def flush_conversation_session(session_id: str) -> None:
     await _buffer_manager.flush_session(session_id)
 
 
+def schedule_conversation_flush(session_id: str) -> asyncio.Task:
+    """Run a session flush off the caller's stack.
+
+    A flush runs salience + extraction (multi-second). The session-end hook must
+    not await it inline: the client hook caps each POST at ~2s, and a cancelled
+    request would abort the flush mid-way and restore the buffer. Scheduling it
+    as a background task lets the endpoint return immediately while the flush
+    completes on the server's loop, independent of the client connection."""
+    task = asyncio.create_task(flush_conversation_session(session_id))
+    task.add_done_callback(_log_auto_ingestion_failure)
+    return task
+
+
 @mcp.tool()
 async def add_entity(
     name: str,

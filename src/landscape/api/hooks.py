@@ -70,5 +70,8 @@ async def session_end_hook(
     del auth
     from landscape import mcp_app
 
-    await mcp_app.flush_conversation_session(req.session_id)
+    # Schedule the flush in the background and return immediately. The flush runs
+    # salience + extraction (multi-second); awaiting it here would tie it to the
+    # client hook's short POST timeout, and a client disconnect would cancel it.
+    mcp_app.schedule_conversation_flush(req.session_id)
     return SessionEndHookResponse(flushed=True)
