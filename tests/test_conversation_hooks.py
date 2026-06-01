@@ -103,6 +103,42 @@ def test_adapter_extracts_claude_user_prompt():
     ]
 
 
+def test_adapter_prefers_prompt_over_transcript_on_user_prompt_submit(tmp_path):
+    """Real Claude Code UserPromptSubmit payloads carry transcript_path too. The
+    user's typed prompt is the signal for that event and must win over the prior
+    assistant message already in the transcript — otherwise typed facts (stated
+    in prompts) are silently dropped in favor of re-capturing the last answer."""
+    from landscape.hooks.adapters import extract_turns
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "message": {
+                    "id": "prev-assistant",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "a previous answer"}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    turns = extract_turns(
+        "claude-code",
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "claude-session",
+            "transcript_path": str(transcript),
+            "prompt": "I lead the Platform team and we use Neo4j.",
+        },
+    )
+
+    assert [(turn.role, turn.text) for turn in turns] == [
+        ("user", "I lead the Platform team and we use Neo4j.")
+    ]
+
+
 def test_adapter_extracts_assistant_turn_from_transcript(tmp_path):
     from landscape.hooks.adapters import extract_turns
 

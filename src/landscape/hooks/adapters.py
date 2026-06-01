@@ -32,6 +32,14 @@ def extract_turns(client: str, payload: dict[str, Any]) -> list[HookTurn]:
     if direct is not None:
         return [direct]
 
+    # An explicit prompt (e.g. Claude Code UserPromptSubmit) is the signal for
+    # that event and must win over the transcript: those payloads also carry a
+    # transcript_path, and reading the transcript would capture the *previous*
+    # assistant message instead of the user's just-typed prompt.
+    prompt_turn = _extract_prompt_turn(client, payload)
+    if prompt_turn is not None:
+        return [prompt_turn]
+
     transcript_turn = _extract_transcript_turn(client, payload)
     if transcript_turn is not None:
         return [transcript_turn]
@@ -39,10 +47,6 @@ def extract_turns(client: str, payload: dict[str, Any]) -> list[HookTurn]:
     event_turn = _extract_opencode_event_turn(client, payload)
     if event_turn is not None:
         return [event_turn]
-
-    prompt_turn = _extract_prompt_turn(client, payload)
-    if prompt_turn is not None:
-        return [prompt_turn]
 
     assistant_turn = _extract_assistant_turn(client, payload)
     if assistant_turn is not None:
