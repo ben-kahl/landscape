@@ -6,12 +6,10 @@ belongs elsewhere so the same app can be mounted inside FastAPI.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.fastmcp import FastMCP
@@ -60,126 +58,6 @@ mcp = FastMCP(
         revocation_options=RevocationOptions(enabled=True),
     ),
 )
-_EXPLICIT_MEMORY_TURN_KEYS: set[tuple[str, str]] = set()
-_EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS: set[tuple[str, str]] = set()
-_DEBUG_CAPTURE_SESSIONS: set[str] = set()
-
-
-def _turn_key(session_id: str, turn_id: str) -> tuple[str, str]:
-    return (session_id, turn_id)
-
-
-def _is_explicit_memory_turn(session_id: str, turn_id: str) -> bool:
-    key = _turn_key(session_id, turn_id)
-    return key in _EXPLICIT_MEMORY_TURN_KEYS or key in _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS
-
-
-async def _flush_window(session_id: str, window: list[Any]) -> None:
-    from landscape.conversation_ingestion import ingest_conversation_window
-    from landscape.extraction.salience import select_salient
-
-    window = [
-        turn
-        for turn in window
-        if not _is_explicit_memory_turn(turn.session_id, turn.turn_id)
-    ]
-    debug = session_id in _DEBUG_CAPTURE_SESSIONS
-    try:
-        salient = select_salient(window)
-        salient = [
-            item
-            for item in salient
-            if not _is_explicit_memory_turn(session_id, item.turn_id)
-        ]
-        await ingest_conversation_window(session_id, salient, debug=debug)
-    finally:
-        _DEBUG_CAPTURE_SESSIONS.discard(session_id)
-
-
-class _LazyConversationBufferManager:
-    def __init__(self) -> None:
-        self._manager: Any | None = None
-
-    def _get(self) -> Any:
-        if self._manager is None:
-            from landscape.conversation_buffer import ConversationBufferManager
-
-            self._manager = ConversationBufferManager(
-                _flush_window,
-                max_turns=settings.conversation_window_max_turns,
-                idle_seconds=settings.conversation_idle_flush_seconds,
-                overlap_turns=settings.conversation_window_overlap_turns,
-            )
-        return self._manager
-
-    async def add_turn(self, turn: Any) -> bool:
-        return await self._get().add_turn(turn)
-
-    async def flush_session(self, session_id: str) -> None:
-        await self._get().flush_session(session_id)
-
-
-_buffer_manager = _LazyConversationBufferManager()
-
-
-async def _auto_ingest_turn(
-    text: str,
-    session_id: str,
-    turn_id: str,
-    role: str = "user",
-    debug: bool = False,
-):
-    from landscape.conversation_ingestion import ConversationTurn
-
-    if _is_explicit_memory_turn(session_id, turn_id):
-        return None
-
-    turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
-    # Track whether THIS call is the one that flags the session for debug. The
-    # flag is session-scoped but turns flush later as a window, so a rejected
-    # turn must not wipe a flag an earlier pending turn already set.
-    newly_debug = debug and session_id not in _DEBUG_CAPTURE_SESSIONS
-    if newly_debug:
-        _DEBUG_CAPTURE_SESSIONS.add(session_id)
-    try:
-        accepted = await _buffer_manager.add_turn(turn)
-    except BaseException:
-        if newly_debug:
-            _DEBUG_CAPTURE_SESSIONS.discard(session_id)
-        raise
-    if not accepted and newly_debug:
-        _DEBUG_CAPTURE_SESSIONS.discard(session_id)
-    return accepted
-
-
-def _log_auto_ingestion_failure(task: asyncio.Task) -> None:
-    try:
-        exc = task.exception()
-    except asyncio.CancelledError:
-        return
-    except Exception:
-        logger.exception("Landscape auto-ingestion task failed unexpectedly")
-        return
-
-    if exc is not None:
-        logger.error(
-            "Landscape auto-ingestion task failed",
-            exc_info=(type(exc), exc, exc.__traceback__),
-        )
-
-
-def _schedule_auto_ingestion(
-    text: str,
-    session_id: str,
-    turn_id: str,
-    role: str = "user",
-    debug: bool = False,
-) -> asyncio.Task:
-    task = asyncio.create_task(
-        _auto_ingest_turn(text, session_id, turn_id, role=role, debug=debug)
-    )
-    task.add_done_callback(_log_auto_ingestion_failure)
-    return task
 
 
 
@@ -289,21 +167,13 @@ async def remember(
     require_current_scope("agent")
     from landscape.pipeline import ingest
 
-    key = _turn_key(session_id, turn_id)
-    _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.add(key)
-    try:
-        result = await ingest(
-            text,
-            title,
-            session_id=session_id,
-            turn_id=turn_id,
-            debug=debug,
-        )
-    except BaseException:
-        _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.discard(key)
-        raise
-    _EXPLICIT_MEMORY_IN_FLIGHT_TURN_KEYS.discard(key)
-    _EXPLICIT_MEMORY_TURN_KEYS.add(key)
+    result = await ingest(
+        text,
+        title,
+        session_id=session_id,
+        turn_id=turn_id,
+        debug=debug,
+    )
     output = {
         "doc_id": result.doc_id,
         "entities_created": result.entities_created,
@@ -313,44 +183,6 @@ async def remember(
     }
     return json.dumps(output)
 
-
-@mcp.tool()
-async def capture_turn(
-    session_id: str,
-    turn_id: str,
-    role: str,
-    text: str,
-    debug: bool = False,
-) -> str:
-    """Capture an explicit conversation turn boundary for background ingestion."""
-    require_current_scope("agent")
-    from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
-
-    turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
-    if _is_explicit_memory_turn(session_id, turn_id):
-        return json.dumps({"accepted": False, "scheduled": False})
-    if not should_auto_ingest_turn(turn, seen_fingerprints=set()):
-        return json.dumps({"accepted": False, "scheduled": False})
-
-    _schedule_auto_ingestion(text, session_id, turn_id, role=role, debug=debug)
-    return json.dumps({"accepted": True, "scheduled": True})
-
-
-async def flush_conversation_session(session_id: str) -> None:
-    await _buffer_manager.flush_session(session_id)
-
-
-def schedule_conversation_flush(session_id: str) -> asyncio.Task:
-    """Run a session flush off the caller's stack.
-
-    A flush runs salience + extraction (multi-second). The session-end hook must
-    not await it inline: the client hook caps each POST at ~2s, and a cancelled
-    request would abort the flush mid-way and restore the buffer. Scheduling it
-    as a background task lets the endpoint return immediately while the flush
-    completes on the server's loop, independent of the client connection."""
-    task = asyncio.create_task(flush_conversation_session(session_id))
-    task.add_done_callback(_log_auto_ingestion_failure)
-    return task
 
 
 @mcp.tool()
