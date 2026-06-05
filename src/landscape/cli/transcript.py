@@ -26,7 +26,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Transcript JSONL path. If omitted, hook JSON is read from stdin.",
     )
     parser.add_argument("--session-id", default=None)
-    parser.add_argument("--client", default="claude-code")
+    parser.add_argument(
+        "--client",
+        default="claude-code",
+        help="Transcript client format. Currently only 'claude-code' is supported.",
+    )
     parser.add_argument("--debug", action="store_true")
     parser.set_defaults(func=handle_ingest_transcript)
 

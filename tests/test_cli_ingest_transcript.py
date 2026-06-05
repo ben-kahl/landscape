@@ -32,6 +32,18 @@ def test_resolve_input_reads_hook_json_from_stdin(monkeypatch):
     assert session_id == "hook-sess"
 
 
+def test_resolve_input_accepts_camelcase_hook_keys(monkeypatch):
+    from landscape.cli import transcript
+
+    # Claude Code hook payloads historically use camelCase keys.
+    payload = {"transcriptPath": "/tmp/hook.jsonl", "sessionID": "hook-sess"}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+
+    path, session_id = transcript._resolve_input(_args())
+    assert str(path) == "/tmp/hook.jsonl"
+    assert session_id == "hook-sess"
+
+
 def test_resolve_input_raises_without_path_or_stdin(monkeypatch):
     from landscape.cli import transcript
 
