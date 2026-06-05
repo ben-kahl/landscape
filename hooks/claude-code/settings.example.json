@@ -1,36 +1,13 @@
 {
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$LANDSCAPE_HOME/scripts/landscape_capture_hook.py\" claude-code",
-            "async": true,
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$LANDSCAPE_HOME/scripts/landscape_capture_hook.py\" claude-code",
-            "async": true,
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "SessionEnd": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$LANDSCAPE_HOME/scripts/landscape_capture_hook.py\" claude-code",
-            "timeout": 10
+            "command": "uv run --project \"$LANDSCAPE_HOME\" landscape ingest-transcript",
+            "async": true,
+            "timeout": 60
           }
         ]
       }
