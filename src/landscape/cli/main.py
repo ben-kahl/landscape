@@ -9,7 +9,7 @@ from landscape.cli.runtime import _apply_cli_process_defaults
 
 def _build_parser() -> argparse.ArgumentParser:
     _apply_cli_process_defaults()
-    from landscape.cli import auth, graph, ingest, query, seed, status, wipe
+    from landscape.cli import auth, graph, ingest, query, seed, status, transcript, wipe
 
     parser = argparse.ArgumentParser(
         prog="landscape",
@@ -29,6 +29,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     ingest.register(subparsers)
+    transcript.register(subparsers)
     query.register(subparsers)
     graph.register(subparsers)
     status.register(subparsers)
