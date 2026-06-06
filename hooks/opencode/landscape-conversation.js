@@ -1,3 +1,8 @@
+// OUTDATED / UNSUPPORTED: this hook targeted the removed push-based HTTP capture
+// endpoints (POST /hooks/conversation-turn, /hooks/session-end) and the deleted
+// landscape_capture_hook.py. Automatic capture is currently Claude Code only, via
+// end-of-session transcript-pull (see hooks/claude-code/settings.example.json and
+// `landscape ingest-transcript`). Do not use until an opencode transcript reader lands.
 export const LandscapeConversation = async ({ $, directory }) => {
   // Resolve the capture script from the Landscape checkout, not the project
   // OpenCode happens to be running in, so this plugin works globally and in

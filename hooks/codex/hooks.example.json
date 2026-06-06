@@ -1,4 +1,5 @@
 {
+  "_comment": "OUTDATED / UNSUPPORTED — these codex hooks targeted the removed push-based HTTP capture endpoints. Automatic capture is currently Claude Code only (end-of-session transcript-pull; see hooks/claude-code/settings.example.json and `landscape ingest-transcript`). Do not use until a codex transcript reader lands.",
   "hooks": {
     "UserPromptSubmit": [
       {
