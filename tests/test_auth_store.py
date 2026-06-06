@@ -287,37 +287,25 @@ async def test_load_oauth_token_returns_none_for_expired(auth_db: Path):
     assert row is None
 
 
-# ── Local token issuance ──────────────────────────────────────────────────────
-
-async def test_issue_local_token_creates_validatable_agent_token(auth_db: Path):
-    client_id, access_token = await auth_store.issue_local_token(
-        name="claude-code-hook", scopes=["agent"], expires_at=None
-    )
-    assert client_id
-    assert access_token
-
-    # The minted token must validate through the same path the API uses.
-    row = await auth_store.load_oauth_token_by_access(access_token)
-    assert row is not None
-    assert row["client_id"] == client_id
-    assert row["scopes"] == ["agent"]
-    assert row["expires_at"] is None
-
-    # And it must be registered as a client so admin commands can see/disable it.
-    clients = {c["client_id"]: c for c in await auth_store.list_api_clients()}
-    assert client_id in clients
-    assert clients[client_id]["status"] == "active"
-    assert clients[client_id]["scopes"] == ["agent"]
-
-
 async def test_disabling_client_revokes_its_token(auth_db: Path):
     # disable-client's help says it "revokes access"; that must hold for the
     # bearer token, not just the client's status flag.
-    client_id, access_token = await auth_store.issue_local_token(
-        name="hook", scopes=["agent"]
+    from mcp.shared.auth import OAuthClientInformationFull
+    from pydantic import AnyUrl
+
+    await auth_store.store_oauth_client(
+        OAuthClientInformationFull(
+            client_id="revoke-me", redirect_uris=[AnyUrl("http://localhost/cb")],
+            scope="agent",
+        )
     )
-    assert await auth_store.load_oauth_token_by_access(access_token) is not None
+    await auth_store.store_oauth_token(
+        token_id="tid-revoke", client_id="revoke-me", client_name="revoke-me",
+        access_token="acc-revoke", refresh_token=None,
+        scopes=["agent"], expires_at=None,
+    )
+    assert await auth_store.load_oauth_token_by_access("acc-revoke") is not None
 
-    await auth_store.disable_client(client_id)
+    await auth_store.disable_client("revoke-me")
 
-    assert await auth_store.load_oauth_token_by_access(access_token) is None
+    assert await auth_store.load_oauth_token_by_access("acc-revoke") is None

@@ -20,7 +20,6 @@ multi-hop memory; it is the wrong tool for "is this bearer token valid?".
 from __future__ import annotations
 
 import json
-import secrets
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -368,60 +367,6 @@ async def store_oauth_token(
         await db.commit()
     finally:
         await db.close()
-
-
-async def issue_local_token(
-    *,
-    name: str,
-    scopes: list[str],
-    expires_at: float | None = None,
-) -> tuple[str, str]:
-    """Mint a bearer token for a non-interactive local client (hooks, scripts).
-
-    The OAuth PKCE flow is the only other token source, and it requires an
-    interactive client. This registers a synthetic ``api_clients`` row (so the
-    token shows up in ``landscape auth list-clients`` and can be disabled) and
-    stores an access token against it. Returns ``(client_id, access_token)``.
-    The access token is returned only here — it is not recoverable afterward.
-    """
-    client_id = f"local-{secrets.token_hex(6)}"
-    token_id = uuid4().hex
-    access_token = secrets.token_urlsafe(32)
-    now = _now_iso()
-    db = await _connect()
-    try:
-        # The api_clients row must exist first: oauth_tokens.client_id is a
-        # foreign key and PRAGMA foreign_keys is ON.
-        await db.execute(
-            """
-            INSERT INTO api_clients
-                (client_id, name, description, scopes, status, created_at,
-                 redirect_uris, client_metadata)
-            VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
-            """,
-            (
-                client_id,
-                name,
-                "Local non-interactive token (landscape auth issue-token)",
-                json.dumps(scopes),
-                now,
-                json.dumps([]),
-                json.dumps({}),
-            ),
-        )
-        await db.execute(
-            """
-            INSERT INTO oauth_tokens
-                (token_id, client_id, client_name, access_token, refresh_token,
-                 scopes, expires_at, revoked_at)
-            VALUES (?, ?, ?, ?, NULL, ?, ?, NULL)
-            """,
-            (token_id, client_id, name, access_token, json.dumps(scopes), expires_at),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-    return client_id, access_token
 
 
 async def load_oauth_token_by_access(access_token: str) -> dict[str, Any] | None:

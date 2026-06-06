@@ -68,23 +68,3 @@ async def test_disable_then_enable_round_trips(auth_db):
     rc = await asyncio.to_thread(_run_cli, "auth", "enable-client", "--client-id", "toggle-client")
     assert rc == 0
     assert await auth_store.get_oauth_client("toggle-client") is not None
-
-
-async def test_issue_token_mints_token_that_validates(auth_db, capsys):
-    import re
-
-    rc = await asyncio.to_thread(
-        _run_cli, "auth", "issue-token", "--name", "hook", "--scope", "agent"
-    )
-    assert rc == 0
-    out = capsys.readouterr().out
-
-    # The command prints a ready-to-paste export line; the token in it must
-    # actually validate against the store.
-    match = re.search(r'export LANDSCAPE_API_TOKEN="([^"]+)"', out)
-    assert match, f"no export line in output:\n{out}"
-    token = match.group(1)
-
-    row = await auth_store.load_oauth_token_by_access(token)
-    assert row is not None
-    assert "agent" in row["scopes"]
