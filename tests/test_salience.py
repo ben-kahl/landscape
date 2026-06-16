@@ -1,6 +1,3 @@
-import json
-from types import SimpleNamespace
-
 import pytest
 
 from landscape.conversation_ingestion import ConversationTurn
@@ -146,45 +143,20 @@ def test_select_salient_drops_invalid_categories(monkeypatch):
     assert [i.category for i in items] == ["identity"]
 
 
-def test_call_salience_model_records_token_usage(monkeypatch):
+def test_call_salience_model_uses_structured_completion(monkeypatch):
     import landscape.extraction.salience as salience
 
-    recorded_tokens: list[tuple[int, int]] = []
-    recorded_usage: list[tuple[str, int, int]] = []
+    captured = {}
 
-    class FakeClient:
-        def __init__(self, host: str):
-            self.host = host
+    def fake_complete(prompt, *, model_cls, schema_name):
+        captured["schema_name"] = schema_name
+        captured["model_cls"] = model_cls
+        return salience.SalienceSelection(selected=[])
 
-        def chat(self, **kwargs):
-            assert kwargs["options"]["num_ctx"] == 1234
-            return SimpleNamespace(
-                message=SimpleNamespace(
-                    content=json.dumps({"selected": []}),
-                ),
-                prompt_eval_count=11,
-                eval_count=7,
-            )
+    monkeypatch.setattr(salience.llm_client, "complete_structured", fake_complete)
 
-    monkeypatch.setattr(salience.ollama, "Client", FakeClient)
-    monkeypatch.setattr(salience, "_num_ctx", lambda: 1234)
-    monkeypatch.setattr(
-        salience,
-        "increment_ollama_tokens",
-        lambda *, prompt_tokens, completion_tokens: recorded_tokens.append(
-            (prompt_tokens, completion_tokens)
-        ),
-    )
-    monkeypatch.setattr(
-        salience,
-        "record_token_usage",
-        lambda model, *, prompt_tokens, completion_tokens: recorded_usage.append(
-            (model, prompt_tokens, completion_tokens)
-        ),
-    )
+    result = salience._call_salience_model("prompt")
 
-    selection = salience._call_salience_model("prompt")
-
-    assert selection.selected == []
-    assert recorded_tokens == [(11, 7)]
-    assert recorded_usage == [("llama3.1:8b", 11, 7)]
+    assert result.selected == []
+    assert captured["schema_name"] == "SalienceSelection"
+    assert captured["model_cls"] is salience.SalienceSelection

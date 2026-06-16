@@ -3,13 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-import ollama
 from pydantic import BaseModel
 
-from landscape.config import LLM_PROFILES, settings
 from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
-from landscape.middleware.token_counter import increment_ollama_tokens
-from landscape.observability.weave_tracing import record_token_usage, traced
+from landscape.extraction import llm_client
+from landscape.observability.weave_tracing import traced
 
 SalienceCategory = Literal[
     "identity",
@@ -65,11 +63,6 @@ class SalientItem:
     turn_index: int | None = None
 
 
-def _num_ctx() -> int:
-    profile = LLM_PROFILES.get(settings.llm_profile)
-    return profile.num_ctx if profile is not None else 8192
-
-
 def _render_turns(turns: list[ConversationTurn]) -> str:
     lines: list[str] = []
     for i, turn in enumerate(turns, start=1):
@@ -78,25 +71,9 @@ def _render_turns(turns: list[ConversationTurn]) -> str:
 
 
 def _call_salience_model(prompt: str) -> SalienceSelection:
-    client = ollama.Client(host=settings.ollama_url)
-    response = client.chat(
-        model=settings.llm_model,
-        messages=[{"role": "user", "content": prompt}],
-        format=SalienceSelection.model_json_schema(),
-        options={"num_ctx": _num_ctx()},
+    return llm_client.complete_structured(
+        prompt, model_cls=SalienceSelection, schema_name="SalienceSelection"
     )
-    prompt_tokens = getattr(response, "prompt_eval_count", 0) or 0
-    completion_tokens = getattr(response, "eval_count", 0) or 0
-    increment_ollama_tokens(
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-    )
-    record_token_usage(
-        settings.llm_model,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-    )
-    return SalienceSelection.model_validate_json(response.message.content)
 
 
 @traced(name="salience.select")
