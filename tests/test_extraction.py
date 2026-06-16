@@ -1,6 +1,6 @@
 """Unit tests for LLM extraction wiring of effective_from / effective_until fields.
 
-These tests stub pipeline.llm.extract so no Ollama connection is required.
+These tests stub pipeline.llm.extract so no LLM connection is required.
 They verify that:
   1. effective_from / effective_until on ExtractedRelation are parsed via
      _parse_iso_temporal and forwarded as ISO-8601 UTC strings on the resulting

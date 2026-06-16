@@ -5,7 +5,7 @@ against the live server. Uses httpx.AsyncClient with ASGITransport
 so no real TCP port is needed.
 
 Marked unit (not integration) because these tests only need the auth DB;
-no Neo4j/Qdrant/Ollama required.
+no Neo4j/Qdrant/LLM required.
 """
 from __future__ import annotations
 

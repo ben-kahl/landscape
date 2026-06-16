@@ -148,7 +148,7 @@ def test_top_level_help_does_not_import_runtime_heavy_modules(monkeypatch, capsy
         "landscape.embeddings",
         "landscape.storage",
         "landscape.retrieval",
-        "ollama",
+        "openai",
         "neo4j",
         "qdrant_client",
     )

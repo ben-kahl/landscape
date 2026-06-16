@@ -1,7 +1,7 @@
 import asyncio
 import os
 
-# The docker stack already holds most of the GPU (Ollama + app-gpu's encoder);
+# The docker stack already holds most of the GPU (llama-server + app-gpu's encoder);
 # force the host test process onto CPU torch to avoid CUDA OOM.
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
