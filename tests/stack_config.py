@@ -8,7 +8,6 @@ LIVE_QDRANT_URL = "http://localhost:6333"
 
 DEFAULT_TEST_NEO4J_URI = "bolt://localhost:17687"
 DEFAULT_TEST_QDRANT_URL = "http://localhost:16333"
-DEFAULT_TEST_OLLAMA_URL = "http://localhost:11434"
 
 
 @dataclass(frozen=True)
@@ -16,7 +15,6 @@ class StackConfig:
     neo4j_uri: str
     neo4j_auth: tuple[str, str]
     qdrant_url: str
-    ollama_url: str
 
 
 def resolve_test_stack_config(env: Mapping[str, str]) -> StackConfig:
@@ -27,7 +25,6 @@ def resolve_test_stack_config(env: Mapping[str, str]) -> StackConfig:
             env.get("LANDSCAPE_TEST_NEO4J_PASSWORD", "landscape-test"),
         ),
         qdrant_url=env.get("LANDSCAPE_TEST_QDRANT_URL", DEFAULT_TEST_QDRANT_URL),
-        ollama_url=env.get("LANDSCAPE_TEST_OLLAMA_URL", DEFAULT_TEST_OLLAMA_URL),
     )
 
 

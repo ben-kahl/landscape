@@ -23,7 +23,6 @@ os.environ["NEO4J_URI"] = NEO4J_URI
 os.environ["NEO4J_USER"] = NEO4J_AUTH[0]
 os.environ["NEO4J_PASSWORD"] = NEO4J_AUTH[1]
 os.environ["QDRANT_URL"] = QDRANT_URL
-os.environ["OLLAMA_URL"] = TEST_STACK.ollama_url
 
 
 async def _wait_for_qdrant_collection_absent(

@@ -26,7 +26,6 @@ def test_test_stack_config_threads_environment_overrides():
             "LANDSCAPE_TEST_NEO4J_USER": "tester",
             "LANDSCAPE_TEST_NEO4J_PASSWORD": "secret",
             "LANDSCAPE_TEST_QDRANT_URL": "http://example.test:16333",
-            "LANDSCAPE_TEST_OLLAMA_URL": "http://example.test:11434",
         }
     )
 
@@ -34,7 +33,6 @@ def test_test_stack_config_threads_environment_overrides():
         neo4j_uri="bolt://example.test:17687",
         neo4j_auth=("tester", "secret"),
         qdrant_url="http://example.test:16333",
-        ollama_url="http://example.test:11434",
     )
 
 
@@ -43,7 +41,6 @@ def test_live_stack_wipe_requires_explicit_escape_hatch():
         neo4j_uri=LIVE_NEO4J_URI,
         neo4j_auth=("neo4j", "landscape-dev"),
         qdrant_url=LIVE_QDRANT_URL,
-        ollama_url="http://localhost:11434",
     )
 
     with pytest.raises(RuntimeError, match="LANDSCAPE_ALLOW_LIVE_TEST_WIPE=1"):
@@ -55,7 +52,6 @@ def test_live_stack_wipe_escape_hatch_is_explicit():
         neo4j_uri=LIVE_NEO4J_URI,
         neo4j_auth=("neo4j", "landscape-dev"),
         qdrant_url=LIVE_QDRANT_URL,
-        ollama_url="http://localhost:11434",
     )
 
     assert_safe_to_wipe(config, {"LANDSCAPE_ALLOW_LIVE_TEST_WIPE": "1"})
