@@ -1,6 +1,6 @@
 import pytest
 
-from landscape.config import LLM_PROFILES, LLMProfile, Settings
+from landscape.config import LLM_PROFILES, Settings
 
 pytestmark = pytest.mark.unit
 

@@ -73,7 +73,6 @@ os.environ["NEO4J_URI"] = TEST_STACK.neo4j_uri
 os.environ["NEO4J_USER"] = TEST_STACK.neo4j_auth[0]
 os.environ["NEO4J_PASSWORD"] = TEST_STACK.neo4j_auth[1]
 os.environ["QDRANT_URL"] = TEST_STACK.qdrant_url
-os.environ["OLLAMA_URL"] = TEST_STACK.ollama_url
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from landscape import pipeline  # noqa: E402
