@@ -6,35 +6,47 @@ from pydantic_settings import BaseSettings
 
 @dataclass(frozen=True)
 class LLMProfile:
-    """A named bundle of LLM settings. Switched via LANDSCAPE_LLM_PROFILE.
+    """A named provider/model preset selected via LANDSCAPE_LLM_PROFILE.
 
-    To add a new profile:
-      1. Append an entry to LLM_PROFILES below (any ollama-compatible tag).
-      2. `docker compose --profile gpu-nvidia exec ollama-nvidia ollama pull <tag>`
-      3. Set `LANDSCAPE_LLM_PROFILE=<name>` in .env or the shell.
+    `base_url` + `model` point the OpenAI SDK at either a local llama-server
+    (OpenAI-compatible) or a cloud endpoint. `api_key_env` is the NAME of the
+    env var holding the key (never the secret itself) so the registry can be
+    safely enumerated by a future model-switcher UI. `ctx_size` is the declared
+    context budget; for local llama-server it must match the server's
+    --ctx-size launch flag (wired via LLAMA_CTX_SIZE in docker-compose).
+    """
 
-    `ollama_tag` selects the model and `thinking` is forwarded to Ollama's
-    chat API for thinking-capable models."""
-
-    ollama_tag: str
+    base_url: str
+    model: str
+    api_key_env: str | None = None
     temperature: float = 0.0
-    num_ctx: int = 8192
-    thinking: bool = False
+    no_think: bool = False
+    ctx_size: int = 32768
     notes: str = ""
 
 
-# Seeded with the current default only. Add new profiles here — the user's
-# own additions, model bakeoffs, etc. — instead of editing `llm_model` directly.
 LLM_PROFILES: dict[str, LLMProfile] = {
-    "llama31_8b": LLMProfile(
-        ollama_tag="llama3.1:8b",
-        thinking=False,
-        notes="Phase 2 baseline. Known-good for the killer-demo corpus.",
+    "local_qwen35": LLMProfile(
+        base_url="http://llama-server:8080/v1",
+        model="Qwen3.5-9B-Q4_K_M",
+        api_key_env=None,
+        no_think=True,
+        ctx_size=32768,
+        notes="Default. Qwen 3.5 9B Q4_K_M via llama-server.",
     ),
-    "qwen25_7b_nothink": LLMProfile(
-           ollama_tag="qwen2.5:7b",
-           thinking=False,
-           notes="Qwen 2.5 7B with thinking disabled",
+    "local_llama31": LLMProfile(
+        base_url="http://llama-server:8080/v1",
+        model="llama-3.1-8b",
+        api_key_env=None,
+        ctx_size=32768,
+        notes="A/B incumbent (prior benchmark baseline).",
+    ),
+    "openai_gpt5": LLMProfile(
+        base_url="https://api.openai.com/v1",
+        model="gpt-5.4",
+        api_key_env="OPENAI_API_KEY",
+        ctx_size=32768,
+        notes="Cloud preset. Any OpenAI-compatible endpoint works.",
     ),
 }
 
@@ -52,11 +64,7 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "landscape-dev"
     qdrant_url: str = "http://qdrant:6333"
-    ollama_url: str = "http://ollama:11434"
-    llm_profile: str = "llama31_8b"
-    # Escape hatch: set LANDSCAPE_LLM_MODEL to override the profile's ollama_tag
-    # without touching LLM_PROFILES. Useful for one-off A/B tests.
-    llm_model: str | None = None
+    llm_profile: str = "local_qwen35"
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
     hf_token: str | None = None
 
@@ -95,10 +103,6 @@ class Settings(BaseSettings):
                 f"Known profiles: {available}. Add a new entry to "
                 f"LLM_PROFILES in src/landscape/config.py."
             )
-        if self.llm_model is None:
-            # Resolve the profile's ollama_tag into llm_model so every caller
-            # (pipeline.py, extraction/llm.py) keeps reading a single field.
-            self.llm_model = LLM_PROFILES[self.llm_profile].ollama_tag
 
     @property
     def embedding_dims(self) -> int:
