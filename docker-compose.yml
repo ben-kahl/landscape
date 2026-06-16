@@ -48,17 +48,23 @@ services:
       timeout: 5s
       retries: 10
 
-  ollama-nvidia:
+  llama-server-nvidia:
     profiles: ["gpu-nvidia"]
-    image: ollama/ollama:latest
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    command: >
+      -hf unsloth/Qwen3.5-9B-GGUF:Q4_K_M
+      --host 0.0.0.0 --port 8080
+      --n-gpu-layers -1
+      --ctx-size ${LLAMA_CTX_SIZE:-32768}
+      --alias Qwen3.5-9B-Q4_K_M
     ports:
-      - "11434:11434"
+      - "8080:8080"
     volumes:
-      - ollama_models:/root/.ollama
+      - llama_models:/root/.cache/llama.cpp
     networks:
       default:
         aliases:
-          - ollama
+          - llama-server
     deploy:
       resources:
         reservations:
@@ -66,35 +72,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-
-  ollama-amd:
-    profiles: ["gpu-amd"]
-    image: ollama/ollama:rocm
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_models:/root/.ollama
-    devices:
-      - /dev/kfd
-      - /dev/dri
-    group_add:
-      - video
-    networks:
-      default:
-        aliases:
-          - ollama
-
-  ollama-cpu:
-    profiles: ["cpu"]
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_models:/root/.ollama
-    networks:
-      default:
-        aliases:
-          - ollama
 
   app:
     profiles: ["cpu", "gpu-amd", "host"]
@@ -118,7 +95,6 @@ services:
 volumes:
   neo4j_data:
   qdrant_storage:
-  ollama_models:
-    name: landscape_ollama_models
-    external: true
+  llama_models:
+    name: landscape_llama_models
   landscape_auth_data:
