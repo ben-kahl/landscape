@@ -45,7 +45,7 @@ os.environ.setdefault("NEO4J_URI", NEO4J_URI)
 os.environ.setdefault("NEO4J_USER", NEO4J_USER)
 os.environ.setdefault("NEO4J_PASSWORD", NEO4J_PASSWORD)
 os.environ.setdefault("QDRANT_URL", QDRANT_URL)
-os.environ.setdefault("OLLAMA_URL", os.environ.get("OLLAMA_URL", "http://localhost:11434"))
+os.environ.setdefault("LLM_BASE_URL", os.environ.get("LLM_BASE_URL", "http://localhost:8080/v1"))
 
 # Force CPU torch in this process to avoid CUDA contention with the Docker stack.
 os.environ["CUDA_VISIBLE_DEVICES"] = ""

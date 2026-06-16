@@ -38,7 +38,7 @@ os.environ.setdefault("NEO4J_URI", NEO4J_URI)
 os.environ.setdefault("NEO4J_USER", NEO4J_USER)
 os.environ.setdefault("NEO4J_PASSWORD", NEO4J_PASSWORD)
 os.environ.setdefault("QDRANT_URL", QDRANT_URL)
-os.environ.setdefault("OLLAMA_URL", os.environ.get("OLLAMA_URL", "http://localhost:11434"))
+os.environ.setdefault("LLM_BASE_URL", os.environ.get("LLM_BASE_URL", "http://localhost:8080/v1"))
 
 # Avoid CUDA contention with the Docker stack.
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -215,17 +215,18 @@ def build_agent():
     """Construct the LangChain agent graph with Landscape tools."""
     from langchain.agents import create_agent
     from langchain_core.tools import StructuredTool
-    from langchain_ollama import ChatOllama
+    from langchain_openai import ChatOpenAI
     from pydantic import BaseModel, Field
 
     from landscape.config import settings
+    from landscape.extraction import llm_client
 
-    model_name = settings.llm_model or "llama3.1:8b"
-    ollama_url = settings.ollama_url
-
-    llm = ChatOllama(
-        model=model_name,
-        base_url=ollama_url,
+    profile = llm_client.active_profile()
+    base_url = settings.llm_base_url or profile.base_url
+    llm = ChatOpenAI(
+        model=profile.model,
+        base_url=base_url,
+        api_key=llm_client.resolve_key(profile),
         temperature=0,
     )
 

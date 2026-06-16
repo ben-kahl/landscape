@@ -104,15 +104,15 @@ def _main(args: argparse.Namespace) -> int:
             line, _ = _row(metric, a, b, lower_is_better=True, informational=True)
             lines.append(line)
 
-        ollama_a = baseline["longmemeval"].get("ollama_extraction_tokens", {}).get("avg", 0.0)
-        ollama_b = candidate["longmemeval"].get("ollama_extraction_tokens", {}).get("avg", 0.0)
+        llm_a = baseline["longmemeval"].get("llm_extraction_tokens", {}).get("avg", 0.0)
+        llm_b = candidate["longmemeval"].get("llm_extraction_tokens", {}).get("avg", 0.0)
         line, reg = _row(
-            "ollama_extraction_tokens.avg", ollama_a, ollama_b,
+            "llm_extraction_tokens.avg", llm_a, llm_b,
             lower_is_better=True, threshold=tt,
         )
         lines.append(line)
         if reg:
-            regressions.append("longmemeval.ollama_extraction_tokens.avg")
+            regressions.append("longmemeval.llm_extraction_tokens.avg")
 
         resp_a = baseline["longmemeval"].get("avg_response_tokens", 0.0)
         resp_b = candidate["longmemeval"].get("avg_response_tokens", 0.0)
@@ -180,15 +180,15 @@ def _main(args: argparse.Namespace) -> int:
     if reg:
         regressions.append("token_totals.response_tokens_total")
 
-    oll_a = tt_a.get("ollama_tokens_total", 0)
-    oll_b = tt_b.get("ollama_tokens_total", 0)
+    oll_a = tt_a.get("llm_tokens_total", 0)
+    oll_b = tt_b.get("llm_tokens_total", 0)
     line, reg = _row(
-        "ollama_tokens_total", oll_a, oll_b,
+        "llm_tokens_total", oll_a, oll_b,
         lower_is_better=True, threshold=tt,
     )
     lines.append(line)
     if reg:
-        regressions.append("token_totals.ollama_tokens_total")
+        regressions.append("token_totals.llm_tokens_total")
 
     lines.append("")
 

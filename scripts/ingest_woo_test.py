@@ -44,7 +44,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--neo4j-user", default="neo4j")
     parser.add_argument("--neo4j-password", default="landscape-test")
     parser.add_argument("--qdrant-url", default=TEST_QDRANT_URL)
-    parser.add_argument("--ollama-url", default="http://localhost:11434")
+    parser.add_argument("--llm-base-url", default="http://localhost:8080/v1", dest="llm_base_url")
     parser.add_argument(
         "--wipe",
         action="store_true",
@@ -73,7 +73,7 @@ def configure_environment(args: argparse.Namespace) -> None:
     os.environ["NEO4J_USER"] = args.neo4j_user
     os.environ["NEO4J_PASSWORD"] = args.neo4j_password
     os.environ["QDRANT_URL"] = args.qdrant_url
-    os.environ["OLLAMA_URL"] = args.ollama_url
+    os.environ["LLM_BASE_URL"] = args.llm_base_url
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 

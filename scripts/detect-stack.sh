@@ -27,16 +27,20 @@ has_amd() {
   rocminfo 2>/dev/null | grep -Eiq '^\s*Device Type:\s*GPU'
 }
 
+# NOTE: Only the gpu-nvidia profile currently has a llama-server backend
+# (llama-server-nvidia in docker-compose). CPU and AMD variants are a future
+# follow-up — their compose services still reference Ollama images that no
+# longer exist in the current compose file.
 OS="$(detect_os)"
 PROFILE=""
-OLLAMA_URL="http://ollama:11434"
+LLM_BASE_URL="http://llama-server:8080/v1"
 REASON=""
 
 case "$OS" in
   macos)
     PROFILE="host"
-    OLLAMA_URL="http://host.docker.internal:11434"
-    REASON="macOS: Docker cannot access Metal. Run Ollama natively on the host (brew install ollama && ollama serve)."
+    LLM_BASE_URL="http://host.docker.internal:8080/v1"
+    REASON="macOS: Docker cannot access Metal. Run llama-server natively on the host."
     ;;
   linux|windows)
     if has_nvidia; then
@@ -44,10 +48,10 @@ case "$OS" in
       REASON="NVIDIA GPU detected via nvidia-smi."
     elif has_amd; then
       PROFILE="gpu-amd"
-      REASON="AMD GPU detected. Using ollama/ollama:rocm image."
+      REASON="AMD GPU detected. (NOTE: CPU/AMD llama-server backend is a future follow-up.)"
     else
       PROFILE="cpu"
-      REASON="No GPU detected. Falling back to CPU (slow but functional)."
+      REASON="No GPU detected. Falling back to CPU. (NOTE: CPU llama-server backend is a future follow-up.)"
     fi
     ;;
   *)
@@ -59,7 +63,7 @@ esac
 echo "OS: $OS"
 echo "Profile: $PROFILE"
 echo "Reason: $REASON"
-echo "OLLAMA_URL: $OLLAMA_URL"
+echo "LLM_BASE_URL: $LLM_BASE_URL"
 echo
 
 if [[ ! -f "$ENV_EXAMPLE" ]]; then
@@ -75,14 +79,14 @@ if [[ -f "$ENV_FILE" ]]; then
   echo "Preserving existing .env values (backup: $BACKUP)"
 fi
 
-awk -v profile="$PROFILE" -v ollama="$OLLAMA_URL" '
+awk -v profile="$PROFILE" -v llm_base_url="$LLM_BASE_URL" '
   BEGIN { p=0; o=0 }
   /^COMPOSE_PROFILES=/ { print "COMPOSE_PROFILES=" profile; p=1; next }
-  /^OLLAMA_URL=/       { print "OLLAMA_URL=" ollama; o=1; next }
+  /^LLM_BASE_URL=/     { print "LLM_BASE_URL=" llm_base_url; o=1; next }
                        { print }
   END {
     if (!p) print "COMPOSE_PROFILES=" profile
-    if (!o) print "OLLAMA_URL=" ollama
+    if (!o) print "LLM_BASE_URL=" llm_base_url
   }
 ' "$SOURCE_FILE" > "$ENV_FILE"
 
@@ -92,37 +96,39 @@ echo
 case "$PROFILE" in
   host)
     cat <<'EOF'
-Next steps (macOS host-Ollama mode):
-  1. Install Ollama on the host:   brew install ollama
-  2. Start it:                     ollama serve &
-  3. Pull the model:               ollama pull llama3.1:8b
-  4. Bring up the stack:           docker compose up
+Next steps (macOS host llama-server mode):
+  1. Run llama-server natively on the host (see docs for setup).
+     llama-server auto-downloads the GGUF via -hf flag on first run.
+  2. Bring up the stack:  docker compose up
 EOF
     ;;
   gpu-nvidia)
     cat <<'EOF'
 Next steps (NVIDIA GPU — full acceleration for LLM + embeddings):
   1. Ensure nvidia-container-toolkit is installed on the host.
-  2. docker compose up -d neo4j qdrant ollama-nvidia
-  3. docker compose exec ollama-nvidia ollama pull llama3.1:8b
-  4. docker compose up app-gpu
+  2. docker compose --profile gpu-nvidia up -d
+     llama-server-nvidia auto-downloads the GGUF via -hf on first start
+     (no manual model pull needed).
+  3. docker compose up app-gpu
 EOF
     ;;
   gpu-amd)
     cat <<'EOF'
-Next steps (AMD GPU / ROCm — LLM on GPU, embeddings on CPU):
+Next steps (AMD GPU / ROCm):
+  NOTE: The CPU/AMD llama-server backend is a future follow-up.
+        Only the gpu-nvidia profile currently has a llama-server service.
   1. Ensure your user is in the 'video' and 'render' groups.
-  2. docker compose up -d neo4j qdrant ollama-amd
-  3. docker compose exec ollama-amd ollama pull llama3.1:8b
-  4. docker compose up app
+  2. docker compose up -d neo4j qdrant
+  3. docker compose up app
 EOF
     ;;
   cpu)
     cat <<'EOF'
-Next steps (CPU-only, expect 5-30s per extraction):
-  1. docker compose up -d neo4j qdrant ollama-cpu
-  2. docker compose exec ollama-cpu ollama pull llama3.1:8b
-  3. docker compose up app
+Next steps (CPU-only):
+  NOTE: The CPU llama-server backend is a future follow-up.
+        Only the gpu-nvidia profile currently has a llama-server service.
+  1. docker compose up -d neo4j qdrant
+  2. docker compose up app
 EOF
     ;;
 esac
