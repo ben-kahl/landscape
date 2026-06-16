@@ -10,6 +10,17 @@ from landscape.config import LLM_PROFILES, LLMProfile, settings
 
 _T = TypeVar("_T", bound=BaseModel)
 
+_token_totals = {"prompt_tokens": 0, "completion_tokens": 0}
+
+
+def get_token_totals() -> dict[str, int]:
+    return dict(_token_totals)
+
+
+def reset_token_totals() -> None:
+    _token_totals["prompt_tokens"] = 0
+    _token_totals["completion_tokens"] = 0
+
 
 def active_profile() -> LLMProfile:
     return LLM_PROFILES[settings.llm_profile]
@@ -31,7 +42,8 @@ def resolve_key(profile: LLMProfile) -> str:
 
 def get_client() -> OpenAI:
     p = active_profile()
-    return OpenAI(base_url=p.base_url, api_key=resolve_key(p))
+    base_url = settings.llm_base_url or p.base_url
+    return OpenAI(base_url=base_url, api_key=resolve_key(p))
 
 
 def _messages(prompt: str) -> list[dict]:
@@ -67,6 +79,10 @@ def complete_structured(
                 },
             },
         )
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            _token_totals["prompt_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
+            _token_totals["completion_tokens"] += getattr(usage, "completion_tokens", 0) or 0
         content = resp.choices[0].message.content or ""
         try:
             return model_cls.model_validate_json(content)

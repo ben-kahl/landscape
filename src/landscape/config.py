@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     neo4j_password: str = "landscape-dev"
     qdrant_url: str = "http://qdrant:6333"
     llm_profile: str = "local_qwen35"
+    # Overrides the active profile's base_url at connection time. Host-run CLI
+    # and scripts set this to http://localhost:8080/v1 since the profile's
+    # docker-internal alias (llama-server:8080) is unreachable from the host.
+    llm_base_url: str | None = None
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
     hf_token: str | None = None
 

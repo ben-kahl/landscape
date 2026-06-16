@@ -100,6 +100,7 @@ def test_cli_process_defaults_use_host_service_urls(monkeypatch):
         "NEO4J_URI",
         "QDRANT_URL",
         "CUDA_VISIBLE_DEVICES",
+        "LLM_BASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -108,18 +109,21 @@ def test_cli_process_defaults_use_host_service_urls(monkeypatch):
     assert cli.os.environ["NEO4J_URI"] == "bolt://localhost:7687"
     assert cli.os.environ["QDRANT_URL"] == "http://localhost:6333"
     assert cli.os.environ["CUDA_VISIBLE_DEVICES"] == ""
+    assert cli.os.environ["LLM_BASE_URL"] == "http://localhost:8080/v1"
 
 
 def test_cli_process_defaults_preserve_explicit_environment(monkeypatch):
     monkeypatch.setenv("NEO4J_URI", "bolt://custom-neo4j:7687")
     monkeypatch.setenv("QDRANT_URL", "http://custom-qdrant:6333")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    monkeypatch.setenv("LLM_BASE_URL", "http://custom-llm:8080/v1")
 
     cli._apply_cli_process_defaults()
 
     assert cli.os.environ["NEO4J_URI"] == "bolt://custom-neo4j:7687"
     assert cli.os.environ["QDRANT_URL"] == "http://custom-qdrant:6333"
     assert cli.os.environ["CUDA_VISIBLE_DEVICES"] == "0"
+    assert cli.os.environ["LLM_BASE_URL"] == "http://custom-llm:8080/v1"
 
 
 def test_top_level_help_lists_operator_commands(capsys):

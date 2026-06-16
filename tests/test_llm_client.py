@@ -87,3 +87,60 @@ def test_complete_structured_retries_once_then_raises(monkeypatch):
     with pytest.raises(ValueError):
         llm_client.complete_structured("p", model_cls=Extraction, schema_name="Extraction")
     assert len(recorder) == 2  # one retry
+
+
+def test_get_client_uses_base_url_override(monkeypatch):
+    from landscape.config import settings
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm_client, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(
+        llm_client, "active_profile",
+        lambda: LLMProfile(base_url="http://llama-server:8080/v1", model="m", api_key_env=None),
+    )
+    monkeypatch.setattr(settings, "llm_base_url", "http://localhost:8080/v1")
+
+    llm_client.get_client()
+    assert captured["base_url"] == "http://localhost:8080/v1"
+
+
+def test_get_client_falls_back_to_profile_base_url(monkeypatch):
+    from landscape.config import settings
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm_client, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(
+        llm_client, "active_profile",
+        lambda: LLMProfile(base_url="http://llama-server:8080/v1", model="m", api_key_env=None),
+    )
+    monkeypatch.setattr(settings, "llm_base_url", None)
+
+    llm_client.get_client()
+    assert captured["base_url"] == "http://llama-server:8080/v1"
+
+
+def test_token_totals_accumulate_and_reset(monkeypatch):
+    recorder: list[dict] = []
+    monkeypatch.setattr(
+        llm_client, "get_client", lambda: _fake_client('{"entities":[],"relations":[]}', recorder)
+    )
+    monkeypatch.setattr(
+        llm_client, "active_profile",
+        lambda: LLMProfile(base_url="http://x/v1", model="m", no_think=False),
+    )
+    llm_client.reset_token_totals()
+    llm_client.complete_structured("p", model_cls=Extraction, schema_name="Extraction")
+    llm_client.complete_structured("p", model_cls=Extraction, schema_name="Extraction")
+    totals = llm_client.get_token_totals()
+    assert totals["prompt_tokens"] == 6   # _fake_client returns usage 3/2 per call
+    assert totals["completion_tokens"] == 4
+    llm_client.reset_token_totals()
+    assert llm_client.get_token_totals() == {"prompt_tokens": 0, "completion_tokens": 0}
