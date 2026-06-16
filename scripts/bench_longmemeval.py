@@ -24,7 +24,7 @@ Databases:
     Override targets via LANDSCAPE_TEST_NEO4J_URI / LANDSCAPE_TEST_QDRANT_URL.
 
 Usage:
-    # Requires the test stack up (Neo4j, Qdrant) + Ollama, and AWS credentials.
+    # Requires the test stack up (Neo4j, Qdrant) + llama-server, and AWS credentials.
     uv run python scripts/bench_longmemeval.py \\
         --data tests/longmemeval_s_cleaned.json \\
         --n-questions 10 \\
