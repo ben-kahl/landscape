@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings
 
 @dataclass(frozen=True)
 class LLMProfile:
-    """A named provider/model preset selected via LANDSCAPE_LLM_PROFILE.
+    """A named provider/model preset selected via the LLM_PROFILE env var.
 
     `base_url` + `model` point the OpenAI SDK at either a local llama-server
     (OpenAI-compatible) or a cloud endpoint. `api_key_env` is the NAME of the

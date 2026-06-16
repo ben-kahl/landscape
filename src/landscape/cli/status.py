@@ -56,7 +56,7 @@ async def handle_status(args: argparse.Namespace) -> int:
         "config": {
             "neo4j_uri": settings.neo4j_uri,
             "qdrant_url": settings.qdrant_url,
-            "llm_base_url": llm_client.active_profile().base_url,
+            "llm_base_url": settings.llm_base_url or llm_client.active_profile().base_url,
             "llm_model": llm_client.active_profile().model,
             "embedding_model": settings.embedding_model,
         },
