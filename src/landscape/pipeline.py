@@ -6,10 +6,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
-from landscape.config import settings
 from landscape.embeddings import encoder
 from landscape.entities import resolver
-from landscape.extraction import llm
+from landscape.extraction import llm, llm_client
 from landscape.extraction.chunker import chunk_text
 from landscape.extraction.entity_type_coercion import coerce_entity_type
 from landscape.extraction.llm import _parse_iso_temporal
@@ -258,7 +257,7 @@ async def ingest(
                     source_doc=title,
                     confidence=g["confidence"],
                     doc_element_id=doc_id,
-                    model=settings.llm_model,
+                    model=llm_client.active_profile().model,
                     session_id=session_id,
                     turn_id=turn_id,
                     subtype=g["subtype"],
@@ -276,7 +275,7 @@ async def ingest(
                 await neo4j_store.link_entity_to_doc(
                     entity_element_id=canonical_id,
                     doc_element_id=doc_id,
-                    model=settings.llm_model,
+                    model=llm_client.active_profile().model,
                 )
                 entities_reinforced += 1
 
