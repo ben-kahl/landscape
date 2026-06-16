@@ -94,66 +94,15 @@ async def test_metrics_endpoint_structure(token_app):
     body = r.json()
     assert "since" in body
     assert "endpoints" in body
-    assert "ollama" in body
     ep = body["endpoints"]["/query"]
     assert ep["request_count"] == 1
     assert "avg_response_tokens" in ep
 
 
 @pytest.mark.unit
-async def test_increment_ollama_tokens():
-    from landscape.middleware.token_counter import (
-        get_usage,
-        increment_ollama_tokens,
-        reset_counters,
-    )
+async def test_reset_clears_all_state(token_app):
+    from landscape.middleware.token_counter import get_usage, reset_counters
 
-    reset_counters()
-    increment_ollama_tokens(prompt_tokens=100, completion_tokens=50)
-    usage = get_usage()
-    assert usage["ollama"]["total_prompt_tokens"] == 100
-    assert usage["ollama"]["total_completion_tokens"] == 50
-
-
-@pytest.mark.unit
-async def test_reset_clears_all_state():
-    from landscape.middleware.token_counter import (
-        get_usage,
-        increment_ollama_tokens,
-        reset_counters,
-    )
-
-    increment_ollama_tokens(prompt_tokens=999, completion_tokens=999)
     reset_counters()
     usage = get_usage()
     assert usage["endpoints"] == {}
-    assert usage["ollama"]["total_prompt_tokens"] == 0
-
-
-@pytest.mark.unit
-async def test_extract_increments_ollama_tokens(monkeypatch):
-    import ollama as _ollama_lib
-
-    from landscape.extraction import llm
-    from landscape.middleware import token_counter
-
-    class _MockMsg:
-        content = '{"entities":[],"relations":[]}'
-
-    class _MockResponse:
-        prompt_eval_count = 42
-        eval_count = 17
-        message = _MockMsg()
-
-    class _MockClient:
-        def chat(self, **kwargs):
-            return _MockResponse()
-
-    monkeypatch.setattr(_ollama_lib, "Client", lambda host: _MockClient())
-    token_counter.reset_counters()
-
-    llm.extract("some text")
-
-    usage = token_counter.get_usage()
-    assert usage["ollama"]["total_prompt_tokens"] == 42
-    assert usage["ollama"]["total_completion_tokens"] == 17

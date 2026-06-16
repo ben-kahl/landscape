@@ -16,10 +16,6 @@ _MONITORED_PATHS = {"/query", "/ingest"}
 
 _lock = threading.Lock()
 _usage: dict[str, dict[str, int]] = {}
-_ollama: dict[str, int] = {
-    "total_prompt_tokens": 0,
-    "total_completion_tokens": 0,
-}
 
 
 class TokenCounterMiddleware(BaseHTTPMiddleware):
@@ -54,12 +50,6 @@ class TokenCounterMiddleware(BaseHTTPMiddleware):
         )
 
 
-def increment_ollama_tokens(*, prompt_tokens: int, completion_tokens: int) -> None:
-    with _lock:
-        _ollama["total_prompt_tokens"] += prompt_tokens
-        _ollama["total_completion_tokens"] += completion_tokens
-
-
 def get_usage() -> dict:
     with _lock:
         endpoints: dict[str, dict] = {}
@@ -74,15 +64,12 @@ def get_usage() -> dict:
         return {
             "since": _STARTUP_TIME,
             "endpoints": endpoints,
-            "ollama": dict(_ollama),
         }
 
 
 def reset_counters() -> None:
     with _lock:
         _usage.clear()
-        _ollama["total_prompt_tokens"] = 0
-        _ollama["total_completion_tokens"] = 0
 
 
 metrics_router = APIRouter()
