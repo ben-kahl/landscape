@@ -12,7 +12,7 @@ dependencies = [
     "qdrant-client>=1.12",
     "sentence-transformers>=3.3",
     "einops>=0.8",
-    "ollama>=0.4",
+    "openai>=1.50",
     "rich>=15.0",
     "tiktoken>=0.7",
     "pydantic>=2.10",
@@ -22,7 +22,6 @@ dependencies = [
     "langchain-huggingface>=0.1",
     "mcp>=1.0,<2.0",
     "langchain>=1.2.15",
-    "langchain-ollama>=1.1.0",
     "aiosqlite>=0.20",
     "markitdown[docx,pdf,pptx,xls,xlsx]>=0.1.3",
 ]
