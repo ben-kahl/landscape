@@ -376,12 +376,14 @@ async def load_oauth_token_by_access(access_token: str) -> dict[str, Any] | None
     try:
         cursor = await db.execute(
             """
-            SELECT token_id, client_id, client_name, access_token, refresh_token,
-                   scopes, expires_at
-            FROM oauth_tokens
-            WHERE access_token = ?
-              AND revoked_at IS NULL
-              AND (expires_at IS NULL OR expires_at > ?)
+            SELECT t.token_id, t.client_id, t.client_name, t.access_token,
+                   t.refresh_token, t.scopes, t.expires_at
+            FROM oauth_tokens t
+            JOIN api_clients c ON c.client_id = t.client_id
+            WHERE t.access_token = ?
+              AND t.revoked_at IS NULL
+              AND (t.expires_at IS NULL OR t.expires_at > ?)
+              AND c.status = 'active'
             """,
             (access_token, now),
         )

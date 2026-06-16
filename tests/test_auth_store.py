@@ -285,3 +285,27 @@ async def test_load_oauth_token_returns_none_for_expired(auth_db: Path):
     )
     row = await auth_store.load_oauth_token_by_access("acc4")
     assert row is None
+
+
+async def test_disabling_client_revokes_its_token(auth_db: Path):
+    # disable-client's help says it "revokes access"; that must hold for the
+    # bearer token, not just the client's status flag.
+    from mcp.shared.auth import OAuthClientInformationFull
+    from pydantic import AnyUrl
+
+    await auth_store.store_oauth_client(
+        OAuthClientInformationFull(
+            client_id="revoke-me", redirect_uris=[AnyUrl("http://localhost/cb")],
+            scope="agent",
+        )
+    )
+    await auth_store.store_oauth_token(
+        token_id="tid-revoke", client_id="revoke-me", client_name="revoke-me",
+        access_token="acc-revoke", refresh_token=None,
+        scopes=["agent"], expires_at=None,
+    )
+    assert await auth_store.load_oauth_token_by_access("acc-revoke") is not None
+
+    await auth_store.disable_client("revoke-me")
+
+    assert await auth_store.load_oauth_token_by_access("acc-revoke") is None

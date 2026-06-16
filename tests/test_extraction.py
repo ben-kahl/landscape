@@ -25,6 +25,7 @@ def _make_pipeline_stubs(monkeypatch, extraction: Extraction) -> dict:
     completes.
     """
     from landscape import pipeline
+    from landscape.extraction.chunker import Chunk
 
     captured: dict = {}
 
@@ -75,6 +76,9 @@ def _make_pipeline_stubs(monkeypatch, extraction: Extraction) -> dict:
     monkeypatch.setattr(pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions)
     monkeypatch.setattr(pipeline, "persist_assertion_and_maybe_promote", fake_persist)
     monkeypatch.setattr(pipeline, "coerce_rel_type", lambda rel_type: (rel_type, 1.0))
+    # Stub chunking so the real HF tokenizer (chunker._get_splitter) never loads —
+    # keeps these unit tests hermetic and offline-safe.
+    monkeypatch.setattr(pipeline, "chunk_text", lambda text: [Chunk(index=0, text=text)])
     monkeypatch.setattr(
         pipeline.encoder,
         "embed_documents",

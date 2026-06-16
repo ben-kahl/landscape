@@ -1,2 +1,7 @@
+# OUTDATED / UNSUPPORTED: the codex capture hooks targeted the removed push-based
+# HTTP endpoints and the deleted landscape_capture_hook.py. Automatic capture is
+# currently Claude Code only, via end-of-session transcript-pull (see
+# hooks/claude-code/settings.example.json and `landscape ingest-transcript`).
+# Do not use until a codex transcript reader lands. See README.
 [features]
 codex_hooks = true

@@ -28,9 +28,20 @@ async def merge_document(content_hash: str, title: str, source_type: str) -> tup
 
 
 def _validate_id_segment(name: str, value: str) -> None:
-    """Reject ':' in session_id / turn_id to avoid Turn.id ambiguity."""
+    """Reject ':' in session_id to avoid Turn.id composite ambiguity."""
     if ":" in value:
         raise ValueError(f"{name} must not contain ':' (got {value!r})")
+
+
+def _sanitize_id_segment(value: str) -> str:
+    """Make a value safe to embed in the Turn.id composite.
+
+    Turn.id is ``f"{session_id}:{turn_id}"``, so ':' is a reserved delimiter.
+    Synthetic hook turn ids (``client:event:digest``) and some external
+    message ids carry colons; replace them with '_' for the composite key.
+    The raw value is still stored on ``Turn.turn_id`` for provenance.
+    """
+    return value.replace(":", "_")
 
 
 def build_default_conversation_title(
@@ -94,11 +105,16 @@ async def merge_turn(
     role: str | None = None,
     summary: str | None = None,
 ) -> tuple[str, bool]:
-    """MERGE on Turn.id = f'{session_id}:{turn_id}'."""
+    """MERGE on Turn.id = f'{session_id}:{sanitize(turn_id)}'.
+
+    The raw ``turn_id`` is preserved on the ``Turn.turn_id`` property; only the
+    composite key is sanitized so colon-bearing synthetic/external ids don't
+    break the delimiter.
+    """
     _validate_id_segment("session_id", session_id)
-    _validate_id_segment("turn_id", turn_id)
+    safe_turn_id = _sanitize_id_segment(turn_id)
     await merge_conversation(session_id)
-    composite_id = f"{session_id}:{turn_id}"
+    composite_id = f"{session_id}:{safe_turn_id}"
     driver = get_driver()
     now = datetime.now(UTC).isoformat()
     async with driver.session() as session:

@@ -402,6 +402,7 @@ async def test_ingest_idempotent(http_client):
 @pytest.mark.unit
 async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     from landscape import pipeline
+    from landscape.extraction.chunker import Chunk
     from landscape.extraction.schema import ExtractedEntity, ExtractedRelation
     from landscape.memory_graph.service import PersistenceResult
 
@@ -469,6 +470,9 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
         fake_persist_assertion_and_maybe_promote,
     )
     monkeypatch.setattr(pipeline, "coerce_rel_type", lambda rel_type: (rel_type, 1.0))
+    # Stub chunking so the real HF tokenizer (chunker._get_splitter) never loads —
+    # keeps this unit test hermetic and offline-safe.
+    monkeypatch.setattr(pipeline, "chunk_text", lambda text: [Chunk(index=0, text=text)])
     monkeypatch.setattr(
         pipeline.encoder,
         "embed_documents",

@@ -5,6 +5,19 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.unit
+def test_sanitize_id_segment_replaces_colons_with_underscores():
+    from landscape.storage.neo4j_documents import _sanitize_id_segment
+
+    # Synthetic hook turn ids use ':' as a separator (client:event:digest),
+    # which collides with the Turn.id composite delimiter.
+    assert (
+        _sanitize_id_segment("claude-code:UserPromptSubmit:eaa0a109074a")
+        == "claude-code_UserPromptSubmit_eaa0a109074a"
+    )
+    assert _sanitize_id_segment("no-colons-here") == "no-colons-here"
+
+
+@pytest.mark.unit
 def test_build_default_conversation_title_includes_agent_timestamp_and_hash():
     from landscape.storage.neo4j_store import build_default_conversation_title
 
@@ -120,14 +133,38 @@ async def test_merge_turn_id_format(http_client, neo4j_driver):
 
 
 @pytest.mark.asyncio
-async def test_merge_turn_rejects_colon_in_id(http_client, neo4j_driver):
+async def test_merge_turn_rejects_colon_in_session_id(http_client, neo4j_driver):
     from landscape.storage import neo4j_store
 
+    # session_id is the left side of the Turn.id composite delimiter, so a
+    # colon there would make the composite ambiguous: reject it loudly.
     with pytest.raises(ValueError, match="session_id"):
         await neo4j_store.merge_turn("foo:bar", "t1")
 
-    with pytest.raises(ValueError, match="turn_id"):
-        await neo4j_store.merge_turn("conv-tc5", "t:bad")
+
+@pytest.mark.asyncio
+async def test_merge_turn_sanitizes_colon_in_turn_id(http_client, neo4j_driver):
+    from landscape.storage import neo4j_store
+
+    # Synthetic hook turn ids contain ':' (client:event:digest). Storage must
+    # sanitize them for the composite key rather than raising, while keeping
+    # the raw turn_id as a property for provenance.
+    raw_turn_id = "claude-code:UserPromptSubmit:eaa0a109074a"
+    turn_eid, created = await neo4j_store.merge_turn("conv-tc5", raw_turn_id)
+    assert created is True
+
+    async with neo4j_driver.session() as session:
+        result = await session.run(
+            "MATCH (t:Turn) WHERE elementId(t) = $eid "
+            "RETURN t.id AS id, t.turn_id AS turn_id, t.session_id AS session_id",
+            eid=turn_eid,
+        )
+        record = await result.single()
+
+    assert record is not None
+    assert record["id"] == "conv-tc5:claude-code_UserPromptSubmit_eaa0a109074a"
+    assert record["turn_id"] == raw_turn_id, "raw turn_id preserved for provenance"
+    assert record["session_id"] == "conv-tc5"
 
 
 @pytest.mark.asyncio

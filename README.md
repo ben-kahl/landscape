@@ -44,7 +44,7 @@ graph TD
     Qdrant["Qdrant\nvector search"]
     Ollama["Ollama\nLLM + embeddings (local)"]
 
-    Client -->|"search / remember / capture_turn\nadd_entity / add_relation / graph_query / status"| MCP
+    Client -->|"search / remember / lookup_entity\nadd_entity / add_relation / graph_query / status"| MCP
     MCP --> API
     API --> Pipeline
     Pipeline --> Neo4j
@@ -62,10 +62,10 @@ graph TD
 | Hybrid retrieval | Vector search, graph expansion, merge/rank, recency and distance scoring |
 | Temporal memory | Bitemporal facts: separate system time (`ingested_at` / `system_until`) and valid time (`effective_from` / `effective_until`); supersession-aware retrieval for functional conflicts; `as_of` time-travel queries; negative-polarity facts stored and surfaced distinctly |
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
-| Agent access | MCP server, conversation history, LangChain retriever, FastAPI, local CLI |
+| Agent access | MCP server, conversation history, automatic conversation capture, LangChain retriever, FastAPI, local CLI |
 | Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval smoke harness |
 | Phase 3.5 hardening | In progress: ranking tuning, LongMemEval beyond smoke, resolver improvements |
-| Phase 4 | Next: expanded ingestion (richer document inputs, drive integrations, multimodal) |
+| Phase 4 | In progress: automatic conversation capture; next expanded ingestion includes richer document inputs, drive integrations, and multimodal |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design rationale, data
 model details, benchmark notes, and known limitations.
@@ -211,8 +211,8 @@ the token until it expires, then refresh automatically.
 
 **Scopes.** Two scopes are available:
 
-- `agent` — memory tools: `search`, `remember`, `add_entity`, `add_relation`,
-  `status`, `conversation_history`, `capture_turn`
+- `agent` — memory tools: `search`, `remember`, `lookup_entity`, `add_entity`,
+  `add_relation`, `status`, `conversation_history`
 - `graph_query` — raw read-only Cypher via the `/query` endpoint
 
 Clients default to `agent` scope. Request `graph_query` explicitly if needed.
@@ -262,7 +262,6 @@ process-per-client; prefer HTTP unless you need stdio.
 | `search` | Hybrid retrieve: vector similarity + graph traversal up to N hops; accepts `as_of` (ISO-8601) for time-travel queries against historical fact state |
 | `remember` | Ingest free-text; extract entities and relations into the graph |
 | `lookup_entity` | Entity-centered lookup: returns canonical entity + aliases + live facts for an exact name/alias match, or a miss + substring-match suggestions otherwise; supports `as_of` and `include_historical` |
-| `capture_turn` | Capture an explicit conversation turn and schedule background ingestion |
 | `add_entity` | Directly assert a named entity with type and provenance |
 | `add_relation` | Assert a typed edge between two entities; supersedes functional conflicts |
 | `graph_query` | Run a read-only Cypher query against the knowledge graph |
@@ -286,50 +285,59 @@ long-running ingestion of large PDFs, run the command in the background
 (`&` / `nohup` / the agent harness's background-shell feature) so the agent
 is not blocked on extraction.
 
-### Automatic MCP conversation ingestion
+### Automatic conversation capture (end of session)
 
-Landscape can ingest eligible MCP conversation turns through `capture_turn`.
-Clients provide `session_id`, `turn_id`, `role`, and `text`; Landscape validates
-the turn, schedules ingestion in the background, and returns immediately. The
-foreground agent interaction is not blocked on extraction, embedding, Neo4j
-writes, or Qdrant writes.
-
-`capture_turn` is the MCP-first safety-net path for ordinary conversation
-memory. `remember` remains the explicit synchronous document-ingest tool, and
-`add_entity` / `add_relation` remain the precise structured write-back tools.
-
-### Agent hook conversation capture
-
-Most agent MCP clients do not stream their full conversation transcript to MCP
-servers automatically. For set-and-forget capture, use the checked-in hook
-adapters to call Landscape's HTTP hook receiver:
-
-```text
-POST http://127.0.0.1:8000/hooks/conversation-turn
-```
-
-The receiver accepts `{client, session_id, turn_id, role, text}`, applies the
-same eligibility checks as `capture_turn`, and schedules background ingestion.
-It requires the same bearer auth as the other FastAPI write endpoints, so hook
-processes should export:
+Landscape captures conversation memory by reading a client's **completed
+transcript at the end of a session** — not by streaming turns live. During a
+session the agent already holds the conversation in its own context, so there is
+nothing to gain from live capture; at `SessionEnd` a single hook hands the
+transcript to the CLI, which parses it, runs one local Ollama salience pass over
+the conversation, and ingests the selected turns:
 
 ```bash
-export LANDSCAPE_API_TOKEN="<oauth access token with agent scope>"
-export LANDSCAPE_HOOK_URL="http://127.0.0.1:8000/hooks/conversation-turn"
+landscape ingest-transcript            # reads the SessionEnd hook JSON (transcript_path) on stdin
+landscape ingest-transcript PATH       # or pass a transcript file directly (manual / backfill)
 ```
 
-Hook examples live under `hooks/`:
+This reuses the same direct-to-database runtime as `landscape ingest` and the
+MCP server, so it needs **no HTTP endpoint and no API token** — only local
+access to the Neo4j / Qdrant / Ollama stack on their configured ports. The
+salience pass selects original turns (it does not rewrite them); selected turns
+are ingested as one document and linked back to every contributing
+`Conversation` / `Turn` for provenance.
 
-| Client | Files | Notes |
-|---|---|---|
-| Claude Code | `hooks/claude-code/settings.example.json` | Copy or merge into `.claude/settings.json` or `~/.claude/settings.json`. Captures user prompts and the latest assistant transcript turn on `Stop`. |
-| Codex | `hooks/codex/config.example.toml`, `hooks/codex/hooks.example.json` | Enable `codex_hooks`, then copy or merge hooks into `.codex/` or `~/.codex/`. Captures prompt and stop hook payloads when Codex exposes them. |
-| OpenCode | `hooks/opencode/landscape-conversation.js` | Copy into `.opencode/plugins/` or `~/.config/opencode/plugins/`. Captures `message.updated` events. |
+`remember` remains the explicit synchronous document-ingest tool, and
+`add_entity` / `add_relation` remain the precise structured write-back tools.
 
-All examples call `scripts/landscape_capture_hook.py`, which normalizes each
-client's hook payload before posting to Landscape. Keep using MCP `remember`
-for deliberate document ingestion; hooks are intended for low-friction
-conversation memory.
+**Setup (Claude Code).** Copy or merge `hooks/claude-code/settings.example.json`
+into `.claude/settings.json` or `~/.claude/settings.json`; it registers one
+`SessionEnd` hook that runs `landscape ingest-transcript`. Set `LANDSCAPE_HOME`
+to this checkout (e.g. in `~/.zshrc`) so the hook resolves regardless of which
+project Claude Code is running in:
+
+```bash
+export LANDSCAPE_HOME="/absolute/path/to/landscape"   # this checkout
+```
+
+> **Note:** Automatic capture is currently supported for **Claude Code only**.
+> The **opencode** (`hooks/opencode/`) and **codex** (`hooks/codex/`) example
+> hooks are **outdated**: they targeted the removed push-based HTTP endpoints and
+> do not yet have transcript-pull readers. They are unsupported until those
+> readers land.
+
+### Conversation capture provenance and privacy
+
+Automatic capture stores only turns selected as durable, future-relevant memory:
+identity/role, stable preferences, decisions, stable facts, relationships, and
+state changes or corrections. Greetings, acknowledgements, tool chatter, task
+mechanics, and transient clarifying questions are discarded before graph
+ingestion.
+
+Everything captured lands in your local Neo4j/Qdrant stack with
+`Conversation` / `Turn` provenance. The salience and extraction calls use local
+Ollama, so capture does not require cloud APIs, but captured facts are still
+persistent local memory. Treat enabling the capture hook as an explicit choice
+to store useful conversation facts.
 
 ## Reproduce the benchmarks
 

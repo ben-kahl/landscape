@@ -6,7 +6,6 @@ belongs elsewhere so the same app can be mounted inside FastAPI.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import asdict
@@ -59,62 +58,6 @@ mcp = FastMCP(
         revocation_options=RevocationOptions(enabled=True),
     ),
 )
-_AUTO_INGEST_SEEN_FINGERPRINTS: set[str] = set()
-_EXPLICIT_MEMORY_TURN_KEYS: set[tuple[str, str]] = set()
-
-
-def _turn_key(session_id: str, turn_id: str) -> tuple[str, str]:
-    return (session_id, turn_id)
-
-
-async def _auto_ingest_turn(
-    text: str,
-    session_id: str,
-    turn_id: str,
-    role: str = "user",
-    debug: bool = False,
-):
-    from landscape.conversation_ingestion import ConversationTurn, ingest_conversation_turn
-
-    if _turn_key(session_id, turn_id) in _EXPLICIT_MEMORY_TURN_KEYS:
-        return None
-
-    turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
-    return await ingest_conversation_turn(
-        turn,
-        seen_fingerprints=_AUTO_INGEST_SEEN_FINGERPRINTS,
-        debug=debug,
-    )
-
-
-def _log_auto_ingestion_failure(task: asyncio.Task) -> None:
-    try:
-        exc = task.exception()
-    except asyncio.CancelledError:
-        return
-    except Exception:
-        logger.exception("Landscape auto-ingestion task failed unexpectedly")
-        return
-
-    if exc is not None:
-        logger.error(
-            "Landscape auto-ingestion task failed",
-            exc_info=(type(exc), exc, exc.__traceback__),
-        )
-
-
-def _schedule_auto_ingestion(
-    text: str,
-    session_id: str,
-    turn_id: str,
-    role: str = "user",
-    debug: bool = False,
-) -> asyncio.Task:
-    task = asyncio.create_task(
-        _auto_ingest_turn(text, session_id, turn_id, role=role, debug=debug)
-    )
-    task.add_done_callback(_log_auto_ingestion_failure)
-    return task
 
 
 
@@ -231,7 +174,6 @@ async def remember(
         turn_id=turn_id,
         debug=debug,
     )
-    _EXPLICIT_MEMORY_TURN_KEYS.add(_turn_key(session_id, turn_id))
     output = {
         "doc_id": result.doc_id,
         "entities_created": result.entities_created,
@@ -241,27 +183,6 @@ async def remember(
     }
     return json.dumps(output)
 
-
-@mcp.tool()
-async def capture_turn(
-    session_id: str,
-    turn_id: str,
-    role: str,
-    text: str,
-    debug: bool = False,
-) -> str:
-    """Capture an explicit conversation turn boundary for background ingestion."""
-    require_current_scope("agent")
-    from landscape.conversation_ingestion import ConversationTurn, should_auto_ingest_turn
-
-    turn = ConversationTurn(session_id=session_id, turn_id=turn_id, role=role, text=text)
-    if _turn_key(session_id, turn_id) in _EXPLICIT_MEMORY_TURN_KEYS:
-        return json.dumps({"accepted": False, "scheduled": False})
-    if not should_auto_ingest_turn(turn, seen_fingerprints=set()):
-        return json.dumps({"accepted": False, "scheduled": False})
-
-    _schedule_auto_ingestion(text, session_id, turn_id, role=role, debug=debug)
-    return json.dumps({"accepted": True, "scheduled": True})
 
 
 @mcp.tool()

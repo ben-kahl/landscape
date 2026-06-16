@@ -1,25 +1,13 @@
 {
   "hooks": {
-    "UserPromptSubmit": [
+    "SessionEnd": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python scripts/landscape_capture_hook.py claude-code",
+            "command": "uv run --project \"$LANDSCAPE_HOME\" landscape ingest-transcript",
             "async": true,
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python scripts/landscape_capture_hook.py claude-code",
-            "async": true,
-            "timeout": 10
+            "timeout": 60
           }
         ]
       }

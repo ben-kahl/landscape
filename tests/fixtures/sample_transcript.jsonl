@@ -1,0 +1,6 @@
+{"type":"user","uuid":"u1","sessionId":"sess-fixture","message":{"role":"user","content":"My name is Ben and I lead the Landscape project."}}
+{"type":"assistant","uuid":"a1","sessionId":"sess-fixture","message":{"role":"assistant","content":[{"type":"text","text":"Got it, Ben — noted that you lead Landscape."}]}}
+{"type":"summary","summary":"chat about names","uuid":"s1"}
+not valid json at all
+{"type":"user","uuid":"u2","sessionId":"sess-fixture","message":{"role":"user","content":"   "}}
+{"type":"assistant","uuid":"a2","sessionId":"sess-fixture","message":{"role":"assistant","content":[{"type":"tool_use","name":"bash","input":{"cmd":"ls"}}]}}

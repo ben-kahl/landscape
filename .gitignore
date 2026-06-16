@@ -19,3 +19,7 @@ CLAUDE.md
 REVIEW.md
 Makefile
 logs/
+
+# Session design artifacts (specs/plans) — keep on disk, never commit
+/.*-spec.md
+/.*-plan.md
