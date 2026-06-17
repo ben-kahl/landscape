@@ -23,6 +23,11 @@ os.environ["NEO4J_URI"] = NEO4J_URI
 os.environ["NEO4J_USER"] = NEO4J_AUTH[0]
 os.environ["NEO4J_PASSWORD"] = NEO4J_AUTH[1]
 os.environ["QDRANT_URL"] = QDRANT_URL
+# The profile's base_url is the docker-internal llama-server alias, unreachable
+# from the host test process. Point host-run tests at the published port (mirrors
+# how NEO4J_URI/QDRANT_URL are rewritten above). setdefault so an explicit
+# export still wins.
+os.environ.setdefault("LLM_BASE_URL", "http://localhost:8080/v1")
 
 
 async def _wait_for_qdrant_collection_absent(
