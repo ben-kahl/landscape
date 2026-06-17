@@ -55,12 +55,19 @@ services:
       -hf unsloth/Qwen3.5-9B-GGUF:Q4_K_M
       --host 0.0.0.0 --port 8080
       --n-gpu-layers -1
-      --ctx-size ${LLAMA_CTX_SIZE:-32768}
+      --ctx-size ${LLAMA_CTX_SIZE:-16384}
+      --parallel 1
       --alias Qwen3.5-9B-Q4_K_M
+    environment:
+      # llama.cpp -hf downloads via the HF hub; without a token HF throttles
+      # anonymous pulls to a crawl. Interpolated from .env.
+      HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "8080:8080"
     volumes:
-      - llama_models:/root/.cache/llama.cpp
+      # llama.cpp -hf caches under the HF hub dir, NOT ~/.cache/llama.cpp, so the
+      # volume must mount here or the model re-downloads on every recreate.
+      - llama_models:/root/.cache/huggingface
     networks:
       default:
         aliases:
