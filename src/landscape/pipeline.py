@@ -203,7 +203,15 @@ async def ingest(
                     "subtype": etype_subtype,
                     "confidence": entity.confidence,
                     "encode_text": f"{entity.name.strip()} ({canonical_entity_type})",
+                    "aliases": set(),
                 }
+            # Union LLM-extracted alternate surface forms across every mention in
+            # the group. The prompt consolidates aliases onto one entity, so this
+            # field is the only alias signal for a single ingest — without it the
+            # resolver path never fires and the graph gets zero aliases.
+            grouped[key]["aliases"].update(
+                alias.strip() for alias in entity.aliases if alias and alias.strip()
+            )
         log.emit(
             "entity_grouping_completed",
             grouped_entities=len(grouped),
@@ -281,6 +289,14 @@ async def ingest(
 
             if turn_element_id is not None:
                 await neo4j_store.link_entity_to_turn(canonical_id, turn_element_id)
+
+            # Persist LLM-extracted aliases as :Alias-[:SAME_AS]->canonical. Skip
+            # the surface form itself (an alias equal to the name is a no-op).
+            for alias_text in g["aliases"]:
+                if alias_text.lower() != g["name"].strip().lower():
+                    await neo4j_store.merge_alias(
+                        canonical_id, alias_text, title, g["confidence"]
+                    )
 
             if surface_name in ambiguous_entity_names:
                 pass

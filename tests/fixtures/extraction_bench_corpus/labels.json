@@ -1,0 +1,232 @@
+{
+  "01_coreference.md": {
+    "axis": "coreference",
+    "entities": [
+      {"name": "Maya Chen", "type": "Person", "aliases": []},
+      {"name": "Helios Robotics", "type": "Organization", "aliases": []},
+      {"name": "Platform Team", "type": "Organization", "aliases": []},
+      {"name": "Diego Ortega", "type": "Person", "aliases": []},
+      {"name": "Vision Team", "type": "Organization", "aliases": []},
+      {"name": "Austin", "type": "Location", "aliases": []},
+      {"name": "VP of Engineering", "type": "Role", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Maya Chen", "rel_type": "WORKS_FOR", "object": "Helios Robotics"},
+      {"subject": "Maya Chen", "rel_type": "LEADS", "object": "Platform Team"},
+      {"subject": "Maya Chen", "rel_type": "HAS_TITLE", "object": "VP of Engineering"},
+      {"subject": "Diego Ortega", "rel_type": "REPORTS_TO", "object": "Maya Chen"},
+      {"subject": "Diego Ortega", "rel_type": "LEADS", "object": "Vision Team"},
+      {"subject": "Vision Team", "rel_type": "LOCATED_IN", "object": "Austin"}
+    ],
+    "negated_relations": [],
+    "supersession": []
+  },
+  "02_implicit_relations.md": {
+    "axis": "implicit",
+    "entities": [
+      {"name": "Beacon", "type": "Project", "aliases": []},
+      {"name": "Priya Raman", "type": "Person", "aliases": []},
+      {"name": "Kafka", "type": "Technology", "aliases": []},
+      {"name": "Fleet Operations", "type": "Organization", "aliases": []},
+      {"name": "Rahul Mehta", "type": "Person", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Priya Raman", "rel_type": "LEADS", "object": "Beacon"},
+      {"subject": "Beacon", "rel_type": "USES", "object": "Kafka"},
+      {"subject": "Beacon", "rel_type": "BELONGS_TO", "object": "Fleet Operations"},
+      {"subject": "Rahul Mehta", "rel_type": "MEMBER_OF", "object": "Fleet Operations"},
+      {"subject": "Priya Raman", "rel_type": "MEMBER_OF", "object": "Fleet Operations"},
+      {"subject": "Rahul Mehta", "rel_type": "MAINTAINS", "object": "Beacon"}
+    ],
+    "negated_relations": [],
+    "supersession": []
+  },
+  "03_distractor_noise.md": {
+    "axis": "distractor",
+    "entities": [
+      {"name": "Tomás Vidal", "type": "Person", "aliases": []},
+      {"name": "SafetyNet", "type": "Project", "aliases": []},
+      {"name": "Vision Team", "type": "Organization", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Tomás Vidal", "rel_type": "CREATED", "object": "SafetyNet"},
+      {"subject": "Vision Team", "rel_type": "USES", "object": "SafetyNet"}
+    ],
+    "negated_relations": [],
+    "supersession": []
+  },
+  "04_aliases_acronyms.md": {
+    "axis": "aliases",
+    "entities": [
+      {"name": "Platform Reliability Group", "type": "Organization", "aliases": ["PRG"]},
+      {"name": "Wei Zhang", "type": "Person", "aliases": ["Wei"]},
+      {"name": "Continuous Delivery Pipeline", "type": "Project", "aliases": ["CDP"]},
+      {"name": "Kubernetes", "type": "Technology", "aliases": []},
+      {"name": "VP of Engineering", "type": "Role", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Platform Reliability Group", "rel_type": "REPORTS_TO", "object": "VP of Engineering"},
+      {"subject": "Wei Zhang", "rel_type": "LEADS", "object": "Platform Reliability Group"},
+      {"subject": "Continuous Delivery Pipeline", "rel_type": "BELONGS_TO", "object": "Platform Reliability Group"},
+      {"subject": "Continuous Delivery Pipeline", "rel_type": "DEPENDS_ON", "object": "Kubernetes"}
+    ],
+    "negated_relations": [],
+    "supersession": []
+  },
+  "05_aliases_titles.md": {
+    "axis": "aliases",
+    "entities": [
+      {"name": "Elena Vasquez", "type": "Person", "aliases": ["Elena", "Dr. Vasquez"]},
+      {"name": "Aurora", "type": "Project", "aliases": []},
+      {"name": "Atlas", "type": "Technology", "aliases": ["Atlas engine"]},
+      {"name": "principal scientist", "type": "Role", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Elena Vasquez", "rel_type": "MEMBER_OF", "object": "Aurora"},
+      {"subject": "Elena Vasquez", "rel_type": "HAS_TITLE", "object": "principal scientist"},
+      {"subject": "Elena Vasquez", "rel_type": "CREATED", "object": "Atlas"},
+      {"subject": "Aurora", "rel_type": "USES", "object": "Atlas"}
+    ],
+    "negated_relations": [],
+    "supersession": []
+  },
+  "06_supersession_employment.md": {
+    "axis": "supersession",
+    "entities": [
+      {"name": "Alice Nguyen", "type": "Person", "aliases": []},
+      {"name": "Acme Corp", "type": "Organization", "aliases": ["Acme"]},
+      {"name": "Zylos Industries", "type": "Organization", "aliases": ["Zylos"]},
+      {"name": "Payments Team", "type": "Organization", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Alice Nguyen", "rel_type": "WORKS_FOR", "object": "Acme Corp"},
+      {"subject": "Alice Nguyen", "rel_type": "WORKS_FOR", "object": "Zylos Industries"},
+      {"subject": "Alice Nguyen", "rel_type": "LEADS", "object": "Payments Team"}
+    ],
+    "negated_relations": [],
+    "supersession": [
+      {"subject": "Alice Nguyen", "rel_type": "WORKS_FOR", "old_object": "Acme Corp", "new_object": "Zylos Industries"}
+    ]
+  },
+  "07_supersession_location.md": {
+    "axis": "supersession",
+    "entities": [
+      {"name": "Sam Castellano", "type": "Person", "aliases": []},
+      {"name": "Boston", "type": "Location", "aliases": []},
+      {"name": "Austin", "type": "Location", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Sam Castellano", "rel_type": "LIVES_IN", "object": "Boston"},
+      {"subject": "Sam Castellano", "rel_type": "LIVES_IN", "object": "Austin"}
+    ],
+    "negated_relations": [],
+    "supersession": [
+      {"subject": "Sam Castellano", "rel_type": "LIVES_IN", "old_object": "Boston", "new_object": "Austin"}
+    ]
+  },
+  "08_negation.md": {
+    "axis": "negation",
+    "entities": [
+      {"name": "Bob Tanaka", "type": "Person", "aliases": []},
+      {"name": "Globex", "type": "Organization", "aliases": []},
+      {"name": "Vision Team", "type": "Organization", "aliases": []},
+      {"name": "Carol Diaz", "type": "Person", "aliases": []},
+      {"name": "Helios Robotics", "type": "Organization", "aliases": ["Helios"]},
+      {"name": "Beacon", "type": "Project", "aliases": []},
+      {"name": "Priya", "type": "Person", "aliases": []},
+      {"name": "SafetyNet", "type": "Project", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Carol Diaz", "rel_type": "WORKS_FOR", "object": "Helios Robotics"},
+      {"subject": "Carol Diaz", "rel_type": "OWNS", "object": "SafetyNet"},
+      {"subject": "Priya", "rel_type": "LEADS", "object": "Beacon"}
+    ],
+    "negated_relations": [
+      {"subject": "Bob Tanaka", "rel_type": "WORKS_FOR", "object": "Globex"},
+      {"subject": "Bob Tanaka", "rel_type": "MEMBER_OF", "object": "Vision Team"},
+      {"subject": "Carol Diaz", "rel_type": "LEADS", "object": "Beacon"}
+    ],
+    "supersession": []
+  },
+  "09_quantified_facts.md": {
+    "axis": "quantified",
+    "entities": [
+      {"name": "Austin", "type": "Location", "aliases": []},
+      {"name": "Project Sentinel", "type": "Project", "aliases": ["Sentinel"]},
+      {"name": "PyTorch", "type": "Technology", "aliases": []},
+      {"name": "Diego", "type": "Person", "aliases": []},
+      {"name": "budget", "type": "Concept", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Project Sentinel", "rel_type": "USES", "object": "PyTorch"},
+      {"subject": "Diego", "rel_type": "APPROVED", "object": "budget"}
+    ],
+    "negated_relations": [],
+    "supersession": []
+  },
+  "10_vector_twin.md": {
+    "axis": "vector_twin",
+    "entities": [
+      {"name": "Aurora Systems", "type": "Organization", "aliases": []},
+      {"name": "Project Aurora", "type": "Project", "aliases": []},
+      {"name": "PostgreSQL", "type": "Technology", "aliases": []},
+      {"name": "Priya Raman", "type": "Person", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Project Aurora", "rel_type": "USES", "object": "PostgreSQL"},
+      {"subject": "Project Aurora", "rel_type": "DEPENDS_ON", "object": "Aurora Systems"},
+      {"subject": "Priya Raman", "rel_type": "LEADS", "object": "Project Aurora"}
+    ],
+    "negated_relations": [
+      {"subject": "Priya Raman", "rel_type": "WORKS_FOR", "object": "Aurora Systems"}
+    ],
+    "supersession": []
+  },
+  "11_mixed_dense.md": {
+    "axis": "mixed",
+    "entities": [
+      {"name": "Anika Patel", "type": "Person", "aliases": []},
+      {"name": "CTO", "type": "Role", "aliases": []},
+      {"name": "Vision Team", "type": "Organization", "aliases": []},
+      {"name": "Diego Ortega", "type": "Person", "aliases": []},
+      {"name": "TensorFlow", "type": "Technology", "aliases": []},
+      {"name": "Reliability Council", "type": "Organization", "aliases": []},
+      {"name": "Wei Zhang", "type": "Person", "aliases": []},
+      {"name": "perception stack", "type": "Concept", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Anika Patel", "rel_type": "HAS_TITLE", "object": "CTO"},
+      {"subject": "Diego Ortega", "rel_type": "LEADS", "object": "Vision Team"},
+      {"subject": "Vision Team", "rel_type": "USES", "object": "TensorFlow"},
+      {"subject": "Vision Team", "rel_type": "MAINTAINS", "object": "perception stack"},
+      {"subject": "Anika Patel", "rel_type": "CREATED", "object": "Reliability Council"},
+      {"subject": "Wei Zhang", "rel_type": "LEADS", "object": "Reliability Council"},
+      {"subject": "Reliability Council", "rel_type": "REPORTS_TO", "object": "Anika Patel"}
+    ],
+    "negated_relations": [],
+    "supersession": []
+  },
+  "12_mixed_supersession_alias.md": {
+    "axis": "supersession",
+    "entities": [
+      {"name": "Rahul Mehta", "type": "Person", "aliases": ["Rahul"]},
+      {"name": "Priya Raman", "type": "Person", "aliases": []},
+      {"name": "Wei Zhang", "type": "Person", "aliases": []},
+      {"name": "Fleet Operations", "type": "Organization", "aliases": []},
+      {"name": "Platform Reliability Group", "type": "Organization", "aliases": ["PRG"]},
+      {"name": "Beacon", "type": "Project", "aliases": []}
+    ],
+    "relations": [
+      {"subject": "Rahul Mehta", "rel_type": "REPORTS_TO", "object": "Priya Raman"},
+      {"subject": "Rahul Mehta", "rel_type": "REPORTS_TO", "object": "Wei Zhang"},
+      {"subject": "Rahul Mehta", "rel_type": "MEMBER_OF", "object": "Platform Reliability Group"},
+      {"subject": "Rahul Mehta", "rel_type": "MAINTAINS", "object": "Beacon"}
+    ],
+    "negated_relations": [
+      {"subject": "Rahul Mehta", "rel_type": "MEMBER_OF", "object": "Fleet Operations"}
+    ],
+    "supersession": [
+      {"subject": "Rahul Mehta", "rel_type": "REPORTS_TO", "old_object": "Priya Raman", "new_object": "Wei Zhang"}
+    ]
+  }
+}

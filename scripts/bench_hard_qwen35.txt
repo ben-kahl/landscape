@@ -1,0 +1,26 @@
+
+=== Layer A: local_qwen35 (Qwen3.5-9B-Q4_K_M) — 176.7s ===
+Axis            Ent P  Ent R Ent F1   Rel P  Rel R Rel F1
+---------------------------------------------------------
+aliases         62.5%  55.6%  58.8%   16.7%  12.5%  14.3%
+coreference    100.0%  85.7%  92.3%   71.4%  83.3%  76.9%
+distractor     100.0% 100.0% 100.0%   50.0%  50.0%  50.0%
+implicit        83.3% 100.0%  90.9%   42.9%  50.0%  46.2%
+mixed           85.7%  75.0%  80.0%   71.4%  71.4%  71.4%
+negation        75.0%  75.0%  75.0%   33.3%  33.3%  33.3%
+quantified      75.0%  60.0%  66.7%   40.0% 100.0%  57.1%
+supersession    86.7% 100.0%  92.9%   88.9%  88.9%  88.9%
+vector_twin    100.0% 100.0% 100.0%   66.7%  66.7%  66.7%
+---------------------------------------------------------
+OVERALL         83.6%  82.3%  82.9%   57.1%  60.9%  58.9%
+negation recall: 80.0% | alias-extraction recall: 58.3%
+Loading weights:   0%|          | 0/112 [00:00<?, ?it/s]Loading weights: 100%|██████████| 112/112 [00:00<00:00, 11171.25it/s]
+
+=== Layer B (end-to-end, test stack) ===
+alias persistence recall: 58.3% (12 pairs)
+supersession correct: 3/3
+  Alice Nguyen WORKS_FOR Acme Corp->Zylos Industries: OK ([('zylos industries', True), ('acme corp', False)])
+  Sam Castellano LIVES_IN Boston->Austin: OK ([('austin', True), ('boston', False)])
+  Rahul Mehta REPORTS_TO Priya Raman->Wei Zhang: OK ([('wei zhang', True), ('priya raman', False)])
+
+Wrote scripts/bench_hard_qwen35.json
