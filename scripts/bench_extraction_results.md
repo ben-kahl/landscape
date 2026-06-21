@@ -24,11 +24,27 @@ writes (extraction-only); env pointed at the test stack regardless.
   (substring fuzzy match + over-extraction), not a Qwen regression; the resolver
   and functional-supersession logic absorb duplicate/extra edges downstream.
 
+## Caveat — limited discriminating power
+
+This corpus is a **demo fixture, not a discriminating quality benchmark.** Total
+ground truth is **32 entities / 15 relations** across 393 words of explicit,
+one-fact-per-sentence prose, scored with case-insensitive substring matching.
+That is too small, too easy, and too lenient to separate two capable 8B+ models:
+both saturate the ceiling, missing the *same* 2 entities and 1 relation. The
+identical recall (93.8% / 93.3%) is the proof — it is a ceiling, not a tie.
+
+So this run does **not** support a "Qwen ≈ Llama in quality" claim. It supports a
+narrower one: Qwen 3.5 extraction works correctly end-to-end and is not grossly
+worse than the baseline *on easy inputs*. The only statistically robust finding
+here is **speed** (Qwen 1.7× faster). A real quality comparison needs a harder,
+larger corpus (coreference, implicit relations, distractors, aliasing, temporal
+supersession) with exact/span scoring — tracked as a follow-up.
+
 ## Decision
 
-No gate. Qwen 3.5 9B remains the default: identical recall and quality within
-~3 pp of the Llama 3.1 baseline, at 1.7× the throughput. Llama 3.1 stays
-available as the `local_llama31` A/B profile.
+No gate. Qwen 3.5 9B remains the default: it extracts correctly end-to-end, is no
+worse than the baseline on this (easy) corpus, and runs 1.7× faster. Llama 3.1
+stays available as the `local_llama31` A/B profile.
 
 Raw run output: `bench_extraction_qwen35.txt`, `bench_extraction_llama31.txt`.
 
