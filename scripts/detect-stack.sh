@@ -27,10 +27,11 @@ has_amd() {
   rocminfo 2>/dev/null | grep -Eiq '^\s*Device Type:\s*GPU'
 }
 
-# NOTE: Only the gpu-nvidia profile currently has a llama-server backend
-# (llama-server-nvidia in docker-compose). CPU and AMD variants are a future
-# follow-up — their compose services still reference Ollama images that no
-# longer exist in the current compose file.
+# Each profile has a matching llama-server backend in docker-compose:
+#   gpu-nvidia -> llama-server-nvidia (server-cuda)
+#   gpu-amd    -> llama-server-amd    (server-rocm)
+#   cpu        -> llama-server-cpu    (server, CPU build)
+#   host       -> host-run llama-server (e.g. macOS Metal), no container.
 OS="$(detect_os)"
 PROFILE=""
 LLM_BASE_URL="http://llama-server:8080/v1"
@@ -48,10 +49,10 @@ case "$OS" in
       REASON="NVIDIA GPU detected via nvidia-smi."
     elif has_amd; then
       PROFILE="gpu-amd"
-      REASON="AMD GPU detected. (NOTE: CPU/AMD llama-server backend is a future follow-up.)"
+      REASON="AMD GPU detected via rocminfo."
     else
       PROFILE="cpu"
-      REASON="No GPU detected. Falling back to CPU. (NOTE: CPU llama-server backend is a future follow-up.)"
+      REASON="No GPU detected. Falling back to CPU (functional but slow)."
     fi
     ;;
   *)
@@ -114,21 +115,20 @@ EOF
     ;;
   gpu-amd)
     cat <<'EOF'
-Next steps (AMD GPU / ROCm):
-  NOTE: The CPU/AMD llama-server backend is a future follow-up.
-        Only the gpu-nvidia profile currently has a llama-server service.
-  1. Ensure your user is in the 'video' and 'render' groups.
-  2. docker compose up -d neo4j qdrant
-  3. docker compose up app
+Next steps (AMD GPU / ROCm — LLM on GPU):
+  1. Ensure your user is in the 'video' and 'render' groups and ROCm is
+     installed (rocminfo works).
+  2. docker compose --profile gpu-amd up -d
+     llama-server-amd auto-downloads the GGUF via -hf on first start
+     (no manual model pull needed).
 EOF
     ;;
   cpu)
     cat <<'EOF'
-Next steps (CPU-only):
-  NOTE: The CPU llama-server backend is a future follow-up.
-        Only the gpu-nvidia profile currently has a llama-server service.
-  1. docker compose up -d neo4j qdrant
-  2. docker compose up app
+Next steps (CPU-only — functional but slow, expect minutes per chunk):
+  1. docker compose --profile cpu up -d
+     llama-server-cpu auto-downloads the GGUF via -hf on first start
+     (no manual model pull needed).
 EOF
     ;;
 esac

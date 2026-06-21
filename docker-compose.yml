@@ -16,6 +16,28 @@ x-app-base: &app-base
     - neo4j
     - qdrant
 
+# Shared, backend-agnostic llama-server config. Each backend (cuda/cpu/rocm)
+# merges this and adds only its image + command (the --n-gpu-layers line) +
+# device reservation. Keeps the -hf model, --no-mmproj, --n-predict, ctx-size
+# and the `llama-server` network alias identical across profiles so they can't
+# drift. Only one backend runs at a time (profiles are mutually exclusive), so
+# they can all bind host port 8080.
+x-llama-base: &llama-base
+  environment:
+    # llama.cpp -hf downloads via the HF hub; without a token HF throttles
+    # anonymous pulls to a crawl. Interpolated from .env.
+    HF_TOKEN: ${HF_TOKEN:-}
+  ports:
+    - "8080:8080"
+  volumes:
+    # llama.cpp -hf caches under the HF hub dir, NOT ~/.cache/llama.cpp, so the
+    # volume must mount here or the model re-downloads on every recreate.
+    - llama_models:/root/.cache/huggingface
+  networks:
+    default:
+      aliases:
+        - llama-server
+
 services:
   neo4j:
     image: neo4j:2026.03.1
@@ -48,13 +70,14 @@ services:
       timeout: 5s
       retries: 10
 
+  # --no-mmproj: the GGUF repo ships a vision projector that -hf auto-loads,
+  # burning ~1.1GB VRAM (on GPU backends) for a text-only extraction workload.
+  # --n-predict: server-side generation ceiling so callers that omit max_tokens
+  # (curl, MCP) can't run the model away; the app client overrides per-request.
   llama-server-nvidia:
+    <<: *llama-base
     profiles: ["gpu-nvidia"]
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
-    # --no-mmproj: the GGUF repo ships a vision projector that -hf auto-loads,
-    # burning ~1.1GB VRAM on the 8GB RTX 2080 for a text-only extraction workload.
-    # --n-predict: server-side generation ceiling so callers that omit max_tokens
-    # (curl, MCP) can't run the GPU away; the app client overrides per-request.
     command: >
       -hf unsloth/Qwen3.5-9B-GGUF:Q4_K_M
       --host 0.0.0.0 --port 8080
@@ -64,20 +87,6 @@ services:
       --no-mmproj
       --n-predict ${LLAMA_N_PREDICT:-4096}
       --alias Qwen3.5-9B-Q4_K_M
-    environment:
-      # llama.cpp -hf downloads via the HF hub; without a token HF throttles
-      # anonymous pulls to a crawl. Interpolated from .env.
-      HF_TOKEN: ${HF_TOKEN:-}
-    ports:
-      - "8080:8080"
-    volumes:
-      # llama.cpp -hf caches under the HF hub dir, NOT ~/.cache/llama.cpp, so the
-      # volume must mount here or the model re-downloads on every recreate.
-      - llama_models:/root/.cache/huggingface
-    networks:
-      default:
-        aliases:
-          - llama-server
     deploy:
       resources:
         reservations:
@@ -85,6 +94,45 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  # CPU build: no GPU offload. Functional but slow — expect minutes per dense
+  # chunk. Intended as a portable fallback, not a performance target.
+  llama-server-cpu:
+    <<: *llama-base
+    profiles: ["cpu"]
+    image: ghcr.io/ggml-org/llama.cpp:server
+    command: >
+      -hf unsloth/Qwen3.5-9B-GGUF:Q4_K_M
+      --host 0.0.0.0 --port 8080
+      --ctx-size ${LLAMA_CTX_SIZE:-16384}
+      --parallel 1
+      --no-mmproj
+      --n-predict ${LLAMA_N_PREDICT:-4096}
+      --alias Qwen3.5-9B-Q4_K_M
+
+  # AMD ROCm build. Needs the host's /dev/kfd + /dev/dri exposed and the user in
+  # the video/render groups (detect-stack.sh checks rocminfo before selecting).
+  llama-server-amd:
+    <<: *llama-base
+    profiles: ["gpu-amd"]
+    image: ghcr.io/ggml-org/llama.cpp:server-rocm
+    command: >
+      -hf unsloth/Qwen3.5-9B-GGUF:Q4_K_M
+      --host 0.0.0.0 --port 8080
+      --n-gpu-layers -1
+      --ctx-size ${LLAMA_CTX_SIZE:-16384}
+      --parallel 1
+      --no-mmproj
+      --n-predict ${LLAMA_N_PREDICT:-4096}
+      --alias Qwen3.5-9B-Q4_K_M
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
+    security_opt:
+      - seccomp:unconfined
 
   app:
     profiles: ["cpu", "gpu-amd", "host"]
