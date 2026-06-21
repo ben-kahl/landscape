@@ -7,7 +7,7 @@ ground truth. Reports per-profile precision, recall, F1 for both
 entities and relations.
 
 Usage:
-    # Run against all profiles (models must already be pulled in Ollama):
+    # Run against all profiles (llama-server must be running with the target model):
     uv run python scripts/bench_extraction.py
 
     # Run against a single profile:
@@ -27,7 +27,7 @@ os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
 os.environ.setdefault("NEO4J_USER", "neo4j")
 os.environ.setdefault("NEO4J_PASSWORD", "landscape-dev")
 os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
-os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
+os.environ.setdefault("LLM_BASE_URL", "http://localhost:8080/v1")
 #os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from landscape.config import LLM_PROFILES, settings  # noqa: E402
@@ -119,7 +119,7 @@ def _relation_match(
 @dataclass
 class ProfileResult:
     profile: str
-    ollama_tag: str
+    model: str
     entity_precision: float = 0.0
     entity_recall: float = 0.0
     entity_f1: float = 0.0
@@ -136,13 +136,11 @@ def _f1(p: float, r: float) -> float:
 
 def run_profile(profile_name: str) -> ProfileResult:
     profile = LLM_PROFILES[profile_name]
-    result = ProfileResult(profile=profile_name, ollama_tag=profile.ollama_tag)
+    result = ProfileResult(profile=profile_name, model=profile.model)
 
     # Temporarily swap settings to this profile so extract() sees the right
-    # llm_model and llm_profile (the latter controls thinking mode).
-    original_model = settings.llm_model
+    # llm_profile (which controls model, thinking mode, etc.).
     original_profile = settings.llm_profile
-    settings.llm_model = profile.ollama_tag
     settings.llm_profile = profile_name
 
     total_ent_prec_hits, total_ent_prec_total = 0, 0
@@ -206,7 +204,6 @@ def run_profile(profile_name: str) -> ProfileResult:
                 total_rel_prec_total += len(ext_rels)
 
     finally:
-        settings.llm_model = original_model
         settings.llm_profile = original_profile
 
     ep = total_ent_prec_hits / total_ent_prec_total if total_ent_prec_total else 0
@@ -231,7 +228,7 @@ def main():
 
     if args.list:
         for name, p in sorted(LLM_PROFILES.items()):
-            print(f"  {name:<20} {p.ollama_tag:<24} {p.notes}")
+            print(f"  {name:<20} {p.model:<24} {p.notes}")
         return
 
     profiles = [args.profile] if args.profile else sorted(LLM_PROFILES.keys())
@@ -242,7 +239,7 @@ def main():
 
     results: list[ProfileResult] = []
     for p in profiles:
-        print(f"Benchmarking {p} ({LLM_PROFILES[p].ollama_tag})...", flush=True)
+        print(f"Benchmarking {p} ({LLM_PROFILES[p].model})...", flush=True)
         r = run_profile(p)
         results.append(r)
         if r.errors:
@@ -252,7 +249,7 @@ def main():
 
     print()
     header = (
-        f"{'Profile':<20} {'Tag':<24} "
+        f"{'Profile':<20} {'Model':<24} "
         f"{'Ent P':>6} {'Ent R':>6} {'Ent F1':>6}  "
         f"{'Rel P':>6} {'Rel R':>6} {'Rel F1':>6}  "
         f"{'Time':>7}"
@@ -261,7 +258,7 @@ def main():
     print("-" * len(header))
     for r in results:
         print(
-            f"{r.profile:<20} {r.ollama_tag:<24} "
+            f"{r.profile:<20} {r.model:<24} "
             f"{r.entity_precision:>6.1%} {r.entity_recall:>6.1%} {r.entity_f1:>6.1%}  "
             f"{r.relation_precision:>6.1%} {r.relation_recall:>6.1%} {r.relation_f1:>6.1%}  "
             f"{r.total_time_s:>6.1f}s"

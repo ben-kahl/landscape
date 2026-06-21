@@ -14,8 +14,9 @@ qualifiers, so facts like "Eric watched 8 hours of Netflix today" retain the
 `8 hours` and `today` metadata rather than collapsing to only
 `ERIC -> WATCHED -> NETFLIX`.
 
-Everything runs locally with Docker Compose, FastAPI, Neo4j, Qdrant, Ollama,
-LangChain, and Model Context Protocol.
+Everything runs locally with Docker Compose, FastAPI, Neo4j, Qdrant, a
+llama.cpp `llama-server` (OpenAI-compatible LLM inference), sentence-transformers
+embeddings, LangChain, and Model Context Protocol.
 
 ## The killer demo
 
@@ -39,17 +40,17 @@ graph TD
     Client["MCP client\n(Claude Code / Cursor / custom)"]
     MCP["FastAPI /mcp\n(streamable HTTP)"]
     API["FastAPI\n/ingest  /query"]
-    Pipeline["Ingestion pipeline\n→ LLM extraction\n→ entity resolver"]
+    Pipeline["Ingestion pipeline\n→ LLM extraction\n→ embeddings (sentence-transformers)\n→ entity resolver"]
     Neo4j["Neo4j\ngraph traversal"]
     Qdrant["Qdrant\nvector search"]
-    Ollama["Ollama\nLLM + embeddings (local)"]
+    Llama["llama-server (llama.cpp)\nLLM extraction · OpenAI API"]
 
     Client -->|"search / remember / lookup_entity\nadd_entity / add_relation / graph_query / status"| MCP
     MCP --> API
     API --> Pipeline
     Pipeline --> Neo4j
     Pipeline --> Qdrant
-    Pipeline -->|"extraction + embeddings"| Ollama
+    Pipeline -->|"extraction"| Llama
     MCP -->|"retrieve()"| Qdrant
     MCP -->|"Cypher"| Neo4j
 ```
@@ -77,7 +78,9 @@ model details, benchmark notes, and known limitations.
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 - Docker and Docker Compose
-- Ollama, either in Docker via a Compose profile or running on the host
+- A llama.cpp `llama-server` for LLM extraction — run in Docker via a Compose
+  profile (`cpu`, `gpu-nvidia`, `gpu-amd`) or natively on the host (macOS/Metal).
+  The model GGUF is pulled automatically on first start; no manual download.
 
 ```bash
 git clone https://github.com/ben-kahl/landscape.git
@@ -91,9 +94,17 @@ uv run pytest -m "unit or smoke"               # CI-safe sanity check
 uv run python scripts/demo_mcp_session.py      # supersession demo transcript
 ```
 
-`scripts/detect-stack.sh` creates `.env`, sets `COMPOSE_PROFILES`, and chooses
-the appropriate Ollama mode for the host: NVIDIA GPU, AMD GPU, CPU, or host
-Ollama on macOS.
+`scripts/detect-stack.sh` creates `.env`, sets `COMPOSE_PROFILES` and
+`LLM_BASE_URL`, and chooses the right `llama-server` backend for the host:
+NVIDIA GPU (`gpu-nvidia`), AMD GPU/ROCm (`gpu-amd`), CPU (`cpu`), or a host-run
+`llama-server` on macOS (`host`). Each profile has a matching `llama-server`
+service in `docker-compose.yml`, so `docker compose up -d` then starts the
+detected backend, Neo4j, Qdrant, and the app together.
+
+The default model is Qwen 3.5 9B (`Q4_K_M`) served by `llama-server` over an
+OpenAI-compatible API. Switch models or point at a cloud provider with the
+`LLM_PROFILE` env var (see `LLM_PROFILES` in `src/landscape/config.py`); the
+`openai_gpt5` profile shows the cloud shape.
 
 The checked-in `.env.example` keeps the higher-quality Nomic embedding model as
 the default. That model requires Hugging Face remote model code, so the example
@@ -123,17 +134,19 @@ Default test endpoints:
 Tests refuse to wipe the live default Neo4j/Qdrant ports unless
 `LANDSCAPE_ALLOW_LIVE_TEST_WIPE=1` is set deliberately. Override the test
 endpoints with the `LANDSCAPE_TEST_NEO4J_*` and `LANDSCAPE_TEST_QDRANT_URL`
-env vars. Ollama defaults to `http://localhost:11434` and is not wiped by tests.
+env vars. `llama-server` (default `http://localhost:8080/v1`) holds no state and
+is not touched by tests.
 
-If the script selects Docker-managed Ollama, pull the default model once
-(substitute `ollama-cpu`, `ollama-nvidia`, or `ollama-amd` for your profile):
+The Docker `llama-server` backends download the model GGUF automatically via the
+`-hf` flag on first start — no manual model pull needed:
 
 ```bash
-docker compose exec ollama-<profile> ollama pull llama3.1:8b
+docker compose --profile <cpu|gpu-nvidia|gpu-amd> up -d
 ```
 
-On macOS, run Ollama on the host (`brew install ollama && ollama serve &&
-ollama pull llama3.1:8b`) and let Docker reach it via `host.docker.internal`.
+On macOS, run `llama-server` natively (it can serve the same GGUF on Metal) and
+let Docker reach it via `host.docker.internal`; `detect-stack.sh` selects the
+`host` profile and sets `LLM_BASE_URL` accordingly.
 
 Supported `COMPOSE_PROFILES` values: `cpu`, `gpu-nvidia`, `gpu-amd`, `host`.
 
@@ -170,9 +183,9 @@ Pass `--glob "<pattern>"` to opt into strict-pattern mode and ingest only
 matching files.
 
 The CLI defaults to host-reachable service URLs for local use: Neo4j on
-`bolt://localhost:7687`, Qdrant on `http://localhost:6333`, and Ollama on
-`http://localhost:11434`. Explicit environment variables still override those
-defaults.
+`bolt://localhost:7687`, Qdrant on `http://localhost:6333`, and `llama-server`
+on `http://localhost:8080/v1`. Explicit environment variables (`NEO4J_*`,
+`QDRANT_URL`, `LLM_BASE_URL`) still override those defaults.
 
 ## Run the API and embedded MCP server
 
@@ -251,8 +264,8 @@ HTTP redirect URIs without TLS.
 ## MCP tools
 
 Point any MCP client at `http://127.0.0.1:8000/mcp` (the FastAPI app must be
-running; the `NEO4J_*`, `QDRANT_URL`, and `OLLAMA_URL` env vars apply to that
-server process). Multiple clients connected to the same URL share one Landscape
+running; the `NEO4J_*`, `QDRANT_URL`, `LLM_BASE_URL`, and `LLM_PROFILE` env vars
+apply to that server process). Multiple clients connected to the same URL share one Landscape
 process. The legacy stdio launcher `landscape-mcp` is still available but is
 process-per-client; prefer HTTP unless you need stdio.
 
@@ -291,8 +304,8 @@ Landscape captures conversation memory by reading a client's **completed
 transcript at the end of a session** — not by streaming turns live. During a
 session the agent already holds the conversation in its own context, so there is
 nothing to gain from live capture; at `SessionEnd` a single hook hands the
-transcript to the CLI, which parses it, runs one local Ollama salience pass over
-the conversation, and ingests the selected turns:
+transcript to the CLI, which parses it, runs one local `llama-server` salience
+pass over the conversation, and ingests the selected turns:
 
 ```bash
 landscape ingest-transcript            # reads the SessionEnd hook JSON (transcript_path) on stdin
@@ -301,7 +314,7 @@ landscape ingest-transcript PATH       # or pass a transcript file directly (man
 
 This reuses the same direct-to-database runtime as `landscape ingest` and the
 MCP server, so it needs **no HTTP endpoint and no API token** — only local
-access to the Neo4j / Qdrant / Ollama stack on their configured ports. The
+access to the Neo4j / Qdrant / llama-server stack on their configured ports. The
 salience pass selects original turns (it does not rewrite them); selected turns
 are ingested as one document and linked back to every contributing
 `Conversation` / `Turn` for provenance.
@@ -334,8 +347,8 @@ mechanics, and transient clarifying questions are discarded before graph
 ingestion.
 
 Everything captured lands in your local Neo4j/Qdrant stack with
-`Conversation` / `Turn` provenance. The salience and extraction calls use local
-Ollama, so capture does not require cloud APIs, but captured facts are still
+`Conversation` / `Turn` provenance. The salience and extraction calls use the
+local `llama-server`, so capture does not require cloud APIs, but captured facts are still
 persistent local memory. Treat enabling the capture hook as an explicit choice
 to store useful conversation facts.
 

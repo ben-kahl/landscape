@@ -7,12 +7,11 @@ from landscape.cli.runtime import close_runtime
 
 
 def _get_runtime():
-    import ollama
-
     from landscape.config import settings
+    from landscape.extraction import llm_client
     from landscape.storage import neo4j_store, qdrant_store
 
-    return ollama, settings, neo4j_store, qdrant_store
+    return llm_client, settings, neo4j_store, qdrant_store
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -26,7 +25,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 async def _neo4j_counts() -> dict:
-    _ollama, _settings, neo4j_store, _qdrant_store = _get_runtime()
+    _llm_client, _settings, neo4j_store, _qdrant_store = _get_runtime()
     driver = neo4j_store.get_driver()
     async with driver.session() as session:
         result = await session.run(
@@ -52,13 +51,13 @@ async def _neo4j_counts() -> dict:
 
 
 async def handle_status(args: argparse.Namespace) -> int:
-    ollama, settings, neo4j_store, qdrant_store = _get_runtime()
+    llm_client, settings, neo4j_store, qdrant_store = _get_runtime()
     data = {
         "config": {
             "neo4j_uri": settings.neo4j_uri,
             "qdrant_url": settings.qdrant_url,
-            "ollama_url": settings.ollama_url,
-            "llm_model": settings.llm_model,
+            "llm_base_url": settings.llm_base_url or llm_client.active_profile().base_url,
+            "llm_model": llm_client.active_profile().model,
             "embedding_model": settings.embedding_model,
         },
         "services": {},
@@ -79,16 +78,16 @@ async def handle_status(args: argparse.Namespace) -> int:
             data["services"]["qdrant"] = f"error: {exc}"
 
         try:
-            client = ollama.Client(host=settings.ollama_url)
-            models = client.list()
-            model_names = {model.model for model in models.models}
-            data["services"]["ollama"] = "ok"
+            client = llm_client.get_client()
+            models = client.models.list()
+            model_names = {m.id for m in models.data}
+            data["services"]["llm"] = "ok"
             data["models"] = {
-                "configured_llm_present": settings.llm_model in model_names,
-                "ollama_models": sorted(model_names) if args.verbose else [],
+                "configured_llm_present": llm_client.active_profile().model in model_names,
+                "available_models": sorted(model_names) if args.verbose else [],
             }
         except Exception as exc:
-            data["services"]["ollama"] = f"error: {exc}"
+            data["services"]["llm"] = f"error: {exc}"
 
         if args.as_json:
             print(json.dumps(data, indent=2, sort_keys=True))
@@ -97,16 +96,16 @@ async def handle_status(args: argparse.Namespace) -> int:
         print("Landscape status")
         print()
         print("Config")
-        print(f"  Neo4j:  {data['config']['neo4j_uri']}")
-        print(f"  Qdrant: {data['config']['qdrant_url']}")
-        print(f"  Ollama: {data['config']['ollama_url']}")
-        print(f"  LLM:    {data['config']['llm_model']}")
-        print(f"  Embed:  {data['config']['embedding_model']}")
+        print(f"  Neo4j:   {data['config']['neo4j_uri']}")
+        print(f"  Qdrant:  {data['config']['qdrant_url']}")
+        print(f"  LLM URL: {data['config']['llm_base_url']}")
+        print(f"  LLM:     {data['config']['llm_model']}")
+        print(f"  Embed:   {data['config']['embedding_model']}")
         print()
         print("Services")
         print(f"  Neo4j:  {data['services'].get('neo4j', 'unknown')}")
         print(f"  Qdrant: {data['services'].get('qdrant', 'unknown')}")
-        print(f"  Ollama: {data['services'].get('ollama', 'unknown')}")
+        print(f"  LLM:    {data['services'].get('llm', 'unknown')}")
         if data["storage"]:
             print()
             print("Storage")

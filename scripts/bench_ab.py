@@ -31,7 +31,7 @@ os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
 os.environ.setdefault("NEO4J_USER", "neo4j")
 os.environ.setdefault("NEO4J_PASSWORD", "landscape-dev")
 os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
-os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
+os.environ.setdefault("LLM_BASE_URL", "http://localhost:8080/v1")
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import httpx  # noqa: E402
@@ -39,7 +39,7 @@ import tiktoken  # noqa: E402
 
 from landscape import pipeline  # noqa: E402
 from landscape.embeddings import encoder  # noqa: E402
-from landscape.middleware.token_counter import get_usage, reset_counters  # noqa: E402
+from landscape.extraction import llm_client  # noqa: E402
 from landscape.retrieval.query import retrieve  # noqa: E402
 from landscape.storage import neo4j_store, qdrant_store  # noqa: E402
 
@@ -147,7 +147,7 @@ async def _run_longmemeval(data_path: pathlib.Path, n_questions: int) -> dict:
     ingest_times: list[float] = []
     query_times: list[float] = []
     response_tokens: list[int] = []
-    ollama_start = get_usage()["ollama"].copy()
+    llm_start = llm_client.get_token_totals()
 
     encoder.load_model()
 
@@ -182,12 +182,12 @@ async def _run_longmemeval(data_path: pathlib.Path, n_questions: int) -> dict:
             hit_at_10 += 1
 
     n = len(questions)
-    ollama_end = get_usage()["ollama"]
-    ollama_delta_prompt = ollama_end["total_prompt_tokens"] - ollama_start["total_prompt_tokens"]
-    ollama_delta_completion = (
-        ollama_end["total_completion_tokens"] - ollama_start["total_completion_tokens"]
+    llm_end = llm_client.get_token_totals()
+    llm_delta_prompt = llm_end["prompt_tokens"] - llm_start["prompt_tokens"]
+    llm_delta_completion = (
+        llm_end["completion_tokens"] - llm_start["completion_tokens"]
     )
-    ollama_total = ollama_delta_prompt + ollama_delta_completion
+    llm_total = llm_delta_prompt + llm_delta_completion
 
     section = {
         "n_questions": n,
@@ -196,9 +196,9 @@ async def _run_longmemeval(data_path: pathlib.Path, n_questions: int) -> dict:
         "hit_at_10": round(hit_at_10 / n, 4) if n else 0.0,
         "avg_ingest_s": round(sum(ingest_times) / n, 3) if n else 0.0,
         "avg_query_s": round(sum(query_times) / n, 3) if n else 0.0,
-        "ollama_extraction_tokens": {
-            "total": ollama_total,
-            "avg": round(ollama_total / n, 1) if n else 0.0,
+        "llm_extraction_tokens": {
+            "total": llm_total,
+            "avg": round(llm_total / n, 1) if n else 0.0,
         },
         "avg_response_tokens": round(sum(response_tokens) / n, 1) if n else 0.0,
     }
@@ -344,7 +344,7 @@ async def _main(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    reset_counters()
+    llm_client.reset_token_totals()
 
     longmemeval: dict | None = None
     if args.longmemeval_data:
@@ -357,7 +357,6 @@ async def _main(args: argparse.Namespace) -> None:
     killer_demo = await _run_killer_demo()
     supersession = await _run_supersession()
 
-    final_usage = get_usage()
     # Sum per-query response tokens from section results (middleware is bypassed by direct imports)
     kd_response_tokens = sum(pq["response_tokens"] for pq in killer_demo["per_query"])
     if longmemeval:
@@ -367,10 +366,8 @@ async def _main(args: argparse.Namespace) -> None:
     else:
         lme_response_tokens = 0
     response_tokens_total = kd_response_tokens + lme_response_tokens
-    ollama_tokens_total = (
-        final_usage["ollama"]["total_prompt_tokens"]
-        + final_usage["ollama"]["total_completion_tokens"]
-    )
+    final_totals = llm_client.get_token_totals()
+    llm_tokens_total = final_totals["prompt_tokens"] + final_totals["completion_tokens"]
 
     output = {
         "branch": args.branch,
@@ -380,7 +377,7 @@ async def _main(args: argparse.Namespace) -> None:
         "supersession": supersession,
         "token_totals": {
             "response_tokens_total": response_tokens_total,
-            "ollama_tokens_total": ollama_tokens_total,
+            "llm_tokens_total": llm_tokens_total,
         },
     }
     if longmemeval is not None:

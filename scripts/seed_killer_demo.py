@@ -15,7 +15,7 @@ After it completes you'll have:
   - All entities linked to their source Turn via :MENTIONED_IN
   - All docs linked via :INGESTED_IN
 
-Takes ~40s on a laptop GPU with Llama 3.1 8B via Ollama.
+Takes ~40s on a laptop GPU with Llama 3.1 8B via llama-server.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
 os.environ.setdefault("NEO4J_USER", "neo4j")
 os.environ.setdefault("NEO4J_PASSWORD", "landscape-dev")
 os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
-os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
+os.environ.setdefault("LLM_BASE_URL", "http://localhost:8080/v1")
 
 CORPUS_DIR = pathlib.Path(__file__).parent.parent / "tests" / "fixtures" / "killer_demo_corpus"
 SESSION_ID = "seed-killer-demo"

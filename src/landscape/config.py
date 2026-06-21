@@ -6,35 +6,64 @@ from pydantic_settings import BaseSettings
 
 @dataclass(frozen=True)
 class LLMProfile:
-    """A named bundle of LLM settings. Switched via LANDSCAPE_LLM_PROFILE.
+    """A named provider/model preset selected via the LLM_PROFILE env var.
 
-    To add a new profile:
-      1. Append an entry to LLM_PROFILES below (any ollama-compatible tag).
-      2. `docker compose --profile gpu-nvidia exec ollama-nvidia ollama pull <tag>`
-      3. Set `LANDSCAPE_LLM_PROFILE=<name>` in .env or the shell.
+    `base_url` + `model` point the OpenAI SDK at either a local llama-server
+    (OpenAI-compatible) or a cloud endpoint. `api_key_env` is the NAME of the
+    env var holding the key (never the secret itself) so the registry can be
+    safely enumerated by a future model-switcher UI. `ctx_size` is the declared
+    context budget; for local llama-server it must match the server's
+    --ctx-size launch flag (wired via LLAMA_CTX_SIZE in docker-compose).
+    """
 
-    `ollama_tag` selects the model and `thinking` is forwarded to Ollama's
-    chat API for thinking-capable models."""
-
-    ollama_tag: str
+    base_url: str
+    model: str
+    api_key_env: str | None = None
     temperature: float = 0.0
-    num_ctx: int = 8192
-    thinking: bool = False
+    # no_think suppresses Qwen3.5-style reasoning. It is NOT done with an inline
+    # "/no_think" prompt prefix (that is a no-op in llama.cpp); instead the client
+    # sends chat_template_kwargs={"enable_thinking": false}. Without this the model
+    # spends every token in the reasoning channel and never emits content.
+    no_think: bool = False
+    # Hard cap on generated tokens. Sized from the measured worst case: a dense
+    # 400-token chunk (CHUNK_SIZE) yields ~2257 tokens of valid extraction JSON,
+    # so 4096 leaves ~1.8x headroom while bounding any runaway.
+    max_tokens: int = 4096
+    # llama.cpp repetition penalty (sent via extra_body). Cloud profiles leave this
+    # None. Mild penalty guards against greedy decoding falling into a loop.
+    repeat_penalty: float | None = None
+    # Per-request timeout (seconds). With max_tokens bounding generation this is a
+    # backstop for stuck connections; max_retries is disabled so a slow call fails
+    # fast instead of the OpenAI SDK silently re-issuing it 3x.
+    request_timeout: float = 420.0
+    ctx_size: int = 32768
     notes: str = ""
 
 
-# Seeded with the current default only. Add new profiles here — the user's
-# own additions, model bakeoffs, etc. — instead of editing `llm_model` directly.
 LLM_PROFILES: dict[str, LLMProfile] = {
-    "llama31_8b": LLMProfile(
-        ollama_tag="llama3.1:8b",
-        thinking=False,
-        notes="Phase 2 baseline. Known-good for the killer-demo corpus.",
+    "local_qwen35": LLMProfile(
+        base_url="http://llama-server:8080/v1",
+        model="Qwen3.5-9B-Q4_K_M",
+        api_key_env=None,
+        no_think=True,
+        repeat_penalty=1.1,
+        ctx_size=16384,
+        notes="Default. Qwen 3.5 9B Q4_K_M via llama-server.",
     ),
-    "qwen25_7b_nothink": LLMProfile(
-           ollama_tag="qwen2.5:7b",
-           thinking=False,
-           notes="Qwen 2.5 7B with thinking disabled",
+    "local_llama31": LLMProfile(
+        base_url="http://llama-server:8080/v1",
+        model="llama-3.1-8b",
+        api_key_env=None,
+        repeat_penalty=1.1,
+        ctx_size=16384,
+        notes="A/B incumbent (prior benchmark baseline).",
+    ),
+    "openai_gpt5": LLMProfile(
+        base_url="https://api.openai.com/v1",
+        model="gpt-5.4",
+        api_key_env="OPENAI_API_KEY",
+        ctx_size=16384,
+        notes="Cloud preset. Any OpenAI-compatible endpoint works.",
     ),
 }
 
@@ -52,11 +81,11 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "landscape-dev"
     qdrant_url: str = "http://qdrant:6333"
-    ollama_url: str = "http://ollama:11434"
-    llm_profile: str = "llama31_8b"
-    # Escape hatch: set LANDSCAPE_LLM_MODEL to override the profile's ollama_tag
-    # without touching LLM_PROFILES. Useful for one-off A/B tests.
-    llm_model: str | None = None
+    llm_profile: str = "local_qwen35"
+    # Overrides the active profile's base_url at connection time. Host-run CLI
+    # and scripts set this to http://localhost:8080/v1 since the profile's
+    # docker-internal alias (llama-server:8080) is unreachable from the host.
+    llm_base_url: str | None = None
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
     hf_token: str | None = None
 
@@ -95,10 +124,6 @@ class Settings(BaseSettings):
                 f"Known profiles: {available}. Add a new entry to "
                 f"LLM_PROFILES in src/landscape/config.py."
             )
-        if self.llm_model is None:
-            # Resolve the profile's ollama_tag into llm_model so every caller
-            # (pipeline.py, extraction/llm.py) keeps reading a single field.
-            self.llm_model = LLM_PROFILES[self.llm_profile].ollama_tag
 
     @property
     def embedding_dims(self) -> int:

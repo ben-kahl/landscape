@@ -6,7 +6,7 @@ Reports precision@k and MRR for each mode on a hand-labeled set of
 1-, 2-, and 3-hop queries where the expected answers are known.
 
 Usage:
-    # Requires the Docker stack running (Neo4j, Qdrant, Ollama)
+    # Requires the Docker stack running (Neo4j, Qdrant, llama-server)
     uv run python scripts/bench_retrieval.py
 
     # Control the ingest (skip if data is already loaded):
@@ -25,7 +25,7 @@ os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
 os.environ.setdefault("NEO4J_USER", "neo4j")
 os.environ.setdefault("NEO4J_PASSWORD", "landscape-dev")
 os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
-os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
+os.environ.setdefault("LLM_BASE_URL", "http://localhost:8080/v1")
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 from landscape.embeddings import encoder  # noqa: E402

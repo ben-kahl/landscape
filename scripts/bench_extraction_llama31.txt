@@ -1,0 +1,6 @@
+Benchmarking local_llama31 (llama-3.1-8b)...
+  Done in 173.8s
+
+Profile              Model                     Ent P  Ent R Ent F1   Rel P  Rel R Rel F1     Time
+-------------------------------------------------------------------------------------------------
+local_llama31        llama-3.1-8b              63.8%  93.8%  75.9%   36.8%  93.3%  52.8%   173.8s

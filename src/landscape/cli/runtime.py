@@ -8,8 +8,8 @@ def _apply_cli_process_defaults() -> None:
     """Prefer host-reachable defaults for local console commands."""
     os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
     os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
-    os.environ.setdefault("OLLAMA_URL", "http://localhost:11434")
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+    os.environ.setdefault("LLM_BASE_URL", "http://localhost:8080/v1")
 
 
 async def close_runtime(neo4j_store, qdrant_store) -> None:

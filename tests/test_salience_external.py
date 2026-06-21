@@ -1,9 +1,9 @@
-"""Real-Ollama salience checks.
+"""Real-LLM salience checks.
 
 Kept out of test_salience.py so the module-level ``unit`` marker there does not
 also tag these tests — otherwise the CI slice (``-m "unit or smoke"``) would try
-to run them without an Ollama stack. These require the local stack and are
-``external`` only.
+to run them without a live LLM (llama-server). These require the local stack and
+are ``external`` only.
 """
 
 import pytest
@@ -18,7 +18,7 @@ def _turn(turn_id, role, text):
 
 
 def test_select_salient_real_llm_keeps_facts_drops_chitchat():
-    """Sanity check against real Ollama: durable facts kept, greetings dropped."""
+    """Sanity check against a real LLM: durable facts kept, greetings dropped."""
     import landscape.extraction.salience as salience
 
     turns = [

@@ -3,12 +3,9 @@ import logging
 from datetime import UTC, datetime
 from typing import Literal
 
-import ollama
-
-from landscape.config import LLM_PROFILES, settings
+from landscape.extraction import llm_client
 from landscape.extraction.schema import Extraction
-from landscape.middleware.token_counter import increment_ollama_tokens
-from landscape.observability.weave_tracing import record_token_usage, traced
+from landscape.observability.weave_tracing import traced
 
 _iso_log = logging.getLogger(__name__)
 
@@ -310,45 +307,9 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _should_disable_thinking() -> bool:
-    profile = LLM_PROFILES.get(settings.llm_profile)
-    return profile is not None and not profile.thinking
-
-
-def _thinking_enabled() -> bool | None:
-    profile = LLM_PROFILES.get(settings.llm_profile)
-    return profile.thinking if profile is not None else None
-
-
-def _num_ctx() -> int:
-    profile = LLM_PROFILES.get(settings.llm_profile)
-    return profile.num_ctx if profile is not None else 8192
-
-
 @traced(name="extraction.extract")
 def extract(text: str) -> Extraction:
-    client = ollama.Client(host=settings.ollama_url)
     prompt = f"{_SYSTEM_PROMPT}\n\n{text}"
-    if _should_disable_thinking():
-        prompt = "/no_think\n" + prompt
-    response = client.chat(
-        model=settings.llm_model,
-        messages=[
-            {"role": "user", "content": prompt},
-        ],
-        format=Extraction.model_json_schema(),
-        think=_thinking_enabled(),
-        options={"num_ctx": _num_ctx()},
+    return llm_client.complete_structured(
+        prompt, model_cls=Extraction, schema_name="Extraction"
     )
-    prompt_tokens = getattr(response, "prompt_eval_count", 0) or 0
-    completion_tokens = getattr(response, "eval_count", 0) or 0
-    increment_ollama_tokens(
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-    )
-    record_token_usage(
-        settings.llm_model,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-    )
-    return Extraction.model_validate_json(response.message.content)
