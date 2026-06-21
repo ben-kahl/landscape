@@ -74,6 +74,11 @@ os.environ["NEO4J_USER"] = TEST_STACK.neo4j_auth[0]
 os.environ["NEO4J_PASSWORD"] = TEST_STACK.neo4j_auth[1]
 os.environ["QDRANT_URL"] = TEST_STACK.qdrant_url
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# Ingestion runs extraction through the OpenAI-SDK client; on a host run the
+# profile's docker-internal alias (llama-server:8080) is unreachable, so default
+# to the host-published port like the other host-run scripts. Explicit override
+# (cloud profile, remote llama-server) still wins.
+os.environ.setdefault("LLM_BASE_URL", "http://localhost:8080/v1")
 
 from landscape import pipeline  # noqa: E402
 from landscape.embeddings import encoder  # noqa: E402
