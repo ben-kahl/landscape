@@ -51,12 +51,18 @@ services:
   llama-server-nvidia:
     profiles: ["gpu-nvidia"]
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    # --no-mmproj: the GGUF repo ships a vision projector that -hf auto-loads,
+    # burning ~1.1GB VRAM on the 8GB RTX 2080 for a text-only extraction workload.
+    # --n-predict: server-side generation ceiling so callers that omit max_tokens
+    # (curl, MCP) can't run the GPU away; the app client overrides per-request.
     command: >
       -hf unsloth/Qwen3.5-9B-GGUF:Q4_K_M
       --host 0.0.0.0 --port 8080
       --n-gpu-layers -1
       --ctx-size ${LLAMA_CTX_SIZE:-16384}
       --parallel 1
+      --no-mmproj
+      --n-predict ${LLAMA_N_PREDICT:-4096}
       --alias Qwen3.5-9B-Q4_K_M
     environment:
       # llama.cpp -hf downloads via the HF hub; without a token HF throttles
