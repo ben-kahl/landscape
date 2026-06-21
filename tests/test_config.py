@@ -13,7 +13,7 @@ def test_default_profile_is_local_qwen35():
     assert p.model == "Qwen3.5-9B-Q4_K_M"
     assert p.api_key_env is None
     assert p.no_think is True
-    assert p.ctx_size == 32768
+    assert p.ctx_size == 16384
 
 
 def test_cloud_profile_references_key_by_env_name_only():

@@ -34,7 +34,7 @@ def test_extract_uses_profile_model_and_json_schema(monkeypatch):
     assert recorder[0]["response_format"]["json_schema"]["name"] == "Extraction"
 
 
-def test_extract_prepends_no_think_when_profile_requests_it(monkeypatch):
+def test_extract_disables_thinking_when_profile_requests_it(monkeypatch):
     recorder: list[dict] = []
     monkeypatch.setattr(llm.llm_client, "get_client", lambda: _fake_client(recorder))
     monkeypatch.setattr(
@@ -44,4 +44,4 @@ def test_extract_prepends_no_think_when_profile_requests_it(monkeypatch):
 
     llm.extract("Maya leads the Platform Team.")
 
-    assert recorder[0]["messages"][0]["content"].startswith("/no_think\n")
+    assert recorder[0]["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}

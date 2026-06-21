@@ -20,7 +20,22 @@ class LLMProfile:
     model: str
     api_key_env: str | None = None
     temperature: float = 0.0
+    # no_think suppresses Qwen3.5-style reasoning. It is NOT done with an inline
+    # "/no_think" prompt prefix (that is a no-op in llama.cpp); instead the client
+    # sends chat_template_kwargs={"enable_thinking": false}. Without this the model
+    # spends every token in the reasoning channel and never emits content.
     no_think: bool = False
+    # Hard cap on generated tokens. Sized from the measured worst case: a dense
+    # 400-token chunk (CHUNK_SIZE) yields ~2257 tokens of valid extraction JSON,
+    # so 4096 leaves ~1.8x headroom while bounding any runaway.
+    max_tokens: int = 4096
+    # llama.cpp repetition penalty (sent via extra_body). Cloud profiles leave this
+    # None. Mild penalty guards against greedy decoding falling into a loop.
+    repeat_penalty: float | None = None
+    # Per-request timeout (seconds). With max_tokens bounding generation this is a
+    # backstop for stuck connections; max_retries is disabled so a slow call fails
+    # fast instead of the OpenAI SDK silently re-issuing it 3x.
+    request_timeout: float = 420.0
     ctx_size: int = 32768
     notes: str = ""
 
@@ -31,6 +46,7 @@ LLM_PROFILES: dict[str, LLMProfile] = {
         model="Qwen3.5-9B-Q4_K_M",
         api_key_env=None,
         no_think=True,
+        repeat_penalty=1.1,
         ctx_size=16384,
         notes="Default. Qwen 3.5 9B Q4_K_M via llama-server.",
     ),
@@ -38,6 +54,7 @@ LLM_PROFILES: dict[str, LLMProfile] = {
         base_url="http://llama-server:8080/v1",
         model="llama-3.1-8b",
         api_key_env=None,
+        repeat_penalty=1.1,
         ctx_size=16384,
         notes="A/B incumbent (prior benchmark baseline).",
     ),

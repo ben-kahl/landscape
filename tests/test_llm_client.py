@@ -59,7 +59,7 @@ def test_complete_structured_sends_json_schema_and_validates(monkeypatch):
     assert recorder[0]["messages"][0]["content"] == "prompt text"
 
 
-def test_complete_structured_prepends_no_think(monkeypatch):
+def test_complete_structured_disables_thinking_via_extra_body(monkeypatch):
     recorder: list[dict] = []
     monkeypatch.setattr(
         llm_client, "get_client", lambda: _fake_client('{"entities":[],"relations":[]}', recorder)
@@ -71,7 +71,27 @@ def test_complete_structured_prepends_no_think(monkeypatch):
 
     llm_client.complete_structured("prompt", model_cls=Extraction, schema_name="Extraction")
 
-    assert recorder[0]["messages"][0]["content"].startswith("/no_think\n")
+    # The prompt is sent verbatim — no "/no_think" prefix (a no-op in llama.cpp).
+    assert recorder[0]["messages"][0]["content"] == "prompt"
+    assert recorder[0]["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_complete_structured_caps_tokens_and_sends_repeat_penalty(monkeypatch):
+    recorder: list[dict] = []
+    monkeypatch.setattr(
+        llm_client, "get_client", lambda: _fake_client('{"entities":[],"relations":[]}', recorder)
+    )
+    monkeypatch.setattr(
+        llm_client, "active_profile",
+        lambda: LLMProfile(
+            base_url="http://x/v1", model="m", max_tokens=4096, repeat_penalty=1.1
+        ),
+    )
+
+    llm_client.complete_structured("prompt", model_cls=Extraction, schema_name="Extraction")
+
+    assert recorder[0]["max_tokens"] == 4096
+    assert recorder[0]["extra_body"]["repeat_penalty"] == 1.1
 
 
 def test_complete_structured_retries_once_then_raises(monkeypatch):

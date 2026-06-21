@@ -43,12 +43,18 @@ def resolve_key(profile: LLMProfile) -> str:
 def get_client() -> OpenAI:
     p = active_profile()
     base_url = settings.llm_base_url or p.base_url
-    return OpenAI(base_url=base_url, api_key=resolve_key(p))
+    # max_retries=0: complete_structured does its own bounded retry. The SDK
+    # default (2 silent retries) turned one slow call into a 3x-timeout storm
+    # that, behind llama-server's --parallel 1, never converged.
+    return OpenAI(
+        base_url=base_url,
+        api_key=resolve_key(p),
+        timeout=p.request_timeout,
+        max_retries=0,
+    )
 
 
 def _messages(prompt: str) -> list[dict]:
-    if active_profile().no_think:
-        prompt = "/no_think\n" + prompt
     return [{"role": "user", "content": prompt}]
 
 
@@ -64,12 +70,22 @@ def complete_structured(
     """
     client = get_client()
     p = active_profile()
+    # llama.cpp extensions ride in extra_body. enable_thinking=False is the actual
+    # fix for the hang: with thinking on, the model emits its whole budget into the
+    # reasoning channel and returns empty content. repeat_penalty guards greedy
+    # decoding against runaway loops. Cloud profiles send neither.
+    extra_body: dict[str, object] = {}
+    if p.no_think:
+        extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+    if p.repeat_penalty is not None:
+        extra_body["repeat_penalty"] = p.repeat_penalty
     last_err: Exception | None = None
     for _ in range(2):
         resp = client.chat.completions.create(
             model=p.model,
             messages=_messages(prompt),
             temperature=p.temperature,
+            max_tokens=p.max_tokens,
             response_format={
                 "type": "json_schema",
                 "json_schema": {
@@ -78,6 +94,7 @@ def complete_structured(
                     "strict": True,
                 },
             },
+            extra_body=extra_body or None,
         )
         usage = getattr(resp, "usage", None)
         if usage is not None:
