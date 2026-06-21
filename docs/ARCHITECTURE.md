@@ -125,8 +125,8 @@ The capture path is buffered by session:
    buffer.
 3. A flush is triggered by window size, idle timeout, or
    `POST /hooks/session-end`.
-4. The flush runs one local Ollama salience-selection pass over the window plus
-   the configured tail overlap.
+4. The flush runs one local LLM salience-selection pass (via llama-server) over
+   the window plus the configured tail overlap.
 5. Selected turns are kept verbatim, ordered by their source turn index, joined
    as one document, and sent through the normal ingestion pipeline.
 6. The resulting document is linked to every contributing `Turn`, so retrieval
@@ -139,8 +139,8 @@ hypotheticals before graph ingestion.
 
 The hook adapter in `scripts/landscape_capture_hook.py` posts regular turn
 events to `/hooks/conversation-turn` and Claude Code `SessionEnd` events to
-`/hooks/session-end`. The hook path uses local Ollama and local storage only,
-but every selected fact is persistent memory in Neo4j/Qdrant.
+`/hooks/session-end`. The hook path uses the local llama-server and local
+storage only, but every selected fact is persistent memory in Neo4j/Qdrant.
 
 ## Retrieval Flow
 
@@ -252,8 +252,8 @@ measured.
 ### Local Required
 
 - Full `uv run pytest` against the test Compose stack passes on the local
-  Ollama path. This run is slow (~20 minutes) and destructive against the test
-  Neo4j / Qdrant; it is not part of CI.
+  llama-server path. This run is slow (~20 minutes) and destructive against the
+  test Neo4j / Qdrant; it is not part of CI.
 - `uv run python scripts/bench_retrieval.py` reproduces the killer-demo numbers
   printed in the README within run-to-run variance.
 
@@ -298,9 +298,10 @@ for person and organization entities.
 
 ### Extraction Quality Depends On The Local Model
 
-Landscape is local-first, so extraction quality depends on the Ollama model in
-use. Smaller models are fast and cheap, but they can miss implicit relationships,
-invent inconsistent labels, or omit qualifiers.
+Landscape is local-first, so extraction quality depends on the local model in
+use (Qwen 3.5 9B by default, served by llama-server). Smaller models are fast and
+cheap, but they can miss implicit relationships, invent inconsistent labels, or
+omit qualifiers.
 
 Future work: benchmark extraction profiles across local models and expose
 profile-specific recommendations.
