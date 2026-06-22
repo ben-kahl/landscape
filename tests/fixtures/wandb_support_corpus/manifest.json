@@ -1,0 +1,186 @@
+[
+  {
+    "file": "00_wandb_changelog_fix_excerpts.md",
+    "repo": "wandb/wandb",
+    "url": "https://github.com/wandb/wandb/blob/main/CHANGELOG.md",
+    "title": "CHANGELOG fix excerpts",
+    "source": "github_changelog",
+    "topic": "release-notes",
+    "lines": 30
+  },
+  {
+    "file": "01_wandb_11532_bug-wandb-hangs-at-init-if-entity-is-different-to-.md",
+    "repo": "wandb/wandb",
+    "issue": 11532,
+    "url": "https://github.com/wandb/wandb/issues/11532",
+    "title": "[Bug]: wandb hangs at init if entity is different to logged in user",
+    "source": "github_issue",
+    "topic": "login",
+    "difficulty": "med-hard",
+    "closed_at": "2026-03-30T04:41:56Z",
+    "labels": [
+      "ty:bug",
+      "a:sdk"
+    ]
+  },
+  {
+    "file": "02_wandb_9580_bug-login-error-object-has-no-attribute-disabled.md",
+    "repo": "wandb/wandb",
+    "issue": 9580,
+    "url": "https://github.com/wandb/wandb/issues/9580",
+    "title": "[Bug]: Login error `Object has no attribute 'disabled'`",
+    "source": "github_issue",
+    "topic": "login",
+    "difficulty": "med",
+    "closed_at": "2025-03-24T14:53:52Z",
+    "labels": [
+      "ty:bug",
+      "a:sdk"
+    ]
+  },
+  {
+    "file": "03_wandb_5580_cli-wandb-log-failed-integration-with-metaflow-wan.md",
+    "repo": "wandb/wandb",
+    "issue": 5580,
+    "url": "https://github.com/wandb/wandb/issues/5580",
+    "title": "[CLI]: @wandb_log failed integration with metaflow - wandb.errors.AuthenticationError",
+    "source": "github_issue",
+    "topic": "auth",
+    "difficulty": "med",
+    "closed_at": "2025-05-13T10:05:37Z",
+    "labels": [
+      "a:app"
+    ]
+  },
+  {
+    "file": "04_wandb_7118_q-wandb-error-error-while-calling-w-b-api-user-is-.md",
+    "repo": "wandb/wandb",
+    "issue": 7118,
+    "url": "https://github.com/wandb/wandb/issues/7118",
+    "title": "[Q]wandb: ERROR Error while calling W&B API: user is not logged in (<Response [401]>)",
+    "source": "github_issue",
+    "topic": "auth",
+    "difficulty": "easy-med",
+    "closed_at": "2024-04-18T02:17:07Z",
+    "labels": [
+      "a:sdk",
+      "c:sdk:login"
+    ]
+  },
+  {
+    "file": "05_wandb_673_error-while-calling-w-b-api-permission-denied.md",
+    "repo": "wandb/wandb",
+    "issue": 673,
+    "url": "https://github.com/wandb/wandb/issues/673",
+    "title": "Error while calling W&B API: permission denied",
+    "source": "github_issue",
+    "topic": "auth",
+    "difficulty": "med",
+    "closed_at": "2021-02-22T13:00:41Z",
+    "labels": []
+  },
+  {
+    "file": "06_wandb_3845_cli-wandb-login-in-githubaction-workflow-for-unit-.md",
+    "repo": "wandb/wandb",
+    "issue": 3845,
+    "url": "https://github.com/wandb/wandb/issues/3845",
+    "title": "[CLI]: wandb login in GithubAction workflow for unit tests",
+    "source": "github_issue",
+    "topic": "auth",
+    "difficulty": "med",
+    "closed_at": "2023-03-08T04:12:50Z",
+    "labels": [
+      "a:sdk",
+      "c:sdk:console"
+    ]
+  },
+  {
+    "file": "07_wandb_4500_cli-artifact-cannot-be-created-when-metadata-conta.md",
+    "repo": "wandb/wandb",
+    "issue": 4500,
+    "url": "https://github.com/wandb/wandb/issues/4500",
+    "title": "[CLI]: Artifact cannot be created when metadata contains Tensors with wandb 0.13.5",
+    "source": "github_issue",
+    "topic": "serialization",
+    "difficulty": "easy",
+    "closed_at": "2023-01-13T19:53:27Z",
+    "labels": [
+      "ty:bug",
+      "a:sdk"
+    ]
+  },
+  {
+    "file": "08_wandb_2063_cli-matplotlib-figure-object-not-json-serializable.md",
+    "repo": "wandb/wandb",
+    "issue": 2063,
+    "url": "https://github.com/wandb/wandb/issues/2063",
+    "title": "[CLI] matplotlib Figure object not JSON serializable",
+    "source": "github_issue",
+    "topic": "serialization",
+    "difficulty": "easy",
+    "closed_at": "2024-11-22T22:34:00Z",
+    "labels": [
+      "ty:bug",
+      "c:sdk:media",
+      "a:sdk"
+    ]
+  },
+  {
+    "file": "09_wandb_7275_cli-typeerror-object-of-type-error-is-not-json-ser.md",
+    "repo": "wandb/wandb",
+    "issue": 7275,
+    "url": "https://github.com/wandb/wandb/issues/7275",
+    "title": "[CLI]: `TypeError: Object of type Error is not JSON serializable` when using `wandb.integration.openai.fine_tuning`",
+    "source": "github_issue",
+    "topic": "serialization",
+    "difficulty": "easy-med",
+    "closed_at": "2024-04-02T19:22:54Z",
+    "labels": [
+      "c:sdk:integration"
+    ]
+  },
+  {
+    "file": "10_wandb_7671_cli-wandb-errors-commerror-run-initialization-has-.md",
+    "repo": "wandb/wandb",
+    "issue": 7671,
+    "url": "https://github.com/wandb/wandb/issues/7671",
+    "title": "[CLI]: wandb.errors.CommError: Run initialization has timed out after 90.0 sec. \u201cIs it wandb'server error?\u201d",
+    "source": "github_issue",
+    "topic": "init",
+    "difficulty": "med",
+    "closed_at": "2024-09-03T19:52:19Z",
+    "labels": [
+      "a:app",
+      "s:nexus-fix"
+    ]
+  },
+  {
+    "file": "11_wandb_5396_cli-can-t-resume-run-with-correct-id.md",
+    "repo": "wandb/wandb",
+    "issue": 5396,
+    "url": "https://github.com/wandb/wandb/issues/5396",
+    "title": "[CLI]: Can't resume run with correct id",
+    "source": "github_issue",
+    "topic": "resume",
+    "difficulty": "med",
+    "closed_at": "2024-11-19T19:03:31Z",
+    "labels": [
+      "c:docs",
+      "c:sdk:internal-process",
+      "a:sdk",
+      "c:sdk:resume"
+    ]
+  },
+  {
+    "file": "12_weave_4639_pydantic-class-serialization-error-with-structured.md",
+    "repo": "wandb/weave",
+    "issue": 4639,
+    "url": "https://github.com/wandb/weave/issues/4639",
+    "title": "Pydantic class serialization error with structured output",
+    "source": "github_issue",
+    "topic": "serialization",
+    "difficulty": "med",
+    "closed_at": "2026-02-24T21:25:07Z",
+    "labels": []
+  }
+]
