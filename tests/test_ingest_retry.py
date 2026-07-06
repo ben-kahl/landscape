@@ -167,6 +167,62 @@ async def test_failed_ingest_then_retry_proceeds_as_fresh_ingest(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.unit
+async def test_stale_partial_doc_is_cleaned_and_reingested_fresh(monkeypatch):
+    """The central branch of the fix: an existing Document without the
+    completion marker (crash residue) must be cleaned up — Qdrant chunk
+    points before the Neo4j subtree — and then re-ingested fresh with
+    already_existed=False, not short-circuited as an already_existed no-op."""
+    import hashlib
+
+    from landscape import pipeline
+
+    text = "Alice leads Project Atlas."
+    content_hash = hashlib.sha256(text.encode()).hexdigest()
+
+    store = _FakeDocumentStore()
+    # Crash residue from a prior run: doc exists, never marked complete.
+    store._next_id = 1
+    store.docs[content_hash] = {"doc_id": "doc-1", "completed": False}
+
+    cleanup_order: list[str] = []
+
+    async def fake_delete_chunks_for_document(doc_id):
+        cleanup_order.append(f"qdrant:{doc_id}")
+
+    original_delete_subtree = store.delete_document_subtree
+
+    async def tracking_delete_subtree(doc_id):
+        cleanup_order.append(f"neo4j:{doc_id}")
+        await original_delete_subtree(doc_id)
+
+    monkeypatch.setattr(pipeline.neo4j_store, "merge_document", store.merge_document)
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "mark_document_ingested", store.mark_document_ingested
+    )
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "delete_document_subtree", tracking_delete_subtree
+    )
+    monkeypatch.setattr(
+        pipeline.qdrant_store, "delete_chunks_for_document", fake_delete_chunks_for_document
+    )
+
+    extraction = Extraction(
+        entities=[ExtractedEntity(name="Alice", type="PERSON", confidence=0.9)],
+        relations=[],
+    )
+    _install_common_pipeline_stubs(monkeypatch, pipeline, extract_result=extraction)
+
+    result = await pipeline.ingest(text, "stale-doc")
+
+    # Cleanup ran exactly once, Qdrant before Neo4j (documented invariant).
+    assert cleanup_order == ["qdrant:doc-1", "neo4j:doc-1"]
+    # The retry ran as a fresh ingest, and the recreated doc is complete.
+    assert result.already_existed is False
+    assert store.docs[content_hash]["completed"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
 async def test_ingest_failure_cleanup_only_runs_when_doc_owned(monkeypatch):
     """Cleanup (delete_document_subtree) must run when *this* run created
     the doc and a later stage fails, but must never run on the

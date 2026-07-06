@@ -65,7 +65,10 @@ async def backfill_ingest_completed_marker() -> None:
     content would misread them as stale partial ingests and delete their
     subtree. Any ``Document`` with at least one ``Chunk`` and no marker is
     assumed complete; its ``ingested_at`` is reused as the completion time
-    since we have no better signal. Safe to run on every process start.
+    since we have no better signal. A pre-marker doc that legitimately
+    produced zero chunks is not covered and will be re-ingested once on the
+    next identical-content ingest — benign, since the re-ingest converges.
+    Safe to run on every process start.
     """
     driver = get_driver()
     async with driver.session() as session:

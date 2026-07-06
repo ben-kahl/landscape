@@ -22,6 +22,32 @@ from landscape.storage import neo4j_store, qdrant_store
 
 _pipeline_log = logging.getLogger(__name__)
 
+# Serializes ingests of identical content within this process. Without it, a
+# concurrent second ingest of the same text would see the first run's
+# still-unmarked Document as a stale partial and destructively delete its
+# subtree mid-write. Entries are tiny and content churn is low in practice,
+# so the map is never pruned. Cross-process overlap (e.g. CLI and API
+# ingesting the same file simultaneously) is not covered — see ingest().
+_content_ingest_locks: dict[str, asyncio.Lock] = {}
+
+
+def _content_ingest_lock(content_hash: str) -> asyncio.Lock:
+    return _content_ingest_locks.setdefault(content_hash, asyncio.Lock())
+
+
+async def _rollback_document(doc_id: str) -> None:
+    """Remove a document's partial writes: Qdrant chunk points first, then
+    the Neo4j subtree (see delete_chunks_for_document for why this order).
+
+    This is not a full undo of the failed run: supersessions it performed
+    (system_until stamped onto previously-live facts/edges from other
+    sources) are not reverted. A successful retry of the same content
+    recreates the superseding facts; until then the superseded versions
+    stay historical.
+    """
+    await qdrant_store.delete_chunks_for_document(doc_id)
+    await neo4j_store.delete_document_subtree(doc_id)
+
 
 @dataclass
 class IngestResult:
@@ -44,6 +70,13 @@ async def ingest(
     debug: bool = False,
     log_context: IngestLogContext | None = None,
 ) -> IngestResult:
+    """Ingest one text as a Document: chunk, embed, extract, persist.
+
+    Concurrency: ingests of identical content are serialized within this
+    process (see _content_ingest_locks). Concurrent same-content ingests
+    from *separate* processes (e.g. CLI alongside the API) can still race
+    the stale-partial cleanup below and are assumed not to happen.
+    """
     content_hash = hashlib.sha256(text.encode()).hexdigest()
     log = log_context or create_ingest_log_context(
         title=title,
@@ -62,6 +95,8 @@ async def ingest(
     owns_doc_lifecycle = False
     doc_id: str | None = None
 
+    lock = _content_ingest_lock(content_hash)
+    await lock.acquire()
     try:
         stage_started_at = log.set_stage("document_merged")
         doc_id, created, ingest_completed = await neo4j_store.merge_document(
@@ -72,8 +107,7 @@ async def ingest(
             # never reached mark_document_ingested (crash, LLM/Qdrant outage,
             # etc). Clean up the orphaned subtree and re-merge fresh rather
             # than silently treating this retry as an already_existed no-op.
-            await qdrant_store.delete_chunks_for_document(doc_id)
-            await neo4j_store.delete_document_subtree(doc_id)
+            await _rollback_document(doc_id)
             log.emit(
                 "incomplete_document_cleaned",
                 doc_id=doc_id,
@@ -453,11 +487,12 @@ async def ingest(
     except Exception as exc:
         if owns_doc_lifecycle and doc_id is not None:
             # Best-effort rollback so a retry of the same content doesn't
-            # get stuck behind this run's partial writes. Never let a
-            # cleanup failure mask the original exception.
+            # get stuck behind this run's partial writes (not a full undo —
+            # see _rollback_document). Never let a cleanup failure mask the
+            # original exception.
             try:
-                await qdrant_store.delete_chunks_for_document(doc_id)
-                await neo4j_store.delete_document_subtree(doc_id)
+                await _rollback_document(doc_id)
+                log.emit("partial_ingest_rolled_back", doc_id=doc_id)
             except Exception:
                 _pipeline_log.exception(
                     "failed to clean up partial ingest for doc_id=%s after "
@@ -467,6 +502,8 @@ async def ingest(
                 )
         log.emit_failed(exc)
         raise
+    finally:
+        lock.release()
 
 
 async def ingest_file(
