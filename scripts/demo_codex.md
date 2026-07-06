@@ -11,7 +11,7 @@ Evaluate Landscape — local-first graph + vector memory — as a persistent mem
 
 ## Prerequisites
 
-- Docker Compose stack running locally (`docker compose up -d`). Neo4j + Qdrant + Ollama + FastAPI.
+- Docker Compose stack running locally (`docker compose up -d`). Neo4j + Qdrant + llama-server (OpenAI-compatible) + FastAPI.
 - `uv` installed.
 - Codex CLI installed and logged in (`codex login`).
 
