@@ -69,6 +69,7 @@ async def test_fastapi_lifespan_skips_mcp_session_manager_under_pytest(monkeypat
     monkeypatch.setattr(qdrant_store, "init_chunks_collection", noop)
     monkeypatch.setattr(qdrant_store, "close_client", noop)
     monkeypatch.setattr(neo4j_store, "close_driver", noop)
+    monkeypatch.setattr(neo4j_store, "backfill_ingest_completed_marker", noop)
 
     async with app.router.lifespan_context(app):
         assert mcp.session_manager._task_group is None
@@ -91,6 +92,7 @@ async def test_fastapi_lifespan_can_run_repeatedly_under_pytest(monkeypatch):
     monkeypatch.setattr(qdrant_store, "init_chunks_collection", noop)
     monkeypatch.setattr(qdrant_store, "close_client", noop)
     monkeypatch.setattr(neo4j_store, "close_driver", noop)
+    monkeypatch.setattr(neo4j_store, "backfill_ingest_completed_marker", noop)
 
     async with app.router.lifespan_context(app):
         first_session_manager = mcp.session_manager

@@ -48,6 +48,10 @@ class FakeNeo4jStore:
     def __init__(self, close_error=None):
         self.closed = False
         self.close_error = close_error
+        self.backfilled = False
+
+    async def backfill_ingest_completed_marker(self):
+        self.backfilled = True
 
     async def close_driver(self):
         if self.close_error is not None:

@@ -65,6 +65,7 @@ async def _startup_storage() -> None:
     await auth_store.ensure_schema()
     await qdrant_store.init_collection()
     await qdrant_store.init_chunks_collection()
+    await neo4j_store.backfill_ingest_completed_marker()
 
 
 async def _shutdown_storage() -> None:

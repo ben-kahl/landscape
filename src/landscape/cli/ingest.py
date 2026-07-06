@@ -216,6 +216,7 @@ async def _ingest_text(
         encoder.load_model()
         await qdrant_store.init_collection()
         await qdrant_store.init_chunks_collection()
+        await neo4j_store.backfill_ingest_completed_marker()
         return await pipeline.ingest(
             text,
             title,

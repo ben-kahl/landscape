@@ -77,6 +77,10 @@ class _FakeQdrant:
 class _FakeNeo4j:
     def __init__(self) -> None:
         self.closed = False
+        self.backfilled = False
+
+    async def backfill_ingest_completed_marker(self) -> None:
+        self.backfilled = True
 
     async def close(self) -> None:
         self.closed = True

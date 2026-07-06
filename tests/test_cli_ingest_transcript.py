@@ -111,6 +111,9 @@ async def test_handle_ingest_transcript_happy_path_ingests(monkeypatch, tmp_path
     monkeypatch.setattr("landscape.embeddings.encoder.load_model", lambda: None)
     monkeypatch.setattr("landscape.storage.qdrant_store.init_collection", _anoop)
     monkeypatch.setattr("landscape.storage.qdrant_store.init_chunks_collection", _anoop)
+    monkeypatch.setattr(
+        "landscape.storage.neo4j_store.backfill_ingest_completed_marker", _anoop
+    )
     # close_runtime is imported at module scope in cli.transcript
     monkeypatch.setattr("landscape.cli.transcript.close_runtime", _anoop)
 
