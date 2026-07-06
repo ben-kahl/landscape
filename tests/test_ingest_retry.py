@@ -396,3 +396,19 @@ async def test_stale_partial_ingest_cleanup_round_trip(
         )
         fact_record = await fact_result.single()
         assert fact_record["cnt"] >= 1
+
+        # Graph-consistency invariant: subtree cleanup must not leave any
+        # MEMORY_REL edge (live between two entities, keyed by a
+        # memory_fact_id property) whose MemoryFact node is gone. Such a
+        # phantom edge would still be traversable by graph retrieval.
+        orphan_result = await session.run(
+            """
+            MATCH (s:Entity {name: $subject})-[r:MEMORY_REL]-(o:Entity {name: $object})
+            WHERE NOT EXISTS { MATCH (:MemoryFact {id: r.memory_fact_id}) }
+            RETURN count(r) AS cnt
+            """,
+            subject=shared_subject,
+            object=shared_object,
+        )
+        orphan_record = await orphan_result.single()
+        assert orphan_record["cnt"] == 0

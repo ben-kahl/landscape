@@ -85,9 +85,14 @@ async def delete_document_subtree(doc_id: str) -> None:
 
     Order of operations:
     1. Delete ``MemoryFact``s whose *only* supporting assertions come from
-       this doc. A fact also supported by another document's assertions must
-       survive — deleting it would destroy a fact that is still true and
-       still evidenced elsewhere.
+       this doc, together with their materialized ``MEMORY_REL`` edges. A
+       fact also supported by another document's assertions must survive —
+       deleting it would destroy a fact that is still true and still
+       evidenced elsewhere. The ``MEMORY_REL`` edge lives directly between
+       the two ``Entity`` nodes, keyed by a ``memory_fact_id`` property
+       rather than attached to the fact node, so ``DETACH DELETE`` on the
+       fact alone would leave a live, traversable edge pointing at a
+       deleted fact — a phantom hop for graph retrieval.
     2. DETACH DELETE the doc's ``Assertion``s, ``Chunk``s, and the
        ``Document`` node itself.
     3. ``Entity`` nodes are never deleted here — they are shared across
@@ -101,7 +106,10 @@ async def delete_document_subtree(doc_id: str) -> None:
     """
     driver = get_driver()
     async with driver.session() as session:
-        # Step 1: facts supported only by this doc's assertions.
+        # Step 1: facts supported only by this doc's assertions, plus their
+        # MEMORY_REL edges (see docstring). The other-Document survival
+        # check is sufficient: a fact's id embeds its single assertion's
+        # source, so a doc-sourced fact can never also be Turn-supported.
         await session.run(
             """
             MATCH (d:Document) WHERE elementId(d) = $doc_id
@@ -110,6 +118,10 @@ async def delete_document_subtree(doc_id: str) -> None:
                 MATCH (other:Document)-[:ASSERTS]->(:Assertion)-[:SUPPORTS]->(f)
                 WHERE elementId(other) <> $doc_id
             }
+            WITH f
+            OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: f.id}]-()
+            DELETE r
+            WITH DISTINCT f
             DETACH DELETE f
             """,
             doc_id=doc_id,
