@@ -312,12 +312,21 @@ async def test_stale_partial_ingest_cleanup_round_trip(
 ):
     """Full round trip against real Neo4j/Qdrant: ingest doc A, remove its
     completion marker to simulate a crash mid-pipeline, re-ingest the same
-    text, and assert (a) no duplicate chunks/assertions pile up and (b) a
-    MemoryFact also supported by a *different* document survives the
-    subtree cleanup of the stale doc.
+    text, and assert (a) no duplicate docs/chunks pile up, (b) a MemoryFact
+    also supported by a *different* source survives the subtree cleanup of
+    the stale doc, and (c) no orphaned MEMORY_REL edges are left behind.
 
-    Not run automatically (integration-marked, requires the docker stack).
+    The second supporting source is constructed via Cypher rather than a
+    second LLM ingest: documents are keyed by content_hash (identical text
+    would no-op as already_existed), and paraphrased text would make the
+    shared-fact setup hostage to extraction nondeterminism. Building graph
+    state directly for determinism follows the repo precedent set by
+    test_temporal_filter_excludes_superseded.
+
+    Not run automatically (integration-marked, requires the test stack).
     """
+    from datetime import UTC, datetime
+
     from landscape import pipeline
 
     title = "stale-partial-ingest-doc"
@@ -326,12 +335,27 @@ async def test_stale_partial_ingest_cleanup_round_trip(
     shared_subject = "Diego"
     shared_object = "Vision Team"
 
+    # Pre-clean any residue from earlier runs: facts touching the test
+    # entities (and their MEMORY_REL edges), both test documents with their
+    # assertions/chunks, then the entities themselves.
     async with neo4j_driver.session() as session:
         await session.run(
-            "MATCH (d:Document) WHERE d.title IN [$t1, $t2] "
-            "OPTIONAL MATCH (d)-[:ASSERTS]->(a:Assertion) "
-            "OPTIONAL MATCH (c:Chunk)-[:PART_OF]->(d) "
-            "DETACH DELETE d, a, c",
+            """
+            MATCH (e:Entity) WHERE e.name IN [$s, $o]
+            OPTIONAL MATCH (e)-[:AS_SUBJECT|AS_OBJECT]-(f:MemoryFact)
+            OPTIONAL MATCH (f)<-[:SUPPORTS]-(a:Assertion)
+            DETACH DELETE f, a
+            """,
+            s=shared_subject,
+            o=shared_object,
+        )
+        await session.run(
+            """
+            MATCH (d:Document) WHERE d.title IN [$t1, $t2]
+            OPTIONAL MATCH (d)-[:ASSERTS]->(a:Assertion)
+            OPTIONAL MATCH (c:Chunk)-[:PART_OF]->(d)
+            DETACH DELETE d, a, c
+            """,
             t1=title,
             t2=other_title,
         )
@@ -341,18 +365,50 @@ async def test_stale_partial_ingest_cleanup_round_trip(
             o=shared_object,
         )
 
-    # First ingest of the doc under test.
+    # First ingest of the doc under test (real extraction pipeline).
     result_a = await pipeline.ingest(text, title)
     assert result_a.already_existed is False
 
-    # A second, independent document reinforcing the same fact — this is
-    # the fact that must survive when doc A's subtree is cleaned up.
-    result_other = await pipeline.ingest(text, other_title)
-    assert result_other.already_existed is False
-
-    # Simulate a crash mid-pipeline on doc A: strip its completion marker
-    # so the next ingest of identical text sees it as a stale partial.
     async with neo4j_driver.session() as session:
+        # Pick one fact supported by doc A's assertions to share.
+        fact_result = await session.run(
+            """
+            MATCH (d:Document {title: $title})
+                  -[:ASSERTS]->(:Assertion)-[:SUPPORTS]->(f:MemoryFact)
+            RETURN f.id AS fact_id LIMIT 1
+            """,
+            title=title,
+        )
+        fact_record = await fact_result.single()
+        assert fact_record is not None, "extraction produced no promoted facts"
+        shared_fact_id = fact_record["fact_id"]
+
+        # Second, independent source supporting the same fact — this fact
+        # must survive when doc A's subtree is cleaned up.
+        now = datetime.now(UTC).isoformat()
+        await session.run(
+            """
+            MATCH (f:MemoryFact {id: $fact_id})
+            CREATE (d2:Document {
+                title: $other_title,
+                content_hash: $other_hash,
+                source_type: "text",
+                ingested_at: $now,
+                ingest_completed_at: $now
+            })
+            CREATE (a2:Assertion {id: $assertion_id, created_at: $now})
+            MERGE (d2)-[:ASSERTS]->(a2)
+            MERGE (a2)-[:SUPPORTS]->(f)
+            """,
+            fact_id=shared_fact_id,
+            other_title=other_title,
+            other_hash="test-shared-support-hash",
+            now=now,
+            assertion_id="assertion:document:test-shared-support",
+        )
+
+        # Simulate a crash mid-pipeline on doc A: strip its completion
+        # marker so the next ingest of identical text sees a stale partial.
         await session.run(
             "MATCH (d:Document {title: $title}) REMOVE d.ingest_completed_at",
             title=title,
@@ -384,18 +440,13 @@ async def test_stale_partial_ingest_cleanup_round_trip(
         chunk_record = await chunk_result.single()
         assert chunk_record["cnt"] >= 1
 
-        # The shared fact (also asserted by other_title's doc) must survive.
-        fact_result = await session.run(
-            """
-            MATCH (s:Entity {name: $subject})-[r:MEMORY_REL]->(o:Entity {name: $object})
-            WHERE r.system_until IS NULL
-            RETURN count(r) AS cnt
-            """,
-            subject=shared_subject,
-            object=shared_object,
+        # The shared fact (also supported by the second source) survived.
+        shared_result = await session.run(
+            "MATCH (f:MemoryFact {id: $fact_id}) RETURN count(f) AS cnt",
+            fact_id=shared_fact_id,
         )
-        fact_record = await fact_result.single()
-        assert fact_record["cnt"] >= 1
+        shared_record = await shared_result.single()
+        assert shared_record["cnt"] == 1
 
         # Graph-consistency invariant: subtree cleanup must not leave any
         # MEMORY_REL edge (live between two entities, keyed by a

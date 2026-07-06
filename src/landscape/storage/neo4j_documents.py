@@ -86,12 +86,13 @@ async def delete_document_subtree(doc_id: str) -> None:
     Order of operations:
     1. Delete ``MemoryFact``s whose *only* supporting assertions come from
        this doc, together with their materialized ``MEMORY_REL`` edges. A
-       fact also supported by another document's assertions must survive —
-       deleting it would destroy a fact that is still true and still
-       evidenced elsewhere. The ``MEMORY_REL`` edge lives directly between
-       the two ``Entity`` nodes, keyed by a ``memory_fact_id`` property
-       rather than attached to the fact node, so ``DETACH DELETE`` on the
-       fact alone would leave a live, traversable edge pointing at a
+       fact also supported by any assertion this doc does not own — another
+       document's, or a conversation turn's via agent write-back — must
+       survive: deleting it would destroy a fact that is still true and
+       still evidenced elsewhere. The ``MEMORY_REL`` edge lives directly
+       between the two ``Entity`` nodes, keyed by a ``memory_fact_id``
+       property rather than attached to the fact node, so ``DETACH DELETE``
+       on the fact alone would leave a live, traversable edge pointing at a
        deleted fact — a phantom hop for graph retrieval.
     2. DETACH DELETE the doc's ``Assertion``s, ``Chunk``s, and the
        ``Document`` node itself.
@@ -107,16 +108,17 @@ async def delete_document_subtree(doc_id: str) -> None:
     driver = get_driver()
     async with driver.session() as session:
         # Step 1: facts supported only by this doc's assertions, plus their
-        # MEMORY_REL edges (see docstring). The other-Document survival
-        # check is sufficient: a fact's id embeds its single assertion's
-        # source, so a doc-sourced fact can never also be Turn-supported.
+        # MEMORY_REL edges (see docstring). Fact ids are content-derived
+        # (family + entity ids), so one fact can accumulate SUPPORTS from
+        # multiple documents and turns — delete it only when every
+        # supporting assertion belongs to this doc.
         await session.run(
             """
             MATCH (d:Document) WHERE elementId(d) = $doc_id
             MATCH (d)-[:ASSERTS]->(:Assertion)-[:SUPPORTS]->(f:MemoryFact)
             WHERE NOT EXISTS {
-                MATCH (other:Document)-[:ASSERTS]->(:Assertion)-[:SUPPORTS]->(f)
-                WHERE elementId(other) <> $doc_id
+                MATCH (a2:Assertion)-[:SUPPORTS]->(f)
+                WHERE NOT (d)-[:ASSERTS]->(a2)
             }
             WITH f
             OPTIONAL MATCH ()-[r:MEMORY_REL {memory_fact_id: f.id}]-()
