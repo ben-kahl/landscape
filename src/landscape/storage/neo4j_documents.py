@@ -108,10 +108,12 @@ async def delete_document_subtree(doc_id: str) -> None:
     driver = get_driver()
     async with driver.session() as session:
         # Step 1: facts supported only by this doc's assertions, plus their
-        # MEMORY_REL edges (see docstring). Fact ids are content-derived
-        # (family + entity ids), so one fact can accumulate SUPPORTS from
-        # multiple documents and turns — delete it only when every
-        # supporting assertion belongs to this doc.
+        # MEMORY_REL edges (see docstring). In the current model a fact id
+        # embeds its single assertion's id (hash(fact_key:assertion_id) in
+        # neo4j_facts), so a fact node has exactly one supporter and the
+        # any-other-supporter survival clause below is defensive hardening:
+        # it stays correct if facts ever become multi-source (e.g. shared
+        # doc+turn support) without silently deleting still-evidenced facts.
         await session.run(
             """
             MATCH (d:Document) WHERE elementId(d) = $doc_id

@@ -331,9 +331,13 @@ async def test_stale_partial_ingest_cleanup_round_trip(
 
     title = "stale-partial-ingest-doc"
     other_title = "stale-partial-other-doc"
-    text = "Diego leads Vision Team."
-    shared_subject = "Diego"
-    shared_object = "Vision Team"
+    # Two sentences -> at least two facts, so that exactly one gets the
+    # synthetic external support and the other(s) stay doc-only. The
+    # doc-only facts are what force the cleanup's MEMORY_REL edge deletion
+    # to actually execute (a corpus whose only fact is shared would leave
+    # nothing to delete, making the orphan assertions below vacuous).
+    text = "Diego leads Vision Team. Diego uses PyTorch."
+    test_entities = ["Diego", "Vision Team", "PyTorch"]
 
     # Pre-clean any residue from earlier runs: facts touching the test
     # entities (and their MEMORY_REL edges), both test documents with their
@@ -341,13 +345,12 @@ async def test_stale_partial_ingest_cleanup_round_trip(
     async with neo4j_driver.session() as session:
         await session.run(
             """
-            MATCH (e:Entity) WHERE e.name IN [$s, $o]
+            MATCH (e:Entity) WHERE e.name IN $names
             OPTIONAL MATCH (e)-[:AS_SUBJECT|AS_OBJECT]-(f:MemoryFact)
             OPTIONAL MATCH (f)<-[:SUPPORTS]-(a:Assertion)
             DETACH DELETE f, a
             """,
-            s=shared_subject,
-            o=shared_object,
+            names=test_entities,
         )
         await session.run(
             """
@@ -360,9 +363,8 @@ async def test_stale_partial_ingest_cleanup_round_trip(
             t2=other_title,
         )
         await session.run(
-            "MATCH (e:Entity) WHERE e.name IN [$s, $o] DETACH DELETE e",
-            s=shared_subject,
-            o=shared_object,
+            "MATCH (e:Entity) WHERE e.name IN $names DETACH DELETE e",
+            names=test_entities,
         )
 
     # First ingest of the doc under test (real extraction pipeline).
@@ -370,18 +372,22 @@ async def test_stale_partial_ingest_cleanup_round_trip(
     assert result_a.already_existed is False
 
     async with neo4j_driver.session() as session:
-        # Pick one fact supported by doc A's assertions to share.
+        # Collect doc A's facts; share exactly one, leave the rest doc-only.
         fact_result = await session.run(
             """
             MATCH (d:Document {title: $title})
                   -[:ASSERTS]->(:Assertion)-[:SUPPORTS]->(f:MemoryFact)
-            RETURN f.id AS fact_id LIMIT 1
+            RETURN DISTINCT f.id AS fact_id ORDER BY fact_id
             """,
             title=title,
         )
-        fact_record = await fact_result.single()
-        assert fact_record is not None, "extraction produced no promoted facts"
-        shared_fact_id = fact_record["fact_id"]
+        fact_ids = [record["fact_id"] async for record in fact_result]
+        assert len(fact_ids) >= 2, (
+            f"extraction produced {len(fact_ids)} promoted fact(s); need >=2 "
+            "so at least one stays doc-only and exercises edge cleanup"
+        )
+        shared_fact_id = fact_ids[0]
+        doc_only_fact_ids = fact_ids[1:]
 
         # Second, independent source supporting the same fact — this fact
         # must survive when doc A's subtree is cleaned up.
@@ -448,18 +454,37 @@ async def test_stale_partial_ingest_cleanup_round_trip(
         shared_record = await shared_result.single()
         assert shared_record["cnt"] == 1
 
-        # Graph-consistency invariant: subtree cleanup must not leave any
-        # MEMORY_REL edge (live between two entities, keyed by a
-        # memory_fact_id property) whose MemoryFact node is gone. Such a
+        # Doc-only facts were deleted by the cleanup, and — the direct
+        # regression guard for the MEMORY_REL fix — no edge keyed to their
+        # ids survived them. (The retry re-creates equivalent facts under
+        # new ids, so the old ids must be fully gone.)
+        stale_fact_result = await session.run(
+            "MATCH (f:MemoryFact) WHERE f.id IN $ids RETURN count(f) AS cnt",
+            ids=doc_only_fact_ids,
+        )
+        stale_fact_record = await stale_fact_result.single()
+        assert stale_fact_record["cnt"] == 0
+
+        stale_edge_result = await session.run(
+            """
+            MATCH ()-[r:MEMORY_REL]-() WHERE r.memory_fact_id IN $ids
+            RETURN count(r) AS cnt
+            """,
+            ids=doc_only_fact_ids,
+        )
+        stale_edge_record = await stale_edge_result.single()
+        assert stale_edge_record["cnt"] == 0
+
+        # Graph-consistency invariant: no MEMORY_REL edge touching the test
+        # entities may reference a MemoryFact that no longer exists. Such a
         # phantom edge would still be traversable by graph retrieval.
         orphan_result = await session.run(
             """
-            MATCH (s:Entity {name: $subject})-[r:MEMORY_REL]-(o:Entity {name: $object})
-            WHERE NOT EXISTS { MATCH (:MemoryFact {id: r.memory_fact_id}) }
+            MATCH (e:Entity)-[r:MEMORY_REL]-() WHERE e.name IN $names
+            AND NOT EXISTS { MATCH (:MemoryFact {id: r.memory_fact_id}) }
             RETURN count(r) AS cnt
             """,
-            subject=shared_subject,
-            object=shared_object,
+            names=test_entities,
         )
         orphan_record = await orphan_result.single()
         assert orphan_record["cnt"] == 0
