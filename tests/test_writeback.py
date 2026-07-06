@@ -51,7 +51,7 @@ async def test_add_entity_resolves_to_existing(http_client, neo4j_driver):
     from landscape.writeback import add_entity
 
     # Pre-create the canonical entity exactly as the pipeline does
-    doc_id, _ = await neo4j_store.merge_document("hash-wb-r2", "wb-doc-2", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-wb-r2", "wb-doc-2", "text")
     entity_id = await neo4j_store.merge_entity(
         "Acme Corporation", "Organization", "wb-doc-2", 0.9, doc_id, "test"
     )
@@ -241,7 +241,7 @@ async def test_add_relation_no_duplicate_subject_entity(http_client, neo4j_drive
     from landscape.writeback import add_relation
 
     # Seed Alice as a PERSON entity (simulating prior ingest pipeline output)
-    doc_id, _ = await neo4j_store.merge_document("hash-wb-dup", "wb-dup-doc", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-wb-dup", "wb-dup-doc", "text")
     alice_id = await neo4j_store.merge_entity(
         "Alice", "Person", "wb-dup-doc", 0.9, doc_id, "test"
     )
@@ -873,7 +873,7 @@ async def _seed_entity_with_vector(
     from landscape.embeddings import encoder
     from landscape.storage import neo4j_store, qdrant_store
 
-    doc_id, _ = await neo4j_store.merge_document(
+    doc_id, _, _ = await neo4j_store.merge_document(
         f"hash-seed-{name.lower().replace(' ', '-')}",
         f"seed-doc-{name.lower().replace(' ', '-')}",
         "text",

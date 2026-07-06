@@ -6,8 +6,17 @@ from datetime import UTC, datetime
 from landscape.storage.neo4j_driver import get_driver
 
 
-async def merge_document(content_hash: str, title: str, source_type: str) -> tuple[str, bool]:
-    """Returns (doc_id, created). created=False means hash already existed."""
+async def merge_document(
+    content_hash: str, title: str, source_type: str
+) -> tuple[str, bool, bool]:
+    """Returns (doc_id, created, ingest_completed).
+
+    ``created=False`` means a ``Document`` with this content hash already
+    existed. ``ingest_completed`` reports whether that existing document has
+    an ``ingest_completed_at`` marker (see ``mark_document_ingested``); for a
+    freshly created document it is always ``False`` since the marker is only
+    set once the full pipeline finishes writing.
+    """
     driver = get_driver()
     async with driver.session() as session:
         result = await session.run(
@@ -16,7 +25,9 @@ async def merge_document(content_hash: str, title: str, source_type: str) -> tup
             ON CREATE SET d.title = $title,
                           d.source_type = $source_type,
                           d.ingested_at = $now
-            RETURN elementId(d) AS doc_id, (d.ingested_at = $now) AS created
+            RETURN elementId(d) AS doc_id,
+                   (d.ingested_at = $now) AS created,
+                   (d.ingest_completed_at IS NOT NULL) AS ingest_completed
             """,
             hash=content_hash,
             title=title,
@@ -24,7 +35,95 @@ async def merge_document(content_hash: str, title: str, source_type: str) -> tup
             now=datetime.now(UTC).isoformat(),
         )
         record = await result.single()
-        return record["doc_id"], record["created"]
+        return record["doc_id"], record["created"], record["ingest_completed"]
+
+
+async def mark_document_ingested(doc_id: str) -> None:
+    """Set the completion marker once every write stage for a doc succeeds.
+
+    ``pipeline.ingest()`` calls this as its final write step. Its absence is
+    how a partially-ingested document (killed mid-pipeline by an LLM/Qdrant
+    outage) is distinguished from a genuinely-complete one on retry.
+    """
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (d:Document) WHERE elementId(d) = $doc_id
+            SET d.ingest_completed_at = $now
+            """,
+            doc_id=doc_id,
+            now=datetime.now(UTC).isoformat(),
+        )
+
+
+async def backfill_ingest_completed_marker() -> None:
+    """Idempotently mark pre-existing, fully-chunked docs as complete.
+
+    Docs ingested before the completion-marker feature existed have no
+    ``ingest_completed_at``. Without this backfill, a re-ingest of identical
+    content would misread them as stale partial ingests and delete their
+    subtree. Any ``Document`` with at least one ``Chunk`` and no marker is
+    assumed complete; its ``ingested_at`` is reused as the completion time
+    since we have no better signal. Safe to run on every process start.
+    """
+    driver = get_driver()
+    async with driver.session() as session:
+        await session.run(
+            """
+            MATCH (d:Document)
+            WHERE d.ingest_completed_at IS NULL
+              AND EXISTS { MATCH (:Chunk)-[:PART_OF]->(d) }
+            SET d.ingest_completed_at = d.ingested_at
+            """
+        )
+
+
+async def delete_document_subtree(doc_id: str) -> None:
+    """Delete a document's graph subtree — used to clean up a stale partial
+    ingest before retrying, or to roll back a failed ingest.
+
+    Order of operations:
+    1. Delete ``MemoryFact``s whose *only* supporting assertions come from
+       this doc. A fact also supported by another document's assertions must
+       survive — deleting it would destroy a fact that is still true and
+       still evidenced elsewhere.
+    2. DETACH DELETE the doc's ``Assertion``s, ``Chunk``s, and the
+       ``Document`` node itself.
+    3. ``Entity`` nodes are never deleted here — they are shared across
+       documents. Their provenance edges into this doc's subtree die with the
+       DETACH DELETE of the Assertions/Chunks/Document above; the entities
+       themselves persist for other documents to reference.
+
+    Callers are responsible for deleting the corresponding Qdrant chunk
+    points (see ``qdrant_store.delete_chunks_for_document``) — see that
+    function's docstring for why Qdrant is cleaned up *before* this runs.
+    """
+    driver = get_driver()
+    async with driver.session() as session:
+        # Step 1: facts supported only by this doc's assertions.
+        await session.run(
+            """
+            MATCH (d:Document) WHERE elementId(d) = $doc_id
+            MATCH (d)-[:ASSERTS]->(:Assertion)-[:SUPPORTS]->(f:MemoryFact)
+            WHERE NOT EXISTS {
+                MATCH (other:Document)-[:ASSERTS]->(:Assertion)-[:SUPPORTS]->(f)
+                WHERE elementId(other) <> $doc_id
+            }
+            DETACH DELETE f
+            """,
+            doc_id=doc_id,
+        )
+        # Step 2: assertions, chunks, and the document node.
+        await session.run(
+            """
+            MATCH (d:Document) WHERE elementId(d) = $doc_id
+            OPTIONAL MATCH (d)-[:ASSERTS]->(a:Assertion)
+            OPTIONAL MATCH (c:Chunk)-[:PART_OF]->(d)
+            DETACH DELETE a, c, d
+            """,
+            doc_id=doc_id,
+        )
 
 
 def _validate_id_segment(name: str, value: str) -> None:

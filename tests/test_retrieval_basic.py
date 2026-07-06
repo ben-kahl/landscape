@@ -1239,7 +1239,7 @@ async def test_alias_resolved_relation_traversable_from_canonical(neo4j_driver):
     # Seed Robert in Neo4j + Qdrant using the "Bob (Person)" vector so that
     # the resolver finds Robert when add_entity("Bob") queries Qdrant.
     bob_vector = encoder.encode("Bob (Person)")
-    doc_id, _ = await neo4j_store.merge_document(
+    doc_id, _, _ = await neo4j_store.merge_document(
         "hash-ret-alias-robert", "ret-alias-robert-doc", "text"
     )
     robert_id = await neo4j_store.merge_entity(
@@ -1257,7 +1257,7 @@ async def test_alias_resolved_relation_traversable_from_canonical(neo4j_driver):
     await neo4j_store.add_alias(robert_id, "Bob", "test-alias", 0.95)
 
     # Seed Acme in Neo4j + Qdrant.
-    doc_id2, _ = await neo4j_store.merge_document(
+    doc_id2, _, _ = await neo4j_store.merge_document(
         "hash-ret-alias-acme", "ret-alias-acme-doc", "text"
     )
     acme_id = await neo4j_store.merge_entity(

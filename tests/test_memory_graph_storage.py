@@ -44,7 +44,7 @@ def test_memory_fact_key_modes_follow_family_config():
 
 @pytest.mark.asyncio
 async def test_value_backed_family_preserves_value_identity_on_promotion(neo4j_driver):
-    doc_id, _ = await neo4j_store.merge_document("hash-happened", "value-backed-test", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-happened", "value-backed-test", "text")
     kickoff = await neo4j_store.merge_entity(
         "Kickoff", "EVENT", "value-backed-test", 0.95, doc_id, "test"
     )
@@ -108,8 +108,8 @@ async def test_value_backed_family_preserves_value_identity_on_promotion(neo4j_d
 
 @pytest.mark.asyncio
 async def test_object_keyed_family_supersedes_on_same_slot(neo4j_driver):
-    doc1, _ = await neo4j_store.merge_document("hash-title-1", "object-keyed-test-1", "text")
-    doc2, _ = await neo4j_store.merge_document("hash-title-2", "object-keyed-test-2", "text")
+    doc1, _, _ = await neo4j_store.merge_document("hash-title-1", "object-keyed-test-1", "text")
+    doc2, _, _ = await neo4j_store.merge_document("hash-title-2", "object-keyed-test-2", "text")
     alice = await neo4j_store.merge_entity(
         "Alice", "PERSON", "object-keyed-test", 0.95, doc1, "test"
     )
@@ -177,8 +177,8 @@ async def test_object_keyed_family_supersedes_on_same_slot(neo4j_driver):
 
 @pytest.mark.asyncio
 async def test_subtype_keyed_family_supersedes_on_same_slot(neo4j_driver):
-    doc1, _ = await neo4j_store.merge_document("hash-pref-1", "subtype-keyed-test-1", "text")
-    doc2, _ = await neo4j_store.merge_document("hash-pref-2", "subtype-keyed-test-2", "text")
+    doc1, _, _ = await neo4j_store.merge_document("hash-pref-1", "subtype-keyed-test-1", "text")
+    doc2, _, _ = await neo4j_store.merge_document("hash-pref-2", "subtype-keyed-test-2", "text")
     alice = await neo4j_store.merge_entity(
         "Alice", "PERSON", "subtype-keyed-test", 0.95, doc1, "test"
     )
@@ -560,7 +560,7 @@ async def test_bfs_expand_memory_rel_uses_current_edges_only(neo4j_driver):
 @pytest.mark.asyncio
 async def test_subject_keyed_cross_polarity_supersession(neo4j_driver):
     """Positive WORKS_FOR then negative WORKS_FOR should supersede the positive."""
-    doc_id, _ = await neo4j_store.merge_document("hash-xpol-1", "xpol-test", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-xpol-1", "xpol-test", "text")
     alice = await neo4j_store.merge_entity(
         "Alice", "Person", "xpol-test", 0.9, doc_id, "test"
     )
@@ -626,7 +626,7 @@ async def test_subject_keyed_cross_polarity_supersession(neo4j_driver):
 @pytest.mark.asyncio
 async def test_additive_entity_cross_polarity_supersession(neo4j_driver):
     """Positive USES then negative USES on same subject+object should supersede the positive."""
-    doc_id, _ = await neo4j_store.merge_document("hash-add-ent", "add-ent-test", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-add-ent", "add-ent-test", "text")
     project = await neo4j_store.merge_entity(
         "Project X", "Project", "add-ent-test", 0.9, doc_id, "test"
     )
@@ -691,7 +691,7 @@ async def test_additive_entity_cross_polarity_supersession(neo4j_driver):
 @pytest.mark.asyncio
 async def test_additive_value_cross_polarity_supersession(neo4j_driver):
     """Positive RECOMMENDED then negative RECOMMENDED on same subject+value should supersede."""
-    doc_id, _ = await neo4j_store.merge_document("hash-add-val", "add-val-test", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-add-val", "add-val-test", "text")
     team = await neo4j_store.merge_entity(
         "Platform Team", "Team", "add-val-test", 0.9, doc_id, "test"
     )
@@ -738,7 +738,7 @@ async def test_additive_value_cross_polarity_supersession(neo4j_driver):
 @pytest.mark.asyncio
 async def test_additive_coexistence_unaffected_by_negation(neo4j_driver):
     """Negating USES Redis must not affect the live USES Kafka fact."""
-    doc_id, _ = await neo4j_store.merge_document("hash-coex", "coex-test", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-coex", "coex-test", "text")
     project = await neo4j_store.merge_entity(
         "Project Y", "Project", "coex-test", 0.9, doc_id, "test"
     )
@@ -784,7 +784,7 @@ async def test_negated_fact_surfaces_in_retrieval_output(neo4j_driver):
     """Negated MemoryFact must appear with negated=True in get_current_fact_details_for_entities."""
     from landscape.storage.neo4j_memory import get_current_fact_details_for_entities
 
-    doc_id, _ = await neo4j_store.merge_document("hash-surf", "surf-test", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-surf", "surf-test", "text")
     alice = await neo4j_store.merge_entity(
         "Alice", "Person", "surf-test", 0.9, doc_id, "test"
     )

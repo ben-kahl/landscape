@@ -209,7 +209,7 @@ async def test_merge_turn_next_edge(http_client, neo4j_driver):
 async def test_link_entity_to_turn(http_client, neo4j_driver):
     from landscape.storage import neo4j_store
 
-    doc_id, _ = await neo4j_store.merge_document("hash-elt-tc8", "elt-doc-tc8", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-elt-tc8", "elt-doc-tc8", "text")
     eid = await neo4j_store.merge_entity("EltEntity8", "PERSON", "elt-doc-tc8", 0.9, doc_id, "test")
     turn_eid, _ = await neo4j_store.merge_turn("conv-tc8", "t1")
 
@@ -231,7 +231,7 @@ async def test_link_entity_to_turn(http_client, neo4j_driver):
 async def test_link_entity_to_turn_is_idempotent_and_bumps_confidence(http_client, neo4j_driver):
     from landscape.storage import neo4j_store
 
-    doc_id, _ = await neo4j_store.merge_document("hash-elt-tc9", "elt-doc-tc9", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-elt-tc9", "elt-doc-tc9", "text")
     eid = await neo4j_store.merge_entity("EltEntity9", "PERSON", "elt-doc-tc9", 0.9, doc_id, "test")
     turn_eid, _ = await neo4j_store.merge_turn("conv-tc9", "t1")
 
@@ -253,7 +253,7 @@ async def test_link_entity_to_turn_is_idempotent_and_bumps_confidence(http_clien
 async def test_link_document_to_turn(http_client, neo4j_driver):
     from landscape.storage import neo4j_store
 
-    doc_id, _ = await neo4j_store.merge_document("hash-ldt-tc10", "ldt-doc-tc10", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-ldt-tc10", "ldt-doc-tc10", "text")
     turn_eid, _ = await neo4j_store.merge_turn("conv-tc10", "t1")
 
     await neo4j_store.link_document_to_turn(doc_id, turn_eid)
@@ -294,7 +294,7 @@ async def test_merge_entity_without_doc_skips_extracted_from(http_client, neo4j_
 async def test_merge_entity_with_doc_creates_extracted_from(http_client, neo4j_driver):
     from landscape.storage import neo4j_store
 
-    doc_id, _ = await neo4j_store.merge_document("hash-ef-tc12", "ef-doc-tc12", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-ef-tc12", "ef-doc-tc12", "text")
     await neo4j_store.merge_entity(
         "DocEntity12", "PERSON", "ef-doc-tc12", 0.9, doc_element_id=doc_id, model="test"
     )

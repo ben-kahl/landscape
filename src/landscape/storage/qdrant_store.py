@@ -7,6 +7,7 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    FilterSelector,
     MatchValue,
     PointStruct,
     ScoredPoint,
@@ -193,6 +194,36 @@ async def search_entities_any_type(
             with_payload=True,
         )
     return result.points
+
+
+async def delete_chunks_for_document(doc_id: str) -> None:
+    """Delete all chunk points for ``doc_id`` from the chunks collection.
+
+    Called during cleanup of a stale partial or failed ingest, *before* the
+    corresponding Neo4j ``delete_document_subtree`` runs. Retrieval
+    (``retrieval/query.py``) surfaces chunk hits straight from Qdrant search
+    results — chunk text/doc_id come from the Qdrant payload, not a Neo4j
+    lookup — so an orphaned Qdrant point (Neo4j doc gone, Qdrant point still
+    present) would surface stale content pointing at a dead document. An
+    orphaned Neo4j chunk with no corresponding Qdrant point, by contrast, is
+    invisible to retrieval since chunk hits are only ever discovered via
+    Qdrant search in the first place. Deleting Qdrant first minimizes the
+    window in which a live-looking-but-actually-dead chunk can be retrieved.
+    """
+    client = get_client()
+    try:
+        await client.delete(
+            collection_name=CHUNKS_COLLECTION,
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
+                )
+            ),
+        )
+    except UnexpectedResponse as exc:
+        if exc.status_code != 404:
+            raise
+        # Collection doesn't exist yet — nothing to delete.
 
 
 async def search_chunks(
