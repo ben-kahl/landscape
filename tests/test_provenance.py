@@ -9,7 +9,7 @@ async def test_merge_entity_default_provenance(http_client, neo4j_driver):
     """No provenance kwargs → created_by='ingest', session_id/turn_id null."""
     from landscape.storage import neo4j_store
 
-    doc_id, _ = await neo4j_store.merge_document("hash-prov-e1", "prov-doc-1", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-prov-e1", "prov-doc-1", "text")
     await neo4j_store.merge_entity("ProvEntity1", "PERSON", "prov-doc-1", 0.9, doc_id, "test")
 
     async with neo4j_driver.session() as session:
@@ -30,7 +30,7 @@ async def test_merge_entity_agent_provenance(http_client, neo4j_driver):
     """Agent provenance kwargs recorded on node."""
     from landscape.storage import neo4j_store
 
-    doc_id, _ = await neo4j_store.merge_document("hash-prov-e2", "prov-doc-2", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-prov-e2", "prov-doc-2", "text")
     await neo4j_store.merge_entity(
         "ProvEntity2", "PERSON", "prov-doc-2", 0.9, doc_id, "test",
         created_by="agent", session_id="s1", turn_id="t1",
@@ -54,8 +54,8 @@ async def test_merge_entity_reinforce_preserves_creator(http_client, neo4j_drive
     """Create as 'ingest', reinforce as 'agent' → created_by stays 'ingest'."""
     from landscape.storage import neo4j_store
 
-    doc_id1, _ = await neo4j_store.merge_document("hash-prov-e3a", "prov-doc-3a", "text")
-    doc_id2, _ = await neo4j_store.merge_document("hash-prov-e3b", "prov-doc-3b", "text")
+    doc_id1, _, _ = await neo4j_store.merge_document("hash-prov-e3a", "prov-doc-3a", "text")
+    doc_id2, _, _ = await neo4j_store.merge_document("hash-prov-e3b", "prov-doc-3b", "text")
 
     # First creation: ingest
     await neo4j_store.merge_entity(
@@ -203,13 +203,13 @@ async def test_upsert_relation_supersession_new_edge_has_agent_provenance(
     old_org_name = "AtlasAnalytics"
     new_org_name = "BeaconDynamics"
 
-    subject_doc_id, _ = await neo4j_store.merge_document(
+    subject_doc_id, _, _ = await neo4j_store.merge_document(
         "hash-prov-sup-1", "prov-sup-doc-1", "text"
     )
-    old_doc_id, _ = await neo4j_store.merge_document(
+    old_doc_id, _, _ = await neo4j_store.merge_document(
         "hash-prov-sup-2", "prov-sup-doc-2", "text"
     )
-    new_doc_id, _ = await neo4j_store.merge_document(
+    new_doc_id, _, _ = await neo4j_store.merge_document(
         "hash-prov-sup-3", "prov-sup-doc-3", "text"
     )
 
@@ -367,7 +367,7 @@ async def test_invalid_created_by_raises(http_client, neo4j_driver):
     """created_by with invalid value raises ValueError."""
     from landscape.storage import neo4j_store
 
-    doc_id, _ = await neo4j_store.merge_document("hash-prov-inv1", "prov-inv-doc-1", "text")
+    doc_id, _, _ = await neo4j_store.merge_document("hash-prov-inv1", "prov-inv-doc-1", "text")
 
     with pytest.raises(ValueError, match="created_by"):
         await neo4j_store.merge_entity(

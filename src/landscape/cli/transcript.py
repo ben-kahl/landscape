@@ -81,6 +81,7 @@ async def handle_ingest_transcript(args: argparse.Namespace) -> int:
         encoder.load_model()
         await qdrant_store.init_collection()
         await qdrant_store.init_chunks_collection()
+        await neo4j_store.backfill_ingest_completed_marker()
         salient = select_salient(turns)
         if not salient:
             print("No salient turns; nothing to ingest.")

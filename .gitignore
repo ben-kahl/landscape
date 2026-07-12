@@ -23,3 +23,8 @@ logs/
 # Session design artifacts (specs/plans) — keep on disk, never commit
 /.*-spec.md
 /.*-plan.md
+
+# Stray test/ingestion artifacts that keep reappearing at repo root
+/demo_run.jsonl
+/test.txt
+/woo.txt

@@ -65,8 +65,9 @@ graph TD
 | Quantified facts | Relationship edges preserve counts, durations, prices, frequencies, and time scopes |
 | Agent access | MCP server, conversation history, automatic conversation capture, LangChain retriever, FastAPI, local CLI |
 | Benchmarks | Killer-demo retrieval benchmark, ChromaDB baseline, LongMemEval smoke harness |
-| Phase 3.5 hardening | In progress: ranking tuning, LongMemEval beyond smoke, resolver improvements |
-| Phase 4 | In progress: automatic conversation capture; next expanded ingestion includes richer document inputs, drive integrations, and multimodal |
+| Phase 3.5 hardening | Complete: ranking tuning, LongMemEval beyond smoke, resolver improvements |
+| Conversation capture | Automatic capture merged (PR #35); its trigger (a SessionEnd hook) was never wired up and is being redesigned as a Claude Code plugin with Stop-hook-driven incremental capture. Today, transcript ingestion works manually via `landscape ingest-transcript` |
+| Current focus | W&B support demo direction (real-issue corpus merged in PR #40); planned next: `get_document` MCP tool, the conversation-capture plugin, and domain vocabulary packs |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design rationale, data
 model details, benchmark notes, and known limitations.
@@ -388,7 +389,7 @@ order.
 ## Design rationale and known limitations
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design rationale.
-Three limitations worth calling out here before phase 4:
+Three limitations worth calling out:
 
 **Rel-type synonym drift.** Small local LLMs are non-deterministic about relationship type phrasing (`WORKS_FOR` vs `EMPLOYED_BY`). Landscape uses a closed vocabulary of 22 canonical types (with subtype annotations for richer semantics) and a `normalize_relation_type()` normalizer, but truly novel types pass through unchanged and will not trigger supersession. Demos that rely on temporal conflict resolution should use hand-constructed corpora.
 

@@ -409,7 +409,7 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     captured_relation_kwargs = {}
 
     async def fake_merge_document(content_hash, title, source_type):
-        return "doc-1", True
+        return "doc-1", True, False
 
     async def fake_create_chunk(doc_id, chunk_index, text, content_hash):
         return f"chunk-{chunk_index}"
@@ -427,6 +427,9 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
         return None
 
     async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
+    async def fake_mark_document_ingested(doc_id):
         return None
 
     async def fake_persist_assertion_and_maybe_promote(
@@ -463,6 +466,9 @@ async def test_ingest_passes_relation_quantity_fields(monkeypatch):
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
     monkeypatch.setattr(
         pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions
+    )
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "mark_document_ingested", fake_mark_document_ingested
     )
     monkeypatch.setattr(
         pipeline,
@@ -521,7 +527,7 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
     from landscape.memory_graph.service import PersistenceResult
 
     async def fake_merge_document(content_hash, title, source_type):
-        return "doc-1", True
+        return "doc-1", True, False
 
     async def fake_create_chunk(doc_id, chunk_index, text, content_hash):
         return f"chunk-{chunk_index}"
@@ -539,6 +545,9 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
         return None
 
     async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
+    async def fake_mark_document_ingested(doc_id):
         return None
 
     async def fake_persist_assertion_and_maybe_promote(
@@ -565,6 +574,9 @@ async def test_ingest_emits_summary_logs_by_default(monkeypatch, caplog):
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
     monkeypatch.setattr(
         pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions
+    )
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "mark_document_ingested", fake_mark_document_ingested
     )
     monkeypatch.setattr(
         pipeline,
@@ -624,7 +636,7 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
     from landscape.memory_graph.service import PersistenceResult
 
     async def fake_merge_document(content_hash, title, source_type):
-        return "doc-2", True
+        return "doc-2", True, False
 
     async def fake_create_chunk(doc_id, chunk_index, text, content_hash):
         return f"chunk-{chunk_index}"
@@ -642,6 +654,9 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
         return None
 
     async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
+    async def fake_mark_document_ingested(doc_id):
         return None
 
     async def fake_persist_assertion_and_maybe_promote(
@@ -668,6 +683,9 @@ async def test_ingest_emits_debug_stage_logs_when_requested(monkeypatch, caplog)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
     monkeypatch.setattr(
         pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions
+    )
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "mark_document_ingested", fake_mark_document_ingested
     )
     monkeypatch.setattr(
         pipeline,
@@ -735,7 +753,7 @@ async def test_ingest_logs_failure_with_failed_stage(monkeypatch, caplog):
     from landscape.memory_graph.service import PersistenceResult
 
     async def fake_merge_document(content_hash, title, source_type):
-        return "doc-3", True
+        return "doc-3", True, False
 
     async def fake_create_chunk(doc_id, chunk_index, text, content_hash):
         return f"chunk-{chunk_index}"
@@ -931,7 +949,8 @@ async def test_ingest_passes_negated_to_assertion_payload():
     fake_chunk = MagicMock(text="Alice does not work for Acme", index=0)
     with patch.object(pipeline, "chunk_text", return_value=[fake_chunk]), \
          patch.object(pipeline.neo4j_store, "merge_document",
-                      AsyncMock(return_value=("doc1", True))), \
+                      AsyncMock(return_value=("doc1", True, False))), \
+         patch.object(pipeline.neo4j_store, "mark_document_ingested", AsyncMock()), \
          patch.object(pipeline.neo4j_store, "create_chunk",
                       AsyncMock(return_value="ch0")), \
          patch.object(pipeline.encoder, "embed_documents",

@@ -238,11 +238,11 @@ LongMemEval scripts are included for broader memory-style evaluation, but their
 results are more sensitive to local LLM extraction quality, model choice, and
 hardware speed.
 
-## Phase 3.5 Exit Criteria
+## Phase 3.5 Exit Criteria (Met)
 
-Phase 3.5 is about hardening the existing system, not adding new capabilities.
-Exit means the implemented behavior is stable, documented, and reproducibly
-measured.
+Phase 3.5 was about hardening the existing system, not adding new
+capabilities. Exit means the implemented behavior is stable, documented, and
+reproducibly measured. These criteria have been met.
 
 ### CI Required
 
@@ -261,10 +261,12 @@ measured.
 
 Source-of-truth docs (README, this file) describe the implemented system,
 benchmark scope is explicit about what is hardened versus smoke-only, and the
-bitemporal fact model is documented end-to-end. The first phase-4 input path,
-automatic conversation capture, is now implemented as a buffered salience
-pipeline; remaining phase-4 work can focus on richer text ingestion paths,
-drive integrations, and multimodal inputs.
+bitemporal fact model is documented end-to-end. Automatic conversation capture
+is implemented as a buffered salience pipeline, but its trigger (a SessionEnd
+hook) was never wired up; it is being redesigned as a Claude Code plugin with
+Stop-hook-driven incremental capture. Further input-expansion work — richer
+text ingestion paths, drive integrations, and multimodal inputs — is backlog,
+not an active phase.
 
 ## Known Limitations
 
@@ -308,8 +310,8 @@ profile-specific recommendations.
 
 ## Future Work
 
-Landscape is past the "build the basic stack" stage. The remaining work before
-phase 4 is primarily about quality hardening, evaluation clarity, and
+Landscape is past the "build the basic stack" stage. The remaining backlog
+work is primarily about quality hardening, evaluation clarity, and
 operational polish.
 
 - Direction-aware relationship normalization so inverse forms such as

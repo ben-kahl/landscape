@@ -30,7 +30,7 @@ def _make_pipeline_stubs(monkeypatch, extraction: Extraction) -> dict:
     captured: dict = {}
 
     async def fake_merge_document(content_hash, title, source_type):
-        return "doc-stub", True
+        return "doc-stub", True, False
 
     async def fake_create_chunk(doc_id, chunk_index, text, content_hash):
         return f"chunk-{chunk_index}"
@@ -48,6 +48,9 @@ def _make_pipeline_stubs(monkeypatch, extraction: Extraction) -> dict:
         return None
 
     async def fake_set_chunk_mentions(chunk_id, **kwargs):
+        return None
+
+    async def fake_mark_document_ingested(doc_id):
         return None
 
     async def fake_persist(
@@ -74,6 +77,9 @@ def _make_pipeline_stubs(monkeypatch, extraction: Extraction) -> dict:
     monkeypatch.setattr(pipeline.neo4j_store, "merge_entity", fake_merge_entity)
     monkeypatch.setattr(pipeline.qdrant_store, "upsert_entity", fake_upsert_entity)
     monkeypatch.setattr(pipeline.neo4j_store, "set_chunk_mentions", fake_set_chunk_mentions)
+    monkeypatch.setattr(
+        pipeline.neo4j_store, "mark_document_ingested", fake_mark_document_ingested
+    )
     monkeypatch.setattr(pipeline, "persist_assertion_and_maybe_promote", fake_persist)
     monkeypatch.setattr(pipeline, "coerce_rel_type", lambda rel_type: (rel_type, 1.0))
     # Stub chunking so the real HF tokenizer (chunker._get_splitter) never loads —

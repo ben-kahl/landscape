@@ -165,7 +165,7 @@ async def _seed_person_entity(name: str) -> str:
     from landscape.embeddings import encoder
     from landscape.storage import neo4j_store, qdrant_store
 
-    doc_id, _ = await neo4j_store.merge_document(
+    doc_id, _, _ = await neo4j_store.merge_document(
         content_hash=f"hash-res-{name.lower().replace(' ', '-')}",
         title=f"res-seed-{name.lower().replace(' ', '-')}",
         source_type="text",
