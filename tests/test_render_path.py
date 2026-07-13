@@ -69,6 +69,36 @@ def test_render_path_includes_subtype():
 
 
 @pytest.mark.unit
+def test_compact_payload_chunks_carry_fetch_keys():
+    from types import SimpleNamespace
+
+    from landscape.retrieval.query import RetrievedChunk
+    from landscape.retrieval.render import build_compact_payload
+
+    result = SimpleNamespace(
+        query="q",
+        results=[],
+        touched_entity_ids=[],
+        chunks=[
+            RetrievedChunk(
+                chunk_id="4:abc:12:0:h1",
+                text="chunk body text",
+                doc_id="4:abc:12",
+                source_doc="ticket-119987",
+                position=0,
+                score=0.73,
+            )
+        ],
+    )
+
+    payload = build_compact_payload(result)
+
+    assert payload["chunks"][0]["doc_id"] == "4:abc:12"
+    assert payload["chunks"][0]["chunk_id"] == "4:abc:12:0:h1"
+    assert payload["chunks"][0]["source"] == "ticket-119987"
+
+
+@pytest.mark.unit
 def test_render_path_negated_with_subtype():
     path = EntityPath(
         nodes=[

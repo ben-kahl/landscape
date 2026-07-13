@@ -170,6 +170,8 @@ def build_compact_payload(result: Any, *, chunk_preview_chars: int = 200) -> dic
         chunks_out.append(
             {
                 "source": c.source_doc,
+                "doc_id": c.doc_id,
+                "chunk_id": c.chunk_id,
                 "preview": preview,
                 "score": round(c.score, 4),
             }
