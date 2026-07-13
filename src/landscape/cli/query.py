@@ -48,6 +48,17 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--debug", action="store_true")
     parser.set_defaults(func=handle_query)
 
+    doc_parser = subparsers.add_parser(
+        "get-doc",
+        help="Fetch a document's full text by doc_id",
+        description=(
+            "Fetch the full text of an ingested document from Neo4j. "
+            "Get doc_ids from `landscape query` output or the search MCP tool."
+        ),
+    )
+    doc_parser.add_argument("doc_id", help="Neo4j element id of the Document")
+    doc_parser.set_defaults(func=handle_get_doc)
+
 
 async def handle_query(args: argparse.Namespace) -> int:
     encoder, retrieve, neo4j_store, qdrant_store = _get_runtime()
@@ -93,6 +104,26 @@ async def handle_query(args: argparse.Namespace) -> int:
             for chunk in result.chunks:
                 preview = chunk.text[:120].replace("\n", " ")
                 print(f"  [{chunk.source_doc}] {preview}")
+        return 0
+    finally:
+        await close_runtime(neo4j_store, qdrant_store)
+
+
+async def handle_get_doc(args: argparse.Namespace) -> int:
+    # Pure Neo4j read: no embedding model or Qdrant collection init needed.
+    from landscape.storage import neo4j_store, qdrant_store
+
+    try:
+        doc = await neo4j_store.get_document_with_chunks(args.doc_id)
+        if doc is None:
+            print(f"No document with doc_id {args.doc_id!r}")
+            return 1
+        print(f"{doc['title']} [{doc['source_type']}] ingested {doc['ingested_at']}")
+        if doc["sessions"]:
+            print(f"sessions: {', '.join(doc['sessions'])}")
+        print()
+        for chunk in doc["chunks"]:
+            print(chunk["text"])
         return 0
     finally:
         await close_runtime(neo4j_store, qdrant_store)
