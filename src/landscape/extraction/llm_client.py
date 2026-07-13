@@ -79,11 +79,12 @@ def complete_structured(
         extra_body["chat_template_kwargs"] = {"enable_thinking": False}
     if p.repeat_penalty is not None:
         extra_body["repeat_penalty"] = p.repeat_penalty
+    messages = _messages(prompt)
     last_err: Exception | None = None
     for _ in range(2):
         resp = client.chat.completions.create(
             model=p.model,
-            messages=_messages(prompt),
+            messages=messages,
             temperature=p.temperature,
             max_tokens=p.max_tokens,
             response_format={
@@ -105,4 +106,17 @@ def complete_structured(
             return model_cls.model_validate_json(content)
         except (ValidationError, ValueError) as exc:
             last_err = exc
+            # Informed retry: show the model its failed output and the error
+            # instead of blind-resending the same prompt.
+            messages = messages + [
+                {"role": "assistant", "content": content},
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous output failed validation: "
+                        f"{str(exc)[:2000]}\n"
+                        "Return corrected JSON matching the schema exactly."
+                    ),
+                },
+            ]
     raise last_err  # type: ignore[misc]
