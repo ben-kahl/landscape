@@ -55,9 +55,28 @@ def test_render_path_empty_path():
 
 
 @pytest.mark.unit
-def test_render_path_ignores_subtype():
+def test_render_path_includes_subtype():
     path = EntityPath(
-        nodes=[PathNode("Eric", "PERSON"), PathNode("Netflix", "TECHNOLOGY")],
-        edges=[PathEdge(type="DISCUSSION", subtype="watched")],
+        nodes=[
+            PathNode("PhysicsX", "Organization"),
+            PathNode("Okta", "Technology"),
+        ],
+        edges=[PathEdge(type="USES", subtype="for_sso_configuration")],
     )
-    assert render_path(path) == "(Eric) -[DISCUSSION]-> Netflix [TECHNOLOGY]"
+    assert render_path(path) == (
+        "(PhysicsX) -[USES/for_sso_configuration]-> Okta [Technology]"
+    )
+
+
+@pytest.mark.unit
+def test_render_path_negated_with_subtype():
+    path = EntityPath(
+        nodes=[
+            PathNode("PhysicsX", "Organization"),
+            PathNode("Domain capture", "Concept"),
+        ],
+        edges=[PathEdge(type="USES", subtype="signup_flow", negated=True)],
+    )
+    assert render_path(path) == (
+        "(PhysicsX) -[NOT USES/signup_flow]-> Domain capture [Concept]"
+    )
