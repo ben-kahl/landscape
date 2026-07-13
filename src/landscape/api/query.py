@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from landscape.retrieval import query as query_module
@@ -78,6 +78,20 @@ class QueryResponse(BaseModel):
     chunks: list[QueryChunkItem]
     touched_entity_count: int
     touched_edge_count: int
+
+
+@router.get("/documents")
+async def get_document_endpoint(doc_id: str, auth: AgentPrincipal) -> dict:
+    del auth  # principal resolved for authz; not needed in handler body
+    from landscape.storage import neo4j_store
+
+    doc = await neo4j_store.get_document_with_chunks(doc_id)
+    if doc is None:
+        raise HTTPException(
+            status_code=404, detail=f"No document with doc_id {doc_id!r}"
+        )
+    doc["full_text"] = "\n".join(ch["text"] for ch in doc["chunks"])
+    return doc
 
 
 @router.post("/query", response_model=QueryResponse)

@@ -145,7 +145,11 @@ async def get_current_fact_details_for_entities(
         temporal_clause = "AND fact.system_until IS NULL"
     cypher = """
             MATCH (subject:Entity)-[:AS_SUBJECT]->(fact:MemoryFact)
-            WHERE subject.id IN $entity_ids
+            WHERE (subject.id IN $entity_ids
+                   OR EXISTS {
+                       MATCH (fact)-[:AS_OBJECT]->(oe:Entity)
+                       WHERE oe.id IN $entity_ids
+                   })
               __TEMPORAL_CLAUSE__
             OPTIONAL MATCH (fact)-[:AS_OBJECT]->(object:Entity)
             OPTIONAL MATCH (subject)-[rel:MEMORY_REL {memory_fact_id: fact.id}]->(object)

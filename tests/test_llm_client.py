@@ -20,6 +20,44 @@ def _fake_client(content: str, recorder: list[dict]):
     return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
 
 
+def _fake_client_seq(contents: list[str], recorder: list[dict]):
+    def create(**kwargs):
+        recorder.append(kwargs)
+        content = contents[min(len(recorder) - 1, len(contents) - 1)]
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+            usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2),
+        )
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+def test_retry_feeds_validation_error_back(monkeypatch):
+    recorder: list[dict] = []
+    monkeypatch.setattr(
+        llm_client,
+        "get_client",
+        lambda: _fake_client_seq(["not json", '{"entities":[],"relations":[]}'], recorder),
+    )
+    monkeypatch.setattr(
+        llm_client, "active_profile",
+        lambda: LLMProfile(base_url="http://x/v1", model="m", no_think=False),
+    )
+
+    result = llm_client.complete_structured(
+        "p", model_cls=Extraction, schema_name="Extraction"
+    )
+
+    assert isinstance(result, Extraction)
+    assert len(recorder) == 2
+    retry_msgs = recorder[1]["messages"]
+    assert retry_msgs[0] == {"role": "user", "content": "p"}
+    assert retry_msgs[1]["role"] == "assistant"
+    assert retry_msgs[1]["content"] == "not json"
+    assert retry_msgs[2]["role"] == "user"
+    assert "failed validation" in retry_msgs[2]["content"]
+
+
 def test_resolve_key_local_uses_placeholder():
     p = LLMProfile(base_url="http://x/v1", model="m", api_key_env=None)
     assert llm_client.resolve_key(p) == "sk-noauth"

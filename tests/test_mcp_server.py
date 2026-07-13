@@ -37,6 +37,7 @@ async def test_mcp_app_registers_expected_tools():
         "add_entity",
         "add_relation",
         "lookup_entity",
+        "get_document",
         "graph_query",
         "status",
         "conversation_history",
@@ -1123,3 +1124,92 @@ def test_build_compact_output_numeric_value_round_trip():
         )
     )
     assert out["facts"][0]["text"].endswith("= 47 unit")
+
+
+# ---------------------------------------------------------------------------
+# get_document
+# ---------------------------------------------------------------------------
+
+
+async def _seed_doc_with_chunks() -> str:
+    from landscape.storage.neo4j_driver import get_driver
+
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            CREATE (d:Document {content_hash: 'h1', title: 'Ticket 119987',
+                                source_type: 'text',
+                                ingested_at: '2026-07-12T00:00:00+00:00',
+                                ingest_completed_at: '2026-07-12T00:00:00+00:00'})
+            CREATE (c1:Chunk {chunk_id: 'd:1:h1', chunk_index: 1, position: 1,
+                              text: 'second chunk'})
+            CREATE (c0:Chunk {chunk_id: 'd:0:h1', chunk_index: 0, position: 0,
+                              text: 'first chunk'})
+            CREATE (c0)-[:PART_OF]->(d)
+            CREATE (c1)-[:PART_OF]->(d)
+            CREATE (t:Turn {id: 'sess-1:t1', session_id: 'sess-1', turn_id: 't1'})
+            CREATE (d)-[:INGESTED_IN]->(t)
+            CREATE (a:Assertion {id: 'assert-1'})
+            CREATE (f:MemoryFact {id: 'fact-1', family: 'USES'})
+            CREATE (d)-[:ASSERTS]->(a)
+            CREATE (a)-[:SUPPORTS]->(f)
+            RETURN elementId(d) AS doc_id
+            """
+        )
+        record = await result.single()
+        return record["doc_id"]
+
+
+@pytest.mark.asyncio
+async def test_get_document_by_doc_id():
+    doc_id = await _seed_doc_with_chunks()
+    async with _mcp_client() as client:
+        result = await client.call_tool("get_document", {"doc_id": doc_id})
+    payload = _parse(result)
+
+    assert len(payload["documents"]) == 1
+    doc = payload["documents"][0]
+    assert doc["title"] == "Ticket 119987"
+    assert doc["full_text"] == "first chunk\nsecond chunk"
+    assert doc["sessions"] == ["sess-1"]
+
+
+@pytest.mark.asyncio
+async def test_get_document_by_memory_fact_id():
+    await _seed_doc_with_chunks()
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "get_document", {"memory_fact_id": "fact-1"}
+        )
+    payload = _parse(result)
+    assert payload["documents"][0]["title"] == "Ticket 119987"
+
+
+@pytest.mark.asyncio
+async def test_get_document_by_chunk_id():
+    doc_id = await _seed_doc_with_chunks()
+    async with _mcp_client() as client:
+        result = await client.call_tool("get_document", {"chunk_id": "d:0:h1"})
+    payload = _parse(result)
+    assert payload["documents"][0]["doc_id"] == doc_id
+
+
+@pytest.mark.asyncio
+async def test_get_document_requires_exactly_one_selector():
+    doc_id = await _seed_doc_with_chunks()
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "get_document", {"doc_id": doc_id, "chunk_id": "d:0:h1"}
+        )
+    assert result.isError
+
+
+@pytest.mark.asyncio
+async def test_get_document_not_found():
+    async with _mcp_client() as client:
+        result = await client.call_tool(
+            "get_document", {"doc_id": "4:deadbeef:999"}
+        )
+    payload = _parse(result)
+    assert payload["documents"] == []

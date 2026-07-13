@@ -21,6 +21,21 @@ from landscape.storage import neo4j_store, qdrant_store
 # ARE in the entity search results keep their full score regardless.
 _CHUNK_ENTITY_SIM_DISCOUNT = 0.7
 
+# Widened (subject+object) hydration can attach dozens of adjacent facts to a
+# hub entity. Keep the highest-confidence ones; the cap is generous because
+# under-attaching is the failure mode that forced graph_query fallbacks.
+_MAX_ADJACENT_FACTS = 20
+
+
+def _top_adjacent_facts(
+    facts: list[dict], cap: int = _MAX_ADJACENT_FACTS
+) -> list[dict]:
+    return sorted(
+        facts,
+        key=lambda f: float(f.get("confidence_agg") or 0.0),
+        reverse=True,
+    )[:cap]
+
 
 def _build_seed_sims(
     *,
@@ -567,11 +582,13 @@ async def retrieve(
                 assertions_by_fact_id.setdefault(str(fact_id), []).append(assertion)
             for item in ranked:
                 seen_fact_ids = {str(fact["memory_fact_id"]) for fact in item.memory_facts}
-                extra_facts = [
-                    fact
-                    for fact in facts_by_entity_id.get(item.entity_id, [])
-                    if str(fact["memory_fact_id"]) not in seen_fact_ids
-                ]
+                extra_facts = _top_adjacent_facts(
+                    [
+                        fact
+                        for fact in facts_by_entity_id.get(item.entity_id, [])
+                        if str(fact["memory_fact_id"]) not in seen_fact_ids
+                    ]
+                )
                 item.memory_facts.extend(extra_facts)
                 for fact in extra_facts:
                     fact_id = str(fact["memory_fact_id"])

@@ -80,6 +80,9 @@ async def search(
     Returns a compact payload by default: ranked entities with rendered path
     strings reference a deduplicated `facts` table. Set verbose=True for the
     legacy payload with raw memory_facts and supporting_assertions.
+
+    Chunks in the payload carry doc_id/chunk_id — pass one to get_document
+    to fetch the full source text instead of querying the graph for it.
     """
     require_current_scope("agent")
     from landscape.retrieval.query import retrieve
@@ -344,6 +347,47 @@ async def lookup_entity(
             ],
         }
     )
+
+
+@mcp.tool()
+async def get_document(
+    doc_id: str | None = None,
+    chunk_id: str | None = None,
+    memory_fact_id: str | None = None,
+) -> str:
+    """Fetch the full source text behind a search result.
+
+    Two-stage pattern: `search` returns compact previews whose chunks carry
+    `doc_id`/`chunk_id`; pass one of those here to recover the complete
+    document (all chunks, ordered). `memory_fact_id` traverses provenance to
+    the source document(s) of a fact (capped at 3).
+
+    Provide exactly one of doc_id, chunk_id, memory_fact_id.
+    """
+    require_current_scope("agent")
+    from landscape.storage import neo4j_store
+
+    provided = [v for v in (doc_id, chunk_id, memory_fact_id) if v]
+    if len(provided) != 1:
+        raise ValueError(
+            "Provide exactly one of doc_id, chunk_id, memory_fact_id"
+        )
+
+    if doc_id is not None:
+        doc_ids = [doc_id]
+    elif chunk_id is not None:
+        found = await neo4j_store.find_doc_id_for_chunk(chunk_id)
+        doc_ids = [found] if found else []
+    else:
+        doc_ids = await neo4j_store.find_doc_ids_for_memory_fact(memory_fact_id)
+
+    documents = []
+    for did in doc_ids:
+        doc = await neo4j_store.get_document_with_chunks(did)
+        if doc is not None:
+            doc["full_text"] = "\n".join(ch["text"] for ch in doc["chunks"])
+            documents.append(doc)
+    return json.dumps({"documents": documents})
 
 
 @mcp.tool()
