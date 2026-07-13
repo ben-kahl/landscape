@@ -145,6 +145,76 @@ async def delete_document_subtree(doc_id: str) -> None:
         )
 
 
+async def get_document_with_chunks(doc_id: str) -> dict | None:
+    """Full-text fetch for the two-stage search→get_document pattern.
+
+    Neo4j is the source of truth: chunk text lives on ``Chunk.text`` ordered
+    by ``chunk_index``. Sessions come from ``INGESTED_IN`` provenance."""
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (d:Document) WHERE elementId(d) = $doc_id
+            OPTIONAL MATCH (c:Chunk)-[:PART_OF]->(d)
+            WITH d, c ORDER BY c.chunk_index ASC
+            WITH d, collect(
+                CASE WHEN c IS NOT NULL THEN {
+                    chunk_id: c.chunk_id,
+                    position: c.chunk_index,
+                    text: c.text
+                } END
+            ) AS chunks
+            OPTIONAL MATCH (d)-[:INGESTED_IN]->(t:Turn)
+            RETURN elementId(d) AS doc_id,
+                   d.title AS title,
+                   d.source_type AS source_type,
+                   d.ingested_at AS ingested_at,
+                   [ch IN chunks WHERE ch IS NOT NULL] AS chunks,
+                   [s IN collect(DISTINCT t.session_id) WHERE s IS NOT NULL]
+                       AS sessions
+            """,
+            doc_id=doc_id,
+        )
+        record = await result.single()
+        if record is None:
+            return None
+        return dict(record)
+
+
+async def find_doc_id_for_chunk(chunk_id: str) -> str | None:
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (c:Chunk {chunk_id: $chunk_id})-[:PART_OF]->(d:Document)
+            RETURN elementId(d) AS doc_id
+            """,
+            chunk_id=chunk_id,
+        )
+        record = await result.single()
+        return record["doc_id"] if record else None
+
+
+async def find_doc_ids_for_memory_fact(
+    memory_fact_id: str, limit: int = 3
+) -> list[str]:
+    """Documents whose assertions support this fact, capped — a heavily
+    reinforced fact could be supported from many sources."""
+    driver = get_driver()
+    async with driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (d:Document)-[:ASSERTS]->(:Assertion)
+                  -[:SUPPORTS]->(f:MemoryFact {id: $fid})
+            RETURN DISTINCT elementId(d) AS doc_id
+            LIMIT $limit
+            """,
+            fid=memory_fact_id,
+            limit=limit,
+        )
+        return [record["doc_id"] async for record in result]
+
+
 def _validate_id_segment(name: str, value: str) -> None:
     """Reject ':' in session_id to avoid Turn.id composite ambiguity."""
     if ":" in value:
